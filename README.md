@@ -22,3 +22,5 @@ More precisely, it's a SQLite database containing track meta data only - no actu
 For the best possible playback experience, a YouTube Premium subscription or a good ad-blocker is highly recommended.
 
 Work in progress! 🚧
+
+<img width="1840" height="1195" alt="Screenshot 2025-12-31 at 14 17 07" src="https://github.com/user-attachments/assets/9b81c219-d7b9-41c6-aee2-1ef815e1f2a9" />
