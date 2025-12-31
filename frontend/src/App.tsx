@@ -38,7 +38,6 @@ import {
   Theme,
   Switch,
   Spinner,
-  Button,
   IconButton,
   Box,
   Flex,
