@@ -36,11 +36,13 @@ import {
   Tooltip,
   Theme,
   Switch,
+  Spinner,
   Button,
   IconButton,
   Box,
   Flex,
   Text,
+  Code,
 } from "@radix-ui/themes";
 import type {
   ITrack,
@@ -650,59 +652,65 @@ function App() {
   return (
     <Theme appearance={settings.appearance} accentColor="gray" grayColor="gray">
       <Toast.Provider>
-        <Flex gap="2" justify="between">
-          <CollectionSelector
-            isValid={state.collection_is_valid ?? true}
-            createCollection={(path: string) =>
-              sendMsg({ type: "create-collection", path })
-            }
-            resetToDefault={() => {
-              if (state.default_collection) {
+        <Flex
+          className="app-main"
+          direction="column"
+          align="center"
+          gap="2"
+          py="4"
+        >
+          <Flex gap="2" justify="between" className="toolbar">
+            <CollectionSelector
+              isValid={state.collection_is_valid ?? true}
+              createCollection={(path: string) =>
+                sendMsg({ type: "create-collection", path })
+              }
+              resetToDefault={() => {
+                if (state.default_collection) {
+                  setSettings({
+                    ...settings,
+                    collectionPath: state.default_collection?.path,
+                    useDefaultCollection: true,
+                  });
+                }
+              }}
+              value={settings.collectionPath}
+              setValue={(value: string) =>
                 setSettings({
                   ...settings,
-                  collectionPath: state.default_collection?.path,
-                  useDefaultCollection: true,
-                });
+                  collectionPath: value,
+                  useDefaultCollection: false,
+                })
               }
-            }}
-            value={settings.collectionPath}
-            setValue={(value: string) =>
-              setSettings({
-                ...settings,
-                collectionPath: value,
-                useDefaultCollection: false,
-              })
-            }
-            suggestions={state.collection_path_completions ?? []}
-            size={state.collection?.size}
-          />
-          <SearchBox
-            value={state.search_box_input ?? ""}
-            setValue={(value: string) =>
-              dispatch({ type: "search-box-input", input: value })
-            }
-            searchLimit={state.search_limit}
-            setSearchLimit={(limit: number) =>
-              dispatch({ type: "set-search-limit", limit })
-            }
-            searchKind={state.search_kind}
-            setSearchKind={(kind: SearchKind) =>
-              dispatch({ type: "set-search-kind", kind })
-            }
-            searchBusy={!!state.search_box_input && state.search_busy}
-            errorMessage={state.search_error_message}
-          />
-          <AppearanceSwitch
-            appearance={settings.appearance}
-            setAppearance={(appearance) =>
-              setSettings({ ...settings, appearance })
-            }
-          />
-        </Flex>
-        <div className="background-player">
-          <div ref={player2Ref} />
-        </div>
-        <Flex className="app-main" direction="column" align="center" gap="2">
+              suggestions={state.collection_path_completions ?? []}
+              size={state.collection?.size}
+            />
+            <SearchBox
+              value={state.search_box_input ?? ""}
+              setValue={(value: string) =>
+                dispatch({ type: "search-box-input", input: value })
+              }
+              searchLimit={state.search_limit}
+              setSearchLimit={(limit: number) =>
+                dispatch({ type: "set-search-limit", limit })
+              }
+              searchKind={state.search_kind}
+              setSearchKind={(kind: SearchKind) =>
+                dispatch({ type: "set-search-kind", kind })
+              }
+              searchBusy={!!state.search_box_input && state.search_busy}
+              errorMessage={state.search_error_message}
+            />
+            <AppearanceSwitch
+              appearance={settings.appearance}
+              setAppearance={(appearance) =>
+                setSettings({ ...settings, appearance })
+              }
+            />
+          </Flex>
+          <div className="background-player">
+            <div ref={player2Ref} />
+          </div>
           <Title title={state.title ?? ""} />
           <Rating
             enabled={state.current_id === state.track_info?.yt_id}
@@ -898,6 +906,11 @@ function App() {
             kind={state.notification_kind}
           />
           <Toast.Viewport className="ToastViewport" />
+          {state.backend_version ? (
+            <Code>Stereo - {state.backend_version}</Code>
+          ) : (
+            <Spinner />
+          )}
         </Flex>
       </Toast.Provider>
     </Theme>
