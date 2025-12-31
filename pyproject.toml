@@ -1,7 +1,7 @@
 [project]
 name = "stereo"
 dynamic = ["version"]
-description = "Add your description here"
+description = "A browser-based music curation and streaming app"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

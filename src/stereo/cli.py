@@ -11,7 +11,7 @@ def main():
     parser.add_argument(
         "--home",
         metavar="PATH",
-        help="path to where app files like `stereo.db` file will be stored.",
+        help="directory where app data like the default collection, logs etc., are stored. (defaults to ~/.local/share/stereo)",
     )
 
     parser.add_argument(
@@ -19,7 +19,14 @@ def main():
         "-p",
         type=int,
         default=8005,
-        help="the port on which the server will listen",
+        help="the port on which the server will listen (defaults to 8005)",
+    )
+
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="localhost",
+        help="the host to which the socket is bound (defaults to localhost)",
     )
 
     parser.add_argument(
@@ -55,7 +62,7 @@ def main():
 
     cmd = ["uvicorn"]
 
-    cmd.extend(["--host", "0.0.0.0", "--port", str(args.port), "--log-level", "info"])
+    cmd.extend(["--host", args.host, "--port", str(args.port), "--log-level", "info"])
 
     if args.dev:
         cmd.append("--reload")
