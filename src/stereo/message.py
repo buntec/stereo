@@ -36,6 +36,26 @@ class MsgHeartbeat:
 
 
 @dataclass
+class MsgImportFrom:
+    path: str
+    keep_user_data: bool
+    type: Literal["import-from"] = "import-from"
+
+
+@dataclass
+class MsgCheckImportFrom:
+    path: str
+    type: Literal["check-import-from"] = "check-import-from"
+
+
+@dataclass
+class MsgImportFromValid:
+    path: str
+    is_valid: bool
+    type: Literal["import-from-valid"] = "import-from-valid"
+
+
+@dataclass
 class MsgBackendInfo:
     version: str
     type: Literal["backend-info"] = "backend-info"
@@ -289,6 +309,7 @@ type MsgServer = (
     | MsgSearchComplete
     | MsgCollectionContainsIdResponse
     | MsgNotification
+    | MsgImportFromValid
 )
 
 type MsgClient = (
@@ -311,4 +332,6 @@ type MsgClient = (
     | MsgSearch
     | MsgSearchCancelAll
     | MsgCollectionContainsId
+    | MsgCheckImportFrom
+    | MsgImportFrom
 )

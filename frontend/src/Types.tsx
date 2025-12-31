@@ -31,6 +31,8 @@ export type ClientMsg =
   | { type: "create-collection"; path: string }
   | { type: "collection-contains-id"; yt_id: string }
   | { type: "get-track-info"; yt_id: string }
+  | { type: "import-from"; path: string; keep_user_data: boolean }
+  | { type: "check-import-from"; path: string }
   | { type: "inc-play-count"; yt_id: string }
   | { type: "search-cancel-all" }
   | { type: "update-rating"; yt_id: string; rating: number | null }
@@ -84,6 +86,7 @@ export type ServerMsg =
   | { type: "search-result"; query_id: number; track: ITrack }
   | { type: "search-results"; query_id: number; tracks: ITrack[] }
   | { type: "search-complete"; query_id: number }
+  | { type: "import-from-valid"; path: string; is_valid: boolean }
   | {
       type: "collection-contains-id-response";
       id: number;
@@ -94,6 +97,8 @@ export type Action =
   | ServerMsg
   | { type: "player-state-change"; id: string; state: number }
   | { type: "set-title"; title?: string }
+  | { type: "set-import-from"; path: string }
+  | { type: "set-import-keep-user-data"; keep: boolean }
   | { type: "set-notification-show"; show: boolean }
   | { type: "clear-title" }
   | { type: "collection-is-valid" }

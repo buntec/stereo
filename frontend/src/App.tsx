@@ -14,6 +14,7 @@ import {
   PlusCircledIcon,
   InfoCircledIcon,
   VideoIcon,
+  TrashIcon,
   ShuffleIcon,
   DoubleArrowLeftIcon,
   DoubleArrowRightIcon,
@@ -59,6 +60,7 @@ import { SearchBox } from "./SearchBox.tsx";
 import { formatDuration, useLocalStorage } from "./Utils.tsx";
 import { Rating } from "./Rating.tsx";
 import { CollectionSelector } from "./CollectionSelector.tsx";
+import { ImportDialog } from "./ImportDialog.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
@@ -112,6 +114,10 @@ type State = {
   notification_msg?: string;
   notification_show: boolean;
   notification_kind?: "info" | "warn" | "warning" | "error";
+
+  import_from?: string;
+  import_from_keep_user_data?: boolean;
+  import_from_is_valid?: boolean;
 };
 
 const reducer = (state: State, action: Action): State => {
@@ -126,6 +132,10 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, backend_version: action.version };
     case "set-title":
       return { ...state, title: action.title };
+    case "set-import-from":
+      return { ...state, import_from: action.path };
+    case "set-import-keep-user-data":
+      return { ...state, import_from_keep_user_data: action.keep };
     case "clear-title":
       return { ...state, title: undefined };
     case "collection-is-valid":
@@ -167,6 +177,11 @@ const reducer = (state: State, action: Action): State => {
       };
     case "reload-tracks":
       return { ...state, should_refresh_grid: true, track_info: undefined };
+    case "import-from-valid":
+      if (action.path === state.import_from) {
+        return { ...state, import_from_is_valid: action.is_valid };
+      }
+      return { ...state };
     case "default-collection":
       return { ...state, default_collection: action.collection };
     case "grid-refreshed":
@@ -586,6 +601,12 @@ function App() {
     }
   }, [state.shuffle_play]);
 
+  useEffect(() => {
+    if (state.import_from) {
+      sendMsg({ type: "check-import-from", path: state.import_from });
+    }
+  }, [state.import_from]);
+
   const playIds = useCallback(
     (ids: string[]) => dispatch({ type: "play-ids", ids }),
     [dispatch],
@@ -657,7 +678,7 @@ function App() {
           direction="column"
           align="center"
           gap="2"
-          py="4"
+          pb="4"
         >
           <Flex gap="2" justify="between" className="toolbar">
             <CollectionSelector
@@ -847,8 +868,8 @@ function App() {
           <div className={`player ${state.show_player ? "" : "hidden"}`}>
             <div ref={playerRef} />
           </div>
-          <Flex width="100%" gap="2" px="2">
-            {state.search_results && !!state.search_box_input ? (
+          {state.search_results && !!state.search_box_input ? (
+            <Flex width="100%" gap="2" px="2">
               <Tooltip content="Add selected tracks">
                 <IconButton
                   color="green"
@@ -863,18 +884,41 @@ function App() {
                   <PlusCircledIcon />
                 </IconButton>
               </Tooltip>
-            ) : (
+            </Flex>
+          ) : (
+            <Flex width="100%" gap="2" px="2">
               <Tooltip content="Delete selected tracks">
-                <Button
+                <IconButton
                   color="red"
+                  variant="soft"
                   onClick={deleteSelectedTracks}
                   disabled={state.track_selection.length === 0}
                 >
-                  Delete
-                </Button>
+                  <TrashIcon />
+                </IconButton>
               </Tooltip>
-            )}
-          </Flex>
+              <ImportDialog
+                setImportFrom={(path: string) =>
+                  dispatch({ type: "set-import-from", path })
+                }
+                keepUserData={state.import_from_keep_user_data ?? false}
+                setKeepUserData={(keep: boolean) =>
+                  dispatch({ type: "set-import-keep-user-data", keep })
+                }
+                importFrom={state.import_from ?? ""}
+                doImport={() => {
+                  if (state.import_from) {
+                    sendMsg({
+                      type: "import-from",
+                      path: state.import_from,
+                      keep_user_data: state.import_from_keep_user_data ?? false,
+                    });
+                  }
+                }}
+                isValidImportFrom={state.import_from_is_valid ?? false}
+              />
+            </Flex>
+          )}
           <Box className="grid-container">
             {state.search_results && !!state.search_box_input ? (
               <SearchResultsGrid

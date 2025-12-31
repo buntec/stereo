@@ -331,25 +331,27 @@ async def migrate_from_old_db(new_db_path: str, old_db_path: str):
             await db.execute("DETACH DATABASE old_db")
 
 
-async def import_from_db(
-    ctx: Context,
-    source_db: str,
-    cols=[
+async def import_from_db(ctx: Context, source_db: str, keep_user_data: bool):
+    cols = [
         "yt_id",
+        "bp_id",
+        "mb_id",
         "title",
         "mix_name",
         "artists",
-        "bp_id",
-        "mb_id",
         "release_date",
         "label",
-        "bpm",
-        "key",
         "album",
+        "length",
+        "bpm",
         "genre",
+        "key",
         "mood",
-    ],
-):
+    ]
+
+    if keep_user_data:
+        cols.extend(["rating", "play_count", "last_played"])
+
     async with aiosqlite.connect(ctx.path) as db:
         await db.execute("ATTACH DATABASE ? AS source_db", (source_db,))
         try:

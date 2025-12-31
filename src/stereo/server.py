@@ -25,6 +25,7 @@ from stereo.message import (
     MsgAddTrack,
     MsgAddTracks,
     MsgBackendInfo,
+    MsgCheckImportFrom,
     MsgClient,
     MsgCollectionContainsId,
     MsgCollectionContainsIdResponse,
@@ -37,6 +38,8 @@ from stereo.message import (
     MsgGetRows,
     MsgGetTrackInfo,
     MsgHeartbeat,
+    MsgImportFrom,
+    MsgImportFromValid,
     MsgIncPlayCount,
     MsgNotification,
     MsgPathCompletions,
@@ -328,6 +331,16 @@ async def websocket_endpoint(websocket: WebSocket):
             case MsgGetPathCompletions(id, prefix):
                 completions = get_path_completions(prefix)
                 await q_tx.put(MsgPathCompletions(id, completions))
+
+            case MsgImportFrom(path, keep_user_data):
+                ctx = state.db_ctx()
+                if ctx is not None:
+                    await db.import_from_db(ctx, path, keep_user_data)
+                    await update_collection()
+
+            case MsgCheckImportFrom(path):
+                is_valid = await db.validate_db_schema(path)
+                await q_tx.put(MsgImportFromValid(path, is_valid))
 
             case _:
                 logger.warning(f"unhandled WS message: {msg}")

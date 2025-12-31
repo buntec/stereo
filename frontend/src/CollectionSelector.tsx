@@ -34,7 +34,7 @@ export function CollectionSelector({
           <CubeIcon color={isValid ? "green" : "red"} height="16" width="16" />
         </TextField.Slot>
         <TextField.Slot>
-          <Tooltip content="Reset to default collection">
+          <Tooltip content="Return to default collection">
             <IconButton variant="ghost" onClick={resetToDefault}>
               <ResetIcon />
             </IconButton>
@@ -42,7 +42,9 @@ export function CollectionSelector({
         </TextField.Slot>
         <TextField.Slot>
           {isValid ? (
-            <Code>{size}</Code>
+            <Tooltip content={`Collection contains ${size} tracks`}>
+              <Code>{size}</Code>
+            </Tooltip>
           ) : (
             <Tooltip content="Create new collection at current path">
               <IconButton
