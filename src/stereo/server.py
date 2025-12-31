@@ -18,9 +18,9 @@ from starlette.websockets import WebSocket
 
 import stereo.db as db
 import stereo.lib as lib
+from stereo._logging import setup_logger
 from stereo._version import __version__
 from stereo.lib import Collection, Track
-from stereo._logging import setup_logger
 from stereo.message import (
     MsgAddTrack,
     MsgAddTracks,
@@ -399,8 +399,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @asynccontextmanager
 async def lifespan(_):
-    setup_logger(settings.verbosity, settings.home)
     settings.home.mkdir(parents=True, exist_ok=True)
+    setup_logger(settings.verbosity, settings.home)
     logger.info(f"Stereo settings: {settings}")
     yield
 
