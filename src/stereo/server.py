@@ -31,6 +31,7 @@ from stereo.message import (
     MsgCollectionContainsIdResponse,
     MsgCollectionInfo,
     MsgCreateCollection,
+    MsgCreateYTAnonPlaylist,
     MsgDefaultCollection,
     MsgDeleteTracks,
     MsgGetPathCompletions,
@@ -58,6 +59,7 @@ from stereo.message import (
     MsgTrackNotFound,
     MsgTrackUpdate,
     MsgUpdateRating,
+    MsgYTAnonPlaylist,
 )
 from stereo.utils import get_path_completions
 
@@ -190,6 +192,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     await db.delete_tracks(ctx, ids)
                     await q_tx.put(MsgReloadTracks())
                     await update_collection()
+
+            case MsgCreateYTAnonPlaylist(id, ids):
+                url = await lib.yt_create_anon_playlist(ids)
+                await q_tx.put(MsgYTAnonPlaylist(id, url))
 
             case MsgGetRandomTrack():
                 ctx = state.db_ctx()

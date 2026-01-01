@@ -763,6 +763,20 @@ async def search_fuzzy(session: ClientSession, query: str) -> AsyncGenerator[Tra
             yield Track.from_bp_track(track, yt_vids[0].id)
 
 
+async def get_final_url(url):
+    async with ClientSession() as session:
+        async with session.get(url, allow_redirects=True) as response:
+            return response.url
+
+
+async def yt_create_anon_playlist(video_ids: list[str]) -> str:
+    base_url = "http://www.youtube.com/watch_videos?video_ids="
+    url = f"{base_url}{','.join(video_ids)}"
+    final_url = await get_final_url(url)
+    list = final_url.query.get("list")
+    return f"https://music.youtube.com/watch?list={list}"
+
+
 if __name__ == "__main__":
 
     async def test_yt_search():
@@ -816,11 +830,17 @@ if __name__ == "__main__":
                 if i >= 5:
                     break
 
+    async def test_yt_anon_playlist():
+        ids = ["nP60jajfMdw", "0h6VHeysvh4", "tDDsbq8PqBM"]
+        url = await yt_create_anon_playlist(ids)
+        print(url)
+
     # asyncio.run(test_yt_search())
     # asyncio.run(test_get_label_releases())
     # asyncio.run(test_get_artist_releases())
-    asyncio.run(test_search_fuzzy())
+    # asyncio.run(test_search_fuzzy())
     # asyncio.run(test_bp_search())
     # asyncio.run(test_bp_search_artist())
     # asyncio.run(test_yt_get_metadata())
     # asyncio.run(test_mb_search())
+    asyncio.run(test_yt_anon_playlist())

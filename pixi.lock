@@ -1665,8 +1665,8 @@ packages:
   requires_python: '>=3.10'
 - pypi: ./
   name: stereo
-  version: 0.1.dev58+gfaab87d5a.d20251231
-  sha256: 0193a9b8b93291238fe6c72d7b9b46f0a19583fa52431774421d51cbe1dc6580
+  version: 0.1.dev7+g446837ce8
+  sha256: 4bb8428c27d91ff40e7cce23772d8435b8f0a1b606f1044a0f43f02bd497ee97
   requires_dist:
   - aiohttp>=3.13.2
   - aiosqlite>=0.22.0

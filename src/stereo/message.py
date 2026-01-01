@@ -30,6 +30,20 @@ class MsgDefaultCollection:
 
 
 @dataclass
+class MsgCreateYTAnonPlaylist:
+    id: int
+    yt_ids: list[str]
+    type: Literal["create-yt-anon-playlist"] = "create-yt-anon-playlist"
+
+
+@dataclass
+class MsgYTAnonPlaylist:
+    id: int
+    url: str
+    type: Literal["yt-anon-playlist"] = "yt-anon-playlist"
+
+
+@dataclass
 class MsgHeartbeat:
     timestamp: int
     type: Literal["heartbeat"] = "heartbeat"
@@ -310,6 +324,7 @@ type MsgServer = (
     | MsgCollectionContainsIdResponse
     | MsgNotification
     | MsgImportFromValid
+    | MsgYTAnonPlaylist
 )
 
 type MsgClient = (
@@ -334,4 +349,5 @@ type MsgClient = (
     | MsgCollectionContainsId
     | MsgCheckImportFrom
     | MsgImportFrom
+    | MsgCreateYTAnonPlaylist
 )

@@ -34,6 +34,7 @@ export type ClientMsg =
   | { type: "import-from"; path: string; keep_user_data: boolean }
   | { type: "check-import-from"; path: string }
   | { type: "inc-play-count"; yt_id: string }
+  | { type: "create-yt-anon-playlist"; id?: number; yt_ids: string[] }
   | { type: "search-cancel-all" }
   | { type: "update-rating"; yt_id: string; rating: number | null }
   | { type: "delete-tracks"; ids: string[] }
@@ -70,6 +71,7 @@ export type ServerMsg =
   | { type: "track-found"; id: number; track: ITrack; exists_in_db: boolean }
   | { type: "track-not-found"; id: number }
   | { type: "backend-info"; version: string }
+  | { type: "yt-anon-playlist"; id: number; url: string }
   | { type: "track-info"; track: ITrack }
   | {
       type: "collection-info";

@@ -13,8 +13,10 @@ import {
   ExclamationTriangleIcon,
   PlusCircledIcon,
   InfoCircledIcon,
+  Cross2Icon,
   VideoIcon,
   TrashIcon,
+  OpenInNewWindowIcon,
   ShuffleIcon,
   DoubleArrowLeftIcon,
   DoubleArrowRightIcon,
@@ -123,24 +125,31 @@ const reducer = (state: State, action: Action): State => {
   switch (action.type) {
     case "play-ids":
       return { ...state, playlist: action.ids };
+
     case "player-state-change":
       return { ...state, player_state: action.state, current_id: action.id };
-    case "heartbeat":
-      return { ...state };
+
     case "backend-info":
       return { ...state, backend_version: action.version };
+
     case "set-title":
       return { ...state, title: action.title };
+
     case "set-import-from":
       return { ...state, import_from: action.path };
+
     case "set-import-keep-user-data":
       return { ...state, import_from_keep_user_data: action.keep };
+
     case "clear-title":
       return { ...state, title: undefined };
+
     case "collection-is-valid":
       return { ...state, collection_is_valid: true };
+
     case "collection-path-completions":
       return { ...state, collection_path_completions: action.paths };
+
     case "collection-info":
       if (action.error_message) {
         return {
@@ -158,8 +167,7 @@ const reducer = (state: State, action: Action): State => {
         should_purge_grid: true,
         collection_last_update: Date.now(),
       };
-    case "tracks":
-      return { ...state };
+
     case "track-update":
       if (action.track.yt_id === state.current_id) {
         return {
@@ -174,30 +182,37 @@ const reducer = (state: State, action: Action): State => {
         should_refresh_grid: true,
         collection_last_update: Date.now(),
       };
+
     case "reload-tracks":
       return { ...state, should_refresh_grid: true, track_info: undefined };
+
     case "import-from-valid":
       if (action.path === state.import_from) {
         return { ...state, import_from_is_valid: action.is_valid };
       }
       return { ...state };
+
     case "default-collection":
       return { ...state, default_collection: action.collection };
+
     case "grid-refreshed":
       return { ...state, should_refresh_grid: false };
+
     case "grid-purged":
       return { ...state, should_purge_grid: false };
+
     case "search-box-input":
       return { ...state, search_box_input: action.input };
+
     case "selection-changed":
       return { ...state, track_selection: action.selected };
-    case "collection-contains-id-response":
-      return { ...state };
 
     case "search-results-selection-changed":
       return { ...state, search_results_selection: action.selected };
+
     case "clear-search-results":
       return { ...state, search_results: undefined };
+
     case "search-result":
       return {
         ...state,
@@ -207,6 +222,7 @@ const reducer = (state: State, action: Action): State => {
             : [action.track],
         search_query_id: action.query_id,
       };
+
     case "search-results":
       return {
         ...state,
@@ -216,6 +232,7 @@ const reducer = (state: State, action: Action): State => {
             : action.tracks,
         search_query_id: action.query_id,
       };
+
     case "set-search-failure":
       return {
         ...state,
@@ -223,15 +240,19 @@ const reducer = (state: State, action: Action): State => {
         search_results: undefined,
         search_busy: false,
       };
+
     case "search-complete":
       if (action.query_id === state.search_query_id) {
         return { ...state, search_busy: false };
       }
       return { ...state };
+
     case "set-search-busy":
       return { ...state, search_busy: true };
+
     case "set-search-limit":
       return { ...state, search_limit: action.limit };
+
     case "set-search-kind":
       return { ...state, search_kind: action.kind };
 
@@ -242,18 +263,19 @@ const reducer = (state: State, action: Action): State => {
         duration: action.duration,
         current_time: action.current_time,
       };
-    case "rows":
-      return { ...state };
+
     case "toggle-shuffle":
       return { ...state, shuffle_play: !state.shuffle_play };
+
     case "toggle-show-player":
       return { ...state, show_player: !state.show_player };
+
     case "track-info":
       return { ...state, track_info: action.track };
-    case "track-found":
-      return { ...state };
+
     case "set-notification-show":
       return { ...state, notification_show: action.show };
+
     case "notification":
       return {
         ...state,
@@ -261,9 +283,22 @@ const reducer = (state: State, action: Action): State => {
         notification_msg: action.message,
         notification_show: true,
       };
-  }
 
-  throw new Error(`should be unreachable - action: ${JSON.stringify(action)}`);
+    case "rows":
+    case "yt-anon-playlist":
+    case "track-not-found":
+    case "track-found":
+    case "tracks":
+    case "play-id":
+    case "heartbeat":
+    case "collection-contains-id-response":
+    case "path-completions":
+    case "pong":
+      return { ...state };
+
+    default:
+      throw new Error(`missing handler for action: ${JSON.stringify(action)}`);
+  }
 };
 
 type AppearanceSwitchProps = {
@@ -637,12 +672,28 @@ function App() {
     [player],
   );
 
+  const deselectAll = useCallback(() => {
+    gridRef.current?.api.deselectAll();
+  }, []);
+
   const deleteSelectedTracks = useCallback(() => {
     const selectedRows = gridRef.current?.api.getSelectedRows();
     if (selectedRows) {
       const ids = selectedRows.map((t) => t.yt_id);
       sendMsg({ type: "delete-tracks", ids });
       gridRef.current?.api.deselectAll();
+    }
+  }, [sendMsg]);
+
+  const openSelectedTracksAsYTMPlaylist = useCallback(() => {
+    const selectedRows = gridRef.current?.api.getSelectedRows();
+    if (selectedRows) {
+      const yt_ids = selectedRows.map((t) => t.yt_id);
+      requestReply({ type: "create-yt-anon-playlist", yt_ids }, (r) => {
+        if ("url" in r) {
+          window.open(r.url, "_blank");
+        }
+      });
     }
   }, [sendMsg]);
 
@@ -886,6 +937,16 @@ function App() {
             </Flex>
           ) : (
             <Flex width="100%" gap="2" px="2">
+              <Tooltip content="Deselect all">
+                <IconButton
+                  variant="soft"
+                  onClick={deselectAll}
+                  disabled={state.track_selection.length === 0}
+                >
+                  <Cross2Icon />
+                </IconButton>
+              </Tooltip>
+
               <Tooltip content="Delete selected tracks">
                 <IconButton
                   color="red"
@@ -894,6 +955,15 @@ function App() {
                   disabled={state.track_selection.length === 0}
                 >
                   <TrashIcon />
+                </IconButton>
+              </Tooltip>
+              <Tooltip content="Open selection as YouTube Music playlist (max 50)">
+                <IconButton
+                  variant="soft"
+                  onClick={openSelectedTracksAsYTMPlaylist}
+                  disabled={state.track_selection.length === 0}
+                >
+                  <OpenInNewWindowIcon />
                 </IconButton>
               </Tooltip>
               <ImportDialog
