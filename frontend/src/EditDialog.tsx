@@ -30,7 +30,7 @@ export function EditTrackDialog({
     <Dialog.Root>
       <Tooltip content="Edit track">
         <Dialog.Trigger>
-          <IconButton variant="ghost" size="1">
+          <IconButton variant="ghost" size="1" onClick={resetValue}>
             <Pencil1Icon />
           </IconButton>
         </Dialog.Trigger>
