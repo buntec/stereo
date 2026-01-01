@@ -59,6 +59,9 @@ from stereo.message import (
     MsgTrackNotFound,
     MsgTrackUpdate,
     MsgUpdateRating,
+    MsgUpdateTrack,
+    MsgValidateTrack,
+    MsgValidateTrackReply,
     MsgYTAnonPlaylist,
 )
 from stereo.utils import get_path_completions
@@ -186,6 +189,13 @@ async def websocket_endpoint(websocket: WebSocket):
             case MsgHeartbeat(t):
                 await q_tx.put(MsgHeartbeat(t))
 
+            case MsgValidateTrack(id, data):
+                try:
+                    t = Track(**data)
+                    await q_tx.put(MsgValidateTrackReply(id, True))
+                except Exception:
+                    await q_tx.put(MsgValidateTrackReply(id, False))
+
             case MsgDeleteTracks(ids):
                 ctx = state.db_ctx()
                 if ctx is not None:
@@ -196,6 +206,14 @@ async def websocket_endpoint(websocket: WebSocket):
             case MsgCreateYTAnonPlaylist(id, ids):
                 url = await lib.yt_create_anon_playlist(ids)
                 await q_tx.put(MsgYTAnonPlaylist(id, url))
+
+            case MsgUpdateTrack(old, new):
+                ctx = state.db_ctx()
+                if ctx is not None:
+                    await db.insert_track(ctx, new, ignore_if_exists=False)
+                    if old.yt_id != new.yt_id:
+                        await db.delete_track(ctx, old.yt_id)
+                    await update_collection()
 
             case MsgGetRandomTrack():
                 ctx = state.db_ctx()

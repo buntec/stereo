@@ -35,6 +35,10 @@
   --ag-menu-background-color: rgb(from var(--color-surface) r g b / 0.5);
 }
 
+.edit-track.invalid {
+  background-color: var(--red-6);
+}
+
 .ag-menu {
   backdrop-filter: blur(8px);
 }

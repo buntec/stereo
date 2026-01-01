@@ -1,4 +1,10 @@
-import type { ITrack, Action, RequestReply, ServerMsg } from "./Types.tsx";
+import type {
+  ITrack,
+  Action,
+  RequestReply,
+  ServerMsg,
+  ClientMsg,
+} from "./Types.tsx";
 import { type CustomCellRendererProps } from "ag-grid-react";
 import { IconButton, Tooltip, Flex } from "@radix-ui/themes";
 import { AgGridReact } from "ag-grid-react";
@@ -25,7 +31,10 @@ import {
   useEffect,
   type Dispatch,
 } from "react";
+
 import { CheckCircledIcon, PlayIcon, ResumeIcon } from "@radix-ui/react-icons";
+
+import { EditTrackDialog } from "./EditDialog.tsx";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -77,9 +86,9 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
   );
 };
 
-const PlayControlRenderer: React.FC<CustomCellRendererProps<ITrack>> = (
-  params,
-) => {
+const PlayControlRenderer: React.FC<
+  CustomCellRendererProps<ITrack, any, TracksGridContext>
+> = (params) => {
   const { data, node, api, context } = params;
 
   if (!data) return null;
@@ -105,8 +114,28 @@ const PlayControlRenderer: React.FC<CustomCellRendererProps<ITrack>> = (
     context.playIds([data.yt_id]);
   }, [params]);
 
+  const [value, setValue] = useState(data);
+
+  const [isValid, setIsValid] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    context.requestReply({ type: "validate-track", track: value }, (msg) => {
+      if ("is_valid" in msg) {
+        setIsValid(msg.is_valid);
+      }
+    });
+  }, [value]);
+
+  const commit = useCallback(() => {
+    context.sendMsg({ type: "update-track", old: data, new: value });
+  }, [context, data, value]);
+
+  const resetValue = useCallback(() => {
+    setValue(data);
+  }, [data]);
+
   return (
-    <Flex gap="2" align="center">
+    <Flex gap="3" align="center">
       <img
         src={`https://i.ytimg.com/vi/${data.yt_id}/default.jpg`}
         alt="YouTube Video Thumbnail"
@@ -114,7 +143,7 @@ const PlayControlRenderer: React.FC<CustomCellRendererProps<ITrack>> = (
       />
       <Tooltip content="Play">
         <IconButton
-          variant="soft"
+          variant="ghost"
           size="1"
           onClick={handlePlay}
           aria-label="Play"
@@ -125,7 +154,7 @@ const PlayControlRenderer: React.FC<CustomCellRendererProps<ITrack>> = (
 
       <Tooltip content="Play from here">
         <IconButton
-          variant="soft"
+          variant="ghost"
           size="1"
           onClick={handlePlayFromHere}
           aria-label="Play from here"
@@ -133,6 +162,14 @@ const PlayControlRenderer: React.FC<CustomCellRendererProps<ITrack>> = (
           <ResumeIcon />
         </IconButton>
       </Tooltip>
+
+      <EditTrackDialog
+        isValid={isValid}
+        value={value}
+        setValue={setValue}
+        commit={commit}
+        resetValue={resetValue}
+      />
     </Flex>
   );
 };
@@ -335,12 +372,14 @@ interface TracksGridProps {
   updateRating: (yt_id: string, rating: number | null) => void;
   requestReply: RequestReply;
   dispatch: Dispatch<Action>;
+  sendMsg: (msg: ClientMsg) => void;
 }
 
 type TracksGridContext = {
   playIds: (ids: string[]) => void;
   requestReply: RequestReply;
   updateRating: (yt_id: string, rating: number) => void;
+  sendMsg: (msg: ClientMsg) => void;
 };
 
 export const TracksGrid = ({
@@ -350,6 +389,7 @@ export const TracksGrid = ({
   updateRating,
   requestReply,
   dispatch,
+  sendMsg,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -462,8 +502,13 @@ export const TracksGrid = ({
   );
 
   const context: TracksGridContext = useMemo(() => {
-    return { updateRating: updateRatingAndRefresh, requestReply, playIds };
-  }, [updateRatingAndRefresh, requestReply, playIds]);
+    return {
+      updateRating: updateRatingAndRefresh,
+      requestReply,
+      playIds,
+      sendMsg,
+    };
+  }, [updateRatingAndRefresh, requestReply, playIds, sendMsg]);
 
   const onSelectionChanged = useCallback(
     (ev: SelectionChangedEvent<ITrack>) => {

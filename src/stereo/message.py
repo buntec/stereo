@@ -44,6 +44,13 @@ class MsgYTAnonPlaylist:
 
 
 @dataclass
+class MsgUpdateTrack:
+    old: Track
+    new: Track
+    type: Literal["update-track"] = "update-track"
+
+
+@dataclass
 class MsgHeartbeat:
     timestamp: int
     type: Literal["heartbeat"] = "heartbeat"
@@ -98,6 +105,20 @@ class MsgGetRandomTrack:
 class MsgDeleteTracks:
     ids: list[str]
     type: Literal["delete-tracks"] = "delete-tracks"
+
+
+@dataclass
+class MsgValidateTrack:
+    id: int  # request id
+    track: dict[str, Any]
+    type: Literal["validate-track"] = "validate-track"
+
+
+@dataclass
+class MsgValidateTrackReply:
+    id: int  # request id
+    is_valid: bool
+    type: Literal["validate-track-reply"] = "validate-track-reply"
 
 
 @dataclass
@@ -325,6 +346,7 @@ type MsgServer = (
     | MsgNotification
     | MsgImportFromValid
     | MsgYTAnonPlaylist
+    | MsgValidateTrackReply
 )
 
 type MsgClient = (
@@ -350,4 +372,6 @@ type MsgClient = (
     | MsgCheckImportFrom
     | MsgImportFrom
     | MsgCreateYTAnonPlaylist
+    | MsgUpdateTrack
+    | MsgValidateTrack
 )

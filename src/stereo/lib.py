@@ -172,7 +172,12 @@ async def bp_search_tracks(session: ClientSession, q: str) -> list[BPTrack]:
     logger.info(f"searching Beatport with query: {q}")
     async with session.get(
         "https://www.beatport.com/search/tracks",
-        params={"q": q, "order_by": "-release_date", "per_page": 1000, "page": 1},
+        params={
+            "q": q,
+            # "order_by": "-release_date",
+            "per_page": 1000,
+            "page": 1,
+        },
     ) as response:
         html = await response.text()
         logger.debug(f"Beatport response: {html}")

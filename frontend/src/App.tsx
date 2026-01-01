@@ -15,6 +15,7 @@ import {
   InfoCircledIcon,
   Cross2Icon,
   VideoIcon,
+  ResetIcon,
   TrashIcon,
   OpenInNewWindowIcon,
   ShuffleIcon,
@@ -119,6 +120,9 @@ type State = {
   import_from?: string;
   import_from_keep_user_data?: boolean;
   import_from_is_valid?: boolean;
+
+  edit_track?: ITrack;
+  edit_track_ref?: ITrack;
 };
 
 const reducer = (state: State, action: Action): State => {
@@ -293,6 +297,7 @@ const reducer = (state: State, action: Action): State => {
     case "heartbeat":
     case "collection-contains-id-response":
     case "path-completions":
+    case "validate-track-reply":
     case "pong":
       return { ...state };
 
@@ -672,6 +677,11 @@ function App() {
     [player],
   );
 
+  const resetColumnState = useCallback(() => {
+    gridRef.current?.api.resetColumnState();
+    gridRef.current?.api.setFilterModel(null);
+  }, []);
+
   const deselectAll = useCallback(() => {
     gridRef.current?.api.deselectAll();
   }, []);
@@ -986,6 +996,11 @@ function App() {
                 }}
                 isValidImportFrom={state.import_from_is_valid ?? false}
               />
+              <Tooltip content="Reset column state">
+                <IconButton variant="soft" onClick={resetColumnState}>
+                  <ResetIcon />
+                </IconButton>
+              </Tooltip>
             </Flex>
           )}
           <Box className="grid-container">
@@ -1007,6 +1022,7 @@ function App() {
                 updateRating={updateRating}
                 requestReply={requestReply}
                 dispatch={dispatch}
+                sendMsg={sendMsg}
               />
             )}
           </Box>

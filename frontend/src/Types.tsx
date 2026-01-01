@@ -28,6 +28,7 @@ export type SearchKind = "fuzzy" | "by-label" | "by-artist";
 
 export type ClientMsg =
   | { type: "set-collection"; path: string }
+  | { type: "validate-track"; track: any; id?: number }
   | { type: "create-collection"; path: string }
   | { type: "collection-contains-id"; yt_id: string }
   | { type: "get-track-info"; yt_id: string }
@@ -37,6 +38,7 @@ export type ClientMsg =
   | { type: "create-yt-anon-playlist"; id?: number; yt_ids: string[] }
   | { type: "search-cancel-all" }
   | { type: "update-rating"; yt_id: string; rating: number | null }
+  | { type: "update-track"; old: ITrack; new: ITrack }
   | { type: "delete-tracks"; ids: string[] }
   | {
       type: "get-rows";
@@ -63,6 +65,7 @@ export type ServerMsg =
     }
   | { type: "heartbeat"; timestamp: number }
   | { type: "play-id"; ids: string }
+  | { type: "validate-track-reply"; is_valid: boolean; id: number }
   | { type: "play-ids"; ids: string[] }
   | { type: "tracks"; tracks: ITrack[] }
   | { type: "track-update"; track: ITrack }
