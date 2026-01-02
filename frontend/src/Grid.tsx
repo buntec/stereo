@@ -246,7 +246,6 @@ type SearchResultsGridContext = {
 
 export const SearchResultsGrid = ({
   gridRef,
-  currentId,
   playIds,
   requestReply,
   dispatch,
@@ -261,6 +260,7 @@ export const SearchResultsGrid = ({
       width: 140,
     },
     { field: "title", headerName: "Title", filter: true },
+    { field: "mix_name", headerName: "Mix", filter: true },
     { field: "artists", headerName: "Artist", filter: true, type: "artists" },
     { field: "label", headerName: "Label", filter: true },
     {
@@ -313,14 +313,6 @@ export const SearchResultsGrid = ({
     };
   }, []);
 
-  const rowClassRules = useMemo(() => {
-    return {
-      "progress-bar": (params: RowClassParams<ITrack>) => {
-        return params.data?.yt_id === currentId;
-      },
-    };
-  }, [currentId]);
-
   const onSelectionChanged = useCallback(
     (ev: SelectionChangedEvent<ITrack>) => {
       dispatch({
@@ -354,7 +346,6 @@ export const SearchResultsGrid = ({
         rowModelType={"clientSide"}
         getRowId={getRowId}
         columnTypes={columnTypes}
-        rowClassRules={rowClassRules}
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}
