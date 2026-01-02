@@ -246,7 +246,7 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "search-complete":
-      if (action.query_id === state.search_query_id) {
+      if (!state.search_query_id || state.search_query_id === action.query_id) {
         return { ...state, search_busy: false };
       }
       return { ...state };

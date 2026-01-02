@@ -149,32 +149,53 @@ async def websocket_endpoint(websocket: WebSocket):
     async def search_fuzzy(query: str, query_id: int, limit: int):
         async with aiohttp.ClientSession() as session:
             i = 0
-            async for track in lib.search_fuzzy(session, query):
-                await q_tx.put(MsgSearchResult(query_id, track))
-                i += 1
-                if i >= limit:
-                    break
-            await q_tx.put(MsgSearchComplete(query_id))
+            try:
+                async for track in lib.search_fuzzy(session, query):
+                    await q_tx.put(MsgSearchResult(query_id, track))
+                    i += 1
+                    if i >= limit:
+                        break
+            except Exception as ex:
+                logger.exception("search_fuzzy failed")
+                await q_tx.put(
+                    MsgNotification(f"Search failed with exception: {ex}", "error")
+                )
+            finally:
+                await q_tx.put(MsgSearchComplete(query_id))
 
     async def search_by_artist(query: str, query_id: int, limit: int):
         async with aiohttp.ClientSession() as session:
             i = 0
-            async for track in lib.get_artist_releases(session, query):
-                await q_tx.put(MsgSearchResult(query_id, track))
-                i += 1
-                if i >= limit:
-                    break
-            await q_tx.put(MsgSearchComplete(query_id))
+            try:
+                async for track in lib.get_artist_releases(session, query):
+                    await q_tx.put(MsgSearchResult(query_id, track))
+                    i += 1
+                    if i >= limit:
+                        break
+            except Exception as ex:
+                logger.exception("search_by_artist failed")
+                await q_tx.put(
+                    MsgNotification(f"Search failed with exception: {ex}", "error")
+                )
+            finally:
+                await q_tx.put(MsgSearchComplete(query_id))
 
     async def search_by_label(query: str, query_id: int, limit: int):
         async with aiohttp.ClientSession() as session:
             i = 0
-            async for track in lib.get_label_releases(session, query):
-                await q_tx.put(MsgSearchResult(query_id, track))
-                i += 1
-                if i >= limit:
-                    break
-            await q_tx.put(MsgSearchComplete(query_id))
+            try:
+                async for track in lib.get_label_releases(session, query):
+                    await q_tx.put(MsgSearchResult(query_id, track))
+                    i += 1
+                    if i >= limit:
+                        break
+            except Exception as ex:
+                logger.exception("search_by_label failed")
+                await q_tx.put(
+                    MsgNotification(f"Search failed with exception: {ex}", "error")
+                )
+            finally:
+                await q_tx.put(MsgSearchComplete(query_id))
 
     async def update_collection() -> None:
         if state.collection is not None:

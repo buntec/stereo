@@ -119,11 +119,13 @@ const PlayControlRenderer: React.FC<
   const [isValid, setIsValid] = useState<boolean | null>(null);
 
   useEffect(() => {
-    context.requestReply({ type: "validate-track", track: value }, (msg) => {
-      if ("is_valid" in msg) {
-        setIsValid(msg.is_valid);
-      }
-    });
+    if (value !== data) {
+      context.requestReply({ type: "validate-track", track: value }, (msg) => {
+        if ("is_valid" in msg) {
+          setIsValid(msg.is_valid);
+        }
+      });
+    }
   }, [value]);
 
   const commit = useCallback(() => {

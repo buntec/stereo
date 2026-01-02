@@ -197,7 +197,7 @@ async def bp_search_tracks(session: ClientSession, q: str) -> list[BPTrack]:
                             bpt = BPTrack(
                                 artists,
                                 item.get("bpm"),
-                                item.get("key_name").strip(),
+                                item.get("key_name"),
                                 item.get("isrc"),
                                 label=item.get("label", {}).get("label_name"),
                                 release_date=datetime.fromisoformat(
@@ -827,7 +827,8 @@ if __name__ == "__main__":
 
     async def test_search_fuzzy():
         async with ClientSession() as session:
-            query = "henry saiz love mythology"
+            query = "auguxt what that means"
+            # query = "henry saiz love mythology"
             i = 0
             async for track in search_fuzzy(session, query):
                 i += 1
@@ -843,9 +844,9 @@ if __name__ == "__main__":
     # asyncio.run(test_yt_search())
     # asyncio.run(test_get_label_releases())
     # asyncio.run(test_get_artist_releases())
-    # asyncio.run(test_search_fuzzy())
+    asyncio.run(test_search_fuzzy())
     # asyncio.run(test_bp_search())
     # asyncio.run(test_bp_search_artist())
     # asyncio.run(test_yt_get_metadata())
     # asyncio.run(test_mb_search())
-    asyncio.run(test_yt_anon_playlist())
+    # asyncio.run(test_yt_anon_playlist())
