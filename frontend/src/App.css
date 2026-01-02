@@ -35,6 +35,10 @@
   --ag-menu-background-color: rgb(from var(--color-surface) r g b / 0.5);
 }
 
+.search-results {
+  --ag-background-color: rgb(from var(--plum-3) r g b / 0.25);
+}
+
 .edit-track.invalid {
   background-color: var(--red-6);
 }

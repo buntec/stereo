@@ -337,7 +337,10 @@ export const SearchResultsGrid = ({
   );
 
   return (
-    <div className="grid" style={{ height: "100%", width: "100%" }}>
+    <div
+      className="grid search-results"
+      style={{ height: "100%", width: "100%" }}
+    >
       <AgGridReact<ITrack>
         debug
         rowData={tracks}
