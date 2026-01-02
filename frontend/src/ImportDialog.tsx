@@ -20,7 +20,7 @@ type ImportDialogProps = {
   isValidImportFrom: boolean;
 };
 
-export function ImportDialog({
+function ImportDialog({
   setImportFrom,
   importFrom,
   setKeepUserData,
@@ -84,3 +84,5 @@ export function ImportDialog({
     </Dialog.Root>
   );
 }
+
+export default ImportDialog;

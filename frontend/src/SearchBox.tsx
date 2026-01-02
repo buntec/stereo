@@ -35,7 +35,7 @@ function toSearchKind(s: string): SearchKind {
   throw new Error(`cannot convert ${s} to search kind!`);
 }
 
-export function SearchBox({
+function SearchBox({
   value,
   setValue,
   searchKind,
@@ -46,7 +46,7 @@ export function SearchBox({
   errorMessage,
 }: ISearchBoxProps) {
   return (
-    <Flex className="search-box" direction="column" gap="2" align="start" m="2">
+    <Flex className="search-box" align="center" gap="2" m="2">
       <TextField.Root
         className="search-box-text-field"
         size="2"
@@ -98,13 +98,17 @@ export function SearchBox({
           </TextField.Slot>
         </Tooltip>
 
-        <TextField.Slot side="right">
-          <IconButton variant="ghost">
-            <Cross1Icon onClick={() => setValue("")} height="16" width="16" />
-          </IconButton>
-        </TextField.Slot>
+        <Tooltip content="Cancel search">
+          <TextField.Slot side="right">
+            <IconButton variant="ghost">
+              <Cross1Icon onClick={() => setValue("")} height="16" width="16" />
+            </IconButton>
+          </TextField.Slot>
+        </Tooltip>
       </TextField.Root>
       {errorMessage ? <Text color="red">{errorMessage}</Text> : null}
     </Flex>
   );
 }
+
+export default SearchBox;

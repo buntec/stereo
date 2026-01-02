@@ -11,7 +11,7 @@ export interface CollectionSelectorProps {
   createCollection: (path: string) => void;
 }
 
-export function CollectionSelector({
+function CollectionSelector({
   isValid,
   value,
   setValue,
@@ -67,3 +67,5 @@ export function CollectionSelector({
     </Flex>
   );
 }
+
+export default CollectionSelector;

@@ -7,7 +7,7 @@ interface RatingProps {
   updateRating: (rating: number | null) => void;
 }
 
-export function Rating({ enabled, currentRating, updateRating }: RatingProps) {
+function Rating({ enabled, currentRating, updateRating }: RatingProps) {
   const [rating, setRating] = useState<number | null>(null);
 
   useEffect(() => {
@@ -54,3 +54,5 @@ export function Rating({ enabled, currentRating, updateRating }: RatingProps) {
     </Flex>
   );
 }
+
+export default Rating;

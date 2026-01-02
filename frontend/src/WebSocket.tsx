@@ -89,7 +89,6 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
     const t = setTimeout(() => connect(), 500);
 
     return () => {
-      console.log("useWS cleanup");
       isUnmounted = true;
       clearTimeout(t);
       if (heartbeatInterval.current) {

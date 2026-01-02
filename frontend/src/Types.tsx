@@ -67,6 +67,7 @@ export type ServerMsg =
   | { type: "play-id"; ids: string }
   | { type: "validate-track-reply"; is_valid: boolean; id: number }
   | { type: "play-ids"; ids: string[] }
+  | { type: "cue-ids"; ids: string[] }
   | { type: "tracks"; tracks: ITrack[] }
   | { type: "track-update"; track: ITrack }
   | { type: "reload-tracks" }
@@ -101,6 +102,7 @@ export type ServerMsg =
 export type Action =
   | ServerMsg
   | { type: "player-state-change"; id: string; state: number }
+  | { type: "set-player2-visible"; visible: boolean }
   | { type: "set-title"; title?: string }
   | { type: "set-import-from"; path: string }
   | { type: "set-import-keep-user-data"; keep: boolean }
@@ -126,7 +128,8 @@ export type Action =
     }
   | { type: "rows" }
   | { type: "toggle-shuffle" }
-  | { type: "toggle-show-player" };
+  | { type: "toggle-show-player" }
+  | { type: "toggle-show-player2" };
 
 export type RequestReply = (
   request: ClientMsg,

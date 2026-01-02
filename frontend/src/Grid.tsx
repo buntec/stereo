@@ -104,7 +104,7 @@ const PlayControlRenderer: React.FC<
         if ("rows" in msg) {
           context.playIds(msg.rows.map((t: ITrack) => t.yt_id));
         } else {
-          console.log("failed to get rows");
+          console.warn("failed to get rows");
         }
       },
     );
@@ -276,7 +276,7 @@ export const SearchResultsGrid = ({
       headerName: "BPM",
       filter: true,
       width: 80,
-      cellStyle: { "text-align": "right" },
+      cellStyle: { textAlign: "right" },
     },
   ]);
 
@@ -342,7 +342,6 @@ export const SearchResultsGrid = ({
       style={{ height: "100%", width: "100%" }}
     >
       <AgGridReact<ITrack>
-        debug
         rowData={tracks}
         theme={theme}
         ref={gridRef}
@@ -369,6 +368,7 @@ interface TracksGridProps {
   requestReply: RequestReply;
   dispatch: Dispatch<Action>;
   sendMsg: (msg: ClientMsg) => void;
+  setGridReady: (ready: boolean) => void;
 }
 
 type TracksGridContext = {
@@ -386,6 +386,7 @@ export const TracksGrid = ({
   requestReply,
   dispatch,
   sendMsg,
+  setGridReady,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -410,7 +411,7 @@ export const TracksGrid = ({
       headerName: "BPM",
       filter: true,
       width: 80,
-      cellStyle: { "text-align": "right" },
+      cellStyle: { textAlign: "right" },
     },
     {
       field: "rating",
@@ -423,7 +424,7 @@ export const TracksGrid = ({
       headerName: "Plays",
       filter: true,
       width: 80,
-      cellStyle: { "text-align": "right" },
+      cellStyle: { textAlign: "right" },
     },
     { field: "last_played", headerName: "Last played", filter: true },
   ]);
@@ -465,7 +466,7 @@ export const TracksGrid = ({
     return {
       rowCount: undefined,
       getRows: (params: IGetRowsParams<ITrack>) => {
-        console.log("asking for " + params.startRow + " to " + params.endRow);
+        // console.log("asking for " + params.startRow + " to " + params.endRow);
         requestReply(
           { type: "get-rows", ...params },
           function (msg: ServerMsg | { type: string }) {
@@ -525,11 +526,13 @@ export const TracksGrid = ({
     [],
   );
 
+  const onGridReady = useCallback(() => setGridReady(true), [setGridReady]);
+
   return (
     <div className="grid" style={{ height: "100%", width: "100%" }}>
       <AgGridReact<ITrack>
-        debug
         theme={theme}
+        onGridReady={onGridReady}
         ref={gridRef}
         columnTypes={columnTypes}
         rowClassRules={rowClassRules}

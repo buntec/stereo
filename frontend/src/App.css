@@ -78,8 +78,8 @@
 
 .search-box {
   font-family: var(--code-font-family);
-  width: 33%;
-  max-width: 50%;
+  flex: 1;
+  min-width: 400px;
 }
 
 .search-box-text-field {
@@ -87,8 +87,8 @@
 }
 
 .collection-selector-box {
-  width: 33%;
-  max-width: 40%;
+  flex: 1;
+  min-width: 400px;
 }
 
 .collection-text-field {
@@ -102,10 +102,6 @@
 .player {
   position: relative;
   margin: var(--space-2);
-}
-
-.hidden {
-  display: none;
 }
 
 .background-player {
@@ -127,6 +123,10 @@
   animation:
     player-filter 7s linear infinite alternate,
     player-trafo 5s ease infinite alternate;
+}
+
+.hidden {
+  display: none;
 }
 
 @keyframes player-filter {

@@ -1,3 +1,5 @@
+import "./App.css";
+
 import {
   useState,
   useReducer,
@@ -6,13 +8,12 @@ import {
   useCallback,
   useMemo,
 } from "react";
-import "./App.css";
-import { useWebSocket } from "./WebSocket.tsx";
-import { useYouTube, type YouTubeOptions } from "./YT.tsx";
+
+import { AgGridReact } from "ag-grid-react";
+import { type IRowNode } from "ag-grid-community";
+
 import {
-  ExclamationTriangleIcon,
   PlusCircledIcon,
-  InfoCircledIcon,
   Cross2Icon,
   VideoIcon,
   ResetIcon,
@@ -21,7 +22,6 @@ import {
   ShuffleIcon,
   DoubleArrowLeftIcon,
   DoubleArrowRightIcon,
-  MoonIcon,
   Crosshair2Icon,
   PlayIcon,
   TrackNextIcon,
@@ -29,24 +29,21 @@ import {
   PauseIcon,
   TrackPreviousIcon,
 } from "@radix-ui/react-icons";
+
 import { Toast } from "radix-ui";
 
-import { AgGridReact } from "ag-grid-react";
-import { type IRowNode } from "ag-grid-community";
-
 import {
-  Callout,
   Slider,
   Tooltip,
   Theme,
-  Switch,
-  Spinner,
+  Skeleton,
   IconButton,
   Box,
   Flex,
   Text,
   Code,
 } from "@radix-ui/themes";
+
 import type {
   ITrack,
   ICollection,
@@ -54,15 +51,20 @@ import type {
   Action,
   ClientMsg,
   ServerMsg,
-  AppearanceType,
   Settings,
 } from "./Types.tsx";
-import { TracksGrid, SearchResultsGrid } from "./Grid.tsx";
-import { SearchBox } from "./SearchBox.tsx";
+
+import { useWebSocket } from "./WebSocket.tsx";
+import { useYouTube, type YouTubeOptions } from "./YT.tsx";
 import { formatDuration, useLocalStorage } from "./Utils.tsx";
-import { Rating } from "./Rating.tsx";
-import { CollectionSelector } from "./CollectionSelector.tsx";
-import { ImportDialog } from "./ImportDialog.tsx";
+import { TracksGrid, SearchResultsGrid } from "./Grid.tsx";
+import SearchBox from "./SearchBox.tsx";
+import Rating from "./Rating.tsx";
+import CollectionSelector from "./CollectionSelector.tsx";
+import ImportDialog from "./ImportDialog.tsx";
+import AppearanceSwitch from "./AppearanceSwitch.tsx";
+import Notification from "./Notification.tsx";
+import Title from "./Title.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
@@ -83,17 +85,25 @@ const defaultSettings: Settings = {
 
 type State = {
   backend_version?: string;
+
   collection?: ICollection;
   default_collection?: ICollection;
+  collection_is_valid?: boolean;
+  collection_path_completions?: string[];
+  collection_last_update?: number;
+
   current_id?: string;
   duration?: number;
   current_time?: number;
   title?: string;
   playlist: string[];
+  queue: string[];
   player_state: number;
   playback_progress_pct?: number;
   shuffle_play: boolean;
   show_player: boolean;
+  show_player2: boolean;
+
   should_refresh_grid: boolean;
   should_purge_grid: boolean;
 
@@ -106,10 +116,6 @@ type State = {
   search_limit: number;
   search_kind: SearchKind;
 
-  collection_is_valid?: boolean;
-  collection_path_completions?: string[];
-  collection_last_update?: number;
-
   track_selection: string[];
   track_info?: ITrack;
 
@@ -120,9 +126,6 @@ type State = {
   import_from?: string;
   import_from_keep_user_data?: boolean;
   import_from_is_valid?: boolean;
-
-  edit_track?: ITrack;
-  edit_track_ref?: ITrack;
 };
 
 const reducer = (state: State, action: Action): State => {
@@ -130,8 +133,14 @@ const reducer = (state: State, action: Action): State => {
     case "play-ids":
       return { ...state, playlist: action.ids };
 
+    case "cue-ids":
+      return { ...state, queue: action.ids };
+
     case "player-state-change":
       return { ...state, player_state: action.state, current_id: action.id };
+
+    case "set-player2-visible":
+      return { ...state, show_player2: action.visible };
 
     case "backend-info":
       return { ...state, backend_version: action.version };
@@ -274,6 +283,9 @@ const reducer = (state: State, action: Action): State => {
     case "toggle-show-player":
       return { ...state, show_player: !state.show_player };
 
+    case "toggle-show-player2":
+      return { ...state, show_player2: !state.show_player2 };
+
     case "track-info":
       return { ...state, track_info: action.track };
 
@@ -306,96 +318,16 @@ const reducer = (state: State, action: Action): State => {
   }
 };
 
-type AppearanceSwitchProps = {
-  appearance: AppearanceType;
-  setAppearance: (t: AppearanceType) => void;
-};
-
-function AppearanceSwitch({
-  appearance,
-  setAppearance,
-}: AppearanceSwitchProps) {
-  return (
-    <Box m="4">
-      <Text as="label" size="2">
-        <Flex gap="2" align="center">
-          <Switch
-            color="gold"
-            size="1"
-            checked={appearance === "dark"}
-            onCheckedChange={(checked) =>
-              setAppearance(checked ? "dark" : "light")
-            }
-          />{" "}
-          <MoonIcon />
-        </Flex>
-      </Text>
-    </Box>
-  );
-}
-
-function Title({ title }: { title: string }) {
-  return (
-    <Box className="title" m="4">
-      <Text size="5" weight="light">
-        {" "}
-        {title}{" "}
-      </Text>
-    </Box>
-  );
-}
-
-type NotificationProps = {
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  message?: string;
-  kind?: "info" | "warn" | "warning" | "error";
-};
-
-function Notification({ open, setOpen, message, kind }: NotificationProps) {
-  const color = useMemo(() => {
-    switch (kind) {
-      case "info":
-        return "blue";
-      case "warn":
-      case "warning":
-        return "orange";
-      case "error":
-        return "red";
-    }
-  }, [kind]);
-
-  const icon = useMemo(() => {
-    switch (kind) {
-      case "info":
-        return <InfoCircledIcon />;
-      case "warn":
-      case "warning":
-      case "error":
-        return <ExclamationTriangleIcon />;
-    }
-  }, [kind]);
-
-  return (
-    <Toast.Root className="ToastRoot" open={open} onOpenChange={setOpen}>
-      <Toast.Description asChild>
-        <Callout.Root variant="soft" color={color}>
-          <Callout.Icon>{icon}</Callout.Icon>
-          <Callout.Text>{message}</Callout.Text>
-        </Callout.Root>
-      </Toast.Description>
-    </Toast.Root>
-  );
-}
-
 function App() {
   const [_, setWsError] = useState<boolean>(false);
 
   const [state, dispatch] = useReducer(reducer, {
     current_id: "",
     playlist: [],
+    queue: [],
     track_selection: [],
     show_player: false,
+    show_player2: false,
     shuffle_play: false,
     player_state: YTPlayerState.UNSTARTED,
     should_refresh_grid: false,
@@ -411,7 +343,62 @@ function App() {
     defaultSettings,
   );
 
+  const { sendMsg, requestReply } = useWebSocket<ServerMsg, ClientMsg>(
+    wsUrl,
+    (msg: ServerMsg | ServerMsg[]) => {
+      if (Array.isArray(msg)) {
+        msg.forEach(dispatch);
+      } else {
+        dispatch(msg);
+      }
+    },
+    () => setWsError(true),
+    () => setWsError(true),
+  );
+
+  const playIds = useCallback(
+    (ids: string[]) => dispatch({ type: "play-ids", ids }),
+    [dispatch],
+  );
+
+  const cueIds = useCallback(
+    (ids: string[]) => dispatch({ type: "cue-ids", ids }),
+    [dispatch],
+  );
+
   const gridRef = useRef<AgGridReact<ITrack>>(null);
+  const [gridReady, setGridReady] = useState(false);
+
+  useEffect(() => {
+    if (
+      gridReady &&
+      state.playlist.length === 0 &&
+      state.queue.length === 0 &&
+      gridRef.current
+    ) {
+      const api = gridRef.current.api;
+      const filterModel = api.getState().filter?.filterModel;
+      const sortModel = api.getState().sort?.sortModel;
+      requestReply(
+        { type: "get-rows", startRow: 0, endRow: 200, filterModel, sortModel },
+        function (msg: ServerMsg | { type: string }) {
+          if ("rows" in msg) {
+            cueIds(msg.rows.map((t: ITrack) => t.yt_id));
+          } else {
+            console.warn("failed to get rows");
+          }
+        },
+      );
+    }
+  }, [
+    gridReady,
+    gridRef.current,
+    cueIds,
+    requestReply,
+    state.playlist,
+    state.queue,
+  ]);
+
   const searchGridRef = useRef<AgGridReact<ITrack>>(null);
 
   const queryId = useRef<number>(0);
@@ -430,19 +417,6 @@ function App() {
     }
   }, [state.should_purge_grid]);
 
-  const { sendMsg, requestReply } = useWebSocket<ServerMsg, ClientMsg>(
-    wsUrl,
-    (msg: ServerMsg | ServerMsg[]) => {
-      if (Array.isArray(msg)) {
-        msg.forEach(dispatch);
-      } else {
-        dispatch(msg);
-      }
-    },
-    () => setWsError(true),
-    () => setWsError(true),
-  );
-
   const playerOptions: YouTubeOptions = useMemo(() => {
     return {
       playerVars: {
@@ -457,7 +431,6 @@ function App() {
       onStateChange: (event: YT.OnStateChangeEvent) => {
         if (event.data === window.YT.PlayerState.PLAYING) {
           const id = event.target.getVideoData().video_id;
-          console.log(`Playing ${id}`);
           dispatch({
             type: "player-state-change",
             state: YTPlayerState.PLAYING,
@@ -466,7 +439,6 @@ function App() {
         }
         if (event.data === window.YT.PlayerState.ENDED) {
           const id = event.target.getVideoData().video_id;
-          console.log(`${id} ended`);
           dispatch({
             type: "player-state-change",
             state: YTPlayerState.ENDED,
@@ -477,7 +449,11 @@ function App() {
     };
   }, []);
 
-  const { containerRef: playerRef, player } = useYouTube(playerOptions);
+  const {
+    containerRef: playerRef,
+    player,
+    isReady: playerIsReady,
+  } = useYouTube(playerOptions);
 
   const player2Options: YouTubeOptions = useMemo(() => {
     return {
@@ -490,15 +466,24 @@ function App() {
         modestbranding: 1,
         rel: 0,
       },
+      onStateChange: (event: YT.OnStateChangeEvent) => {
+        if (
+          event.data === window.YT.PlayerState.PLAYING ||
+          event.data === window.YT.PlayerState.CUED
+        ) {
+          dispatch({ type: "set-player2-visible", visible: true });
+        }
+      },
     };
   }, []);
 
-  const { containerRef: player2Ref, player: player2 } =
-    useYouTube(player2Options);
+  const {
+    containerRef: player2Ref,
+    player: player2,
+    isReady: player2IsReady,
+  } = useYouTube(player2Options);
 
-  useEffect(() => {
-    console.log(state);
-  }, [state]);
+  // useEffect(() => { console.log(state); }, [state]);
 
   useEffect(() => {
     if (
@@ -549,7 +534,7 @@ function App() {
     if (yt_id && state.player_state === YTPlayerState.PLAYING) {
       const title = player?.getVideoData().title;
       dispatch({ type: "set-title", title });
-      // 1 minute of continuous playback trigger play count increase
+      // 1 minute of continuous playback triggers play count increase
       t = setTimeout(() => sendMsg({ type: "inc-play-count", yt_id }), 60000);
     }
 
@@ -571,8 +556,23 @@ function App() {
   }, [state.current_id]);
 
   useEffect(() => {
-    player?.loadPlaylist(state.playlist);
-  }, [state.playlist]);
+    if (state.playlist && player && playerIsReady) {
+      player.loadPlaylist(state.playlist);
+    }
+  }, [state.playlist, player, playerIsReady]);
+
+  useEffect(() => {
+    if (
+      state.queue.length > 0 &&
+      player &&
+      playerIsReady &&
+      player2 &&
+      player2IsReady
+    ) {
+      player.cuePlaylist(state.queue);
+      player2.cuePlaylist(state.queue);
+    }
+  }, [state.queue, player, playerIsReady, player2, player2IsReady]);
 
   useEffect(() => {
     searchGridRef.current?.api.refreshCells({
@@ -645,11 +645,6 @@ function App() {
       sendMsg({ type: "check-import-from", path: state.import_from });
     }
   }, [state.import_from]);
-
-  const playIds = useCallback(
-    (ids: string[]) => dispatch({ type: "play-ids", ids }),
-    [dispatch],
-  );
 
   const updateRating = useCallback(
     (yt_id: string, rating: number | null) => {
@@ -734,14 +729,13 @@ function App() {
   return (
     <Theme appearance={settings.appearance} accentColor="gray" grayColor="gray">
       <Toast.Provider>
-        <Flex
-          className="app-main"
-          direction="column"
-          align="center"
-          gap="2"
-          pb="4"
-        >
-          <Flex gap="2" justify="between" className="toolbar">
+        <Flex className="app-main" direction="column" align="center">
+          <Flex
+            gapX="2"
+            justify="between"
+            wrap="wrap-reverse"
+            className="toolbar"
+          >
             <CollectionSelector
               isValid={state.collection_is_valid ?? true}
               createCollection={(path: string) =>
@@ -783,6 +777,15 @@ function App() {
               searchBusy={!!state.search_box_input && state.search_busy}
               errorMessage={state.search_error_message}
             />
+
+            <Flex align="center" m="2" gap="2">
+              {state.backend_version ? (
+                <Code>Stereo - {state.backend_version}</Code>
+              ) : (
+                <Skeleton>Stereo</Skeleton>
+              )}
+            </Flex>
+
             <AppearanceSwitch
               appearance={settings.appearance}
               setAppearance={(appearance) =>
@@ -790,7 +793,9 @@ function App() {
               }
             />
           </Flex>
-          <div className="background-player">
+          <div
+            className={`background-player ${state.show_player2 ? "" : "hidden"}`}
+          >
             <div ref={player2Ref} />
           </div>
           <Title title={state.title ?? ""} />
@@ -956,7 +961,7 @@ function App() {
               </Tooltip>
             </Flex>
           ) : (
-            <Flex width="100%" gap="2" px="2">
+            <Flex width="100%" gap="2" p="2">
               <Tooltip content="Deselect all">
                 <IconButton
                   variant="soft"
@@ -1033,6 +1038,7 @@ function App() {
                 requestReply={requestReply}
                 dispatch={dispatch}
                 sendMsg={sendMsg}
+                setGridReady={setGridReady}
               />
             )}
           </Box>
@@ -1045,11 +1051,6 @@ function App() {
             kind={state.notification_kind}
           />
           <Toast.Viewport className="ToastViewport" />
-          {state.backend_version ? (
-            <Code>Stereo - {state.backend_version}</Code>
-          ) : (
-            <Spinner />
-          )}
         </Flex>
       </Toast.Provider>
     </Theme>
