@@ -665,6 +665,7 @@ function App() {
         const t = player.getCurrentTime();
         if (d) {
           player.seekTo((d * value[0]) / 100.0, true);
+          player2?.seekTo((d * value[0]) / 100.0, true);
         }
         dispatch({
           type: "set-playback-progress",
@@ -674,7 +675,7 @@ function App() {
         });
       }
     },
-    [player],
+    [player, player2],
   );
 
   const resetColumnState = useCallback(() => {
@@ -843,7 +844,10 @@ function App() {
               <IconButton
                 variant="soft"
                 size="4"
-                onClick={() => player?.playVideo()}
+                onClick={() => {
+                  player?.playVideo();
+                  player2?.playVideo();
+                }}
               >
                 <PlayIcon />
               </IconButton>
@@ -852,7 +856,10 @@ function App() {
               <IconButton
                 variant="soft"
                 size="4"
-                onClick={() => player?.pauseVideo()}
+                onClick={() => {
+                  player?.pauseVideo();
+                  player2?.pauseVideo();
+                }}
               >
                 <PauseIcon />
               </IconButton>
@@ -861,7 +868,10 @@ function App() {
               <IconButton
                 variant="soft"
                 size="4"
-                onClick={() => player?.stopVideo()}
+                onClick={() => {
+                  player?.stopVideo();
+                  player2?.stopVideo();
+                }}
               >
                 <StopIcon />
               </IconButton>
