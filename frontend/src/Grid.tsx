@@ -20,6 +20,8 @@ import {
   type SelectionChangedEvent,
   themeQuartz,
   type SizeColumnsToContentStrategy,
+  type GridState,
+  type StateUpdatedEvent,
 } from "ag-grid-community";
 
 import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
@@ -138,11 +140,19 @@ const PlayControlRenderer: React.FC<
 
   return (
     <Flex gap="3" align="center">
-      <img
-        src={`https://i.ytimg.com/vi/${data.yt_id}/default.jpg`}
-        alt="YouTube Video Thumbnail"
-        width="40"
-      />
+      <Tooltip content="Open in YouTube">
+        <a
+          href={`https://www.youtube.com/watch?v=${data.yt_id}`}
+          target="_blank"
+        >
+          <img
+            className="yt-thumbnail"
+            src={`https://i.ytimg.com/vi/${data.yt_id}/default.jpg`}
+            alt="YouTube Video Thumbnail"
+            width="40"
+          />
+        </a>
+      </Tooltip>
       <Tooltip content="Play">
         <IconButton
           variant="ghost"
@@ -369,6 +379,8 @@ interface TracksGridProps {
   dispatch: Dispatch<Action>;
   sendMsg: (msg: ClientMsg) => void;
   setGridReady: (ready: boolean) => void;
+  initialState?: GridState;
+  onStateUpdate: (state: GridState) => void;
 }
 
 type TracksGridContext = {
@@ -387,6 +399,8 @@ export const TracksGrid = ({
   dispatch,
   sendMsg,
   setGridReady,
+  initialState,
+  onStateUpdate,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -405,6 +419,11 @@ export const TracksGrid = ({
       initialSort: "desc",
       filter: true,
       width: 120,
+    },
+    {
+      field: "genre",
+      headerName: "Genre",
+      filter: true,
     },
     {
       field: "bpm",
@@ -528,6 +547,11 @@ export const TracksGrid = ({
 
   const onGridReady = useCallback(() => setGridReady(true), [setGridReady]);
 
+  const onStateUpdate0 = useCallback(
+    (ev: StateUpdatedEvent<ITrack>) => onStateUpdate(ev.state),
+    [onStateUpdate],
+  );
+
   return (
     <div className="grid" style={{ height: "100%", width: "100%" }}>
       <AgGridReact<ITrack>
@@ -536,6 +560,8 @@ export const TracksGrid = ({
         ref={gridRef}
         columnTypes={columnTypes}
         rowClassRules={rowClassRules}
+        initialState={initialState}
+        onStateUpdated={onStateUpdate0}
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}

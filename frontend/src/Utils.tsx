@@ -31,10 +31,12 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
   });
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(key, JSON.stringify(storedValue));
-    } catch (error) {
-      console.error(`Error setting local storage at "${key}":`, error);
+    if (setStoredValue !== undefined) {
+      try {
+        window.localStorage.setItem(key, JSON.stringify(storedValue));
+      } catch (error) {
+        console.error(`Error setting local storage at "${key}":`, error);
+      }
     }
   }, [key, storedValue]);
 

@@ -6,6 +6,7 @@ export interface ITrack {
   mb_id?: string;
   release_date?: string;
   label?: string;
+  genre?: string;
   bpm?: number;
   key?: string;
   rating?: number;

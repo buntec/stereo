@@ -129,6 +129,19 @@
   display: none;
 }
 
+.yt-thumbnail {
+  transition: transform 0.1s ease-in-out;
+  transform: scale(1);
+}
+
+.yt-thumbnail:hover {
+  transform: scale(1.2);
+}
+
+.version-string {
+  font-family: var(--code-font-family);
+}
+
 @keyframes player-filter {
   0% {
     filter: saturate(75%) blur(12px);

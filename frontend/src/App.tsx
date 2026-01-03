@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { AgGridReact } from "ag-grid-react";
-import { type IRowNode } from "ag-grid-community";
+import { type GridState, type IRowNode } from "ag-grid-community";
 
 import {
   PlusCircledIcon,
@@ -41,7 +41,6 @@ import {
   Box,
   Flex,
   Text,
-  Code,
 } from "@radix-ui/themes";
 
 import type {
@@ -341,6 +340,11 @@ function App() {
   const [settings, setSettings] = useLocalStorage<Settings>(
     "stereo_app_settings",
     defaultSettings,
+  );
+
+  const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
+    "stereo_app_grid_state",
+    undefined,
   );
 
   const { sendMsg, requestReply } = useWebSocket<ServerMsg, ClientMsg>(
@@ -780,7 +784,9 @@ function App() {
 
             <Flex align="center" m="2" gap="2">
               {state.backend_version ? (
-                <Code>Stereo - {state.backend_version}</Code>
+                <Text size="2" className="version-string">
+                  Stereo - {state.backend_version}
+                </Text>
               ) : (
                 <Skeleton>Stereo</Skeleton>
               )}
@@ -1039,6 +1045,8 @@ function App() {
                 dispatch={dispatch}
                 sendMsg={sendMsg}
                 setGridReady={setGridReady}
+                initialState={gridState}
+                onStateUpdate={setGridState}
               />
             )}
           </Box>

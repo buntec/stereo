@@ -37,10 +37,13 @@ export function EditTrackDialog({
       </Tooltip>
 
       <Dialog.Content>
-        <Dialog.Title>Edit track</Dialog.Title>
+        <Dialog.Title>Edit</Dialog.Title>
+
+        <Dialog.Description>Edit track meta data</Dialog.Description>
 
         <Flex
           direction="column"
+          my="2"
           gap="2"
           className={
             isValid
@@ -98,7 +101,7 @@ export function EditTrackDialog({
               Release date
             </Text>
             <TextField.Root
-              value={value.release_date}
+              value={value.release_date ?? ""}
               onChange={(ev) =>
                 setValue({ ...value, release_date: ev.target.value })
               }
@@ -110,8 +113,18 @@ export function EditTrackDialog({
               Label
             </Text>
             <TextField.Root
-              value={value.label}
+              value={value.label ?? ""}
               onChange={(ev) => setValue({ ...value, label: ev.target.value })}
+            />
+          </label>
+
+          <label>
+            <Text as="div" size="2" mb="1" weight="bold">
+              Genre
+            </Text>
+            <TextField.Root
+              value={value.genre ?? ""}
+              onChange={(ev) => setValue({ ...value, genre: ev.target.value })}
             />
           </label>
 
@@ -120,7 +133,7 @@ export function EditTrackDialog({
               BPM
             </Text>
             <TextField.Root
-              value={value.bpm}
+              value={value.bpm ?? ""}
               onChange={(ev) =>
                 setValue({ ...value, bpm: parseInt(ev.target.value) })
               }
@@ -132,7 +145,7 @@ export function EditTrackDialog({
               Key
             </Text>
             <TextField.Root
-              value={value.key}
+              value={value.key ?? ""}
               onChange={(ev) => setValue({ ...value, key: ev.target.value })}
             />
           </label>
@@ -142,7 +155,7 @@ export function EditTrackDialog({
               Beatport ID
             </Text>
             <TextField.Root
-              value={value.bp_id}
+              value={value.bp_id ?? ""}
               onChange={(ev) =>
                 setValue({ ...value, bp_id: parseInt(ev.target.value) })
               }
@@ -154,7 +167,7 @@ export function EditTrackDialog({
               Music Brainz ID
             </Text>
             <TextField.Root
-              value={value.mb_id}
+              value={value.mb_id ?? ""}
               onChange={(ev) => setValue({ ...value, mb_id: ev.target.value })}
             />
           </label>
