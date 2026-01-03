@@ -35,6 +35,7 @@ function Rating({ enabled, currentRating, updateRating }: RatingProps) {
       {[...Array(5)].map((_, i) => (
         <span
           key={i}
+          className="rating-star"
           onClick={(ev) => {
             ev.stopPropagation();
             handleClick(i);
@@ -45,7 +46,6 @@ function Rating({ enabled, currentRating, updateRating }: RatingProps) {
           }}
           style={{
             color: i < (rating ?? 0) ? "var(--yellow-8)" : "var(--gray-8)",
-            fontSize: "1.2rem",
           }}
         >
           {i < (rating ?? 0) ? "★" : "☆"}

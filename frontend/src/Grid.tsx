@@ -62,17 +62,11 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        height: "100%",
-        cursor: "pointer",
-      }}
-    >
+    <div className="rating-stars">
       {[...Array(5)].map((_, i) => (
         <span
           key={i}
+          className="rating-star"
           onClick={(ev) => {
             ev.stopPropagation();
             handleClick(i);
@@ -83,7 +77,6 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
           }}
           style={{
             color: i < (rating ?? 0) ? "var(--yellow-8)" : "var(--gray-8)",
-            fontSize: "1.2rem",
           }}
         >
           {i < (rating ?? 0) ? "★" : "☆"}

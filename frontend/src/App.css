@@ -104,15 +104,15 @@
 }
 
 .background-player {
-  display: flex;
-  justify-content: center; /* Centers horizontally */
-  align-items: center; /* Centers vertically */
-  height: 100vh; /* Important: The parent must have a height! */
-  width: 100%;
-
   position: absolute;
   top: 0;
   left: 0;
+
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  width: 100%;
 
   z-index: -1;
   filter: blur(16px);
@@ -141,22 +141,21 @@
   font-family: var(--code-font-family);
 }
 
-@keyframes player-filter {
-  0% {
-    filter: saturate(75%) blur(12px);
-  }
-  100% {
-    filter: saturate(150%) blur(24px);
-  }
+.rating-stars {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  cursor: pointer;
 }
 
-@keyframes player-trafo {
-  0% {
-    transform: scale(2.5) rotate(-5deg);
-  }
-  100% {
-    transform: scale(2.7) rotate(5deg);
-  }
+.rating-star {
+  font-size: 1.2rem;
+  transition: transform 0.1s ease-in-out;
+  transform: scale(1);
+}
+
+.rating-star:hover {
+  transform: scale(1.2);
 }
 
 .ToastViewport {
@@ -218,5 +217,23 @@
   }
   to {
     transform: translateX(calc(100% + var(--viewport-padding)));
+  }
+}
+
+@keyframes player-filter {
+  0% {
+    filter: saturate(75%) blur(12px);
+  }
+  100% {
+    filter: saturate(150%) blur(24px);
+  }
+}
+
+@keyframes player-trafo {
+  0% {
+    transform: scale(2.5) rotate(-5deg);
+  }
+  100% {
+    transform: scale(2.7) rotate(5deg);
   }
 }
