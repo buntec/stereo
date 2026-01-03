@@ -11,9 +11,10 @@ import {
 
 import { AgGridReact } from "ag-grid-react";
 import { type GridState, type IRowNode } from "ag-grid-community";
+import logger from "./logger.tsx";
 
 import {
-  PlusCircledIcon,
+  PlusIcon,
   Cross2Icon,
   VideoIcon,
   ResetIcon,
@@ -301,15 +302,11 @@ const reducer = (state: State, action: Action): State => {
 
     case "rows":
     case "yt-anon-playlist":
-    case "track-not-found":
-    case "track-found":
     case "tracks":
-    case "play-id":
     case "heartbeat":
     case "collection-contains-id-response":
     case "path-completions":
     case "validate-track-reply":
-    case "pong":
       return { ...state };
 
     default:
@@ -389,7 +386,7 @@ function App() {
           if ("rows" in msg) {
             cueIds(msg.rows.map((t: ITrack) => t.yt_id));
           } else {
-            console.warn("failed to get rows");
+            logger.warn("failed to get rows");
           }
         },
       );
@@ -487,7 +484,9 @@ function App() {
     isReady: player2IsReady,
   } = useYouTube(player2Options);
 
-  // useEffect(() => { console.log(state); }, [state]);
+  useEffect(() => {
+    logger.debug("state:", state);
+  }, [state]);
 
   useEffect(() => {
     if (
@@ -950,7 +949,7 @@ function App() {
             <div ref={playerRef} />
           </div>
           {state.search_results && !!state.search_box_input ? (
-            <Flex width="100%" gap="2" px="2">
+            <Flex width="100%" gap="2" p="2">
               <Tooltip content="Add selected tracks">
                 <IconButton
                   color="green"
@@ -962,7 +961,7 @@ function App() {
                     )
                   }
                 >
-                  <PlusCircledIcon />
+                  <PlusIcon />
                 </IconButton>
               </Tooltip>
             </Flex>

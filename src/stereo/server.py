@@ -35,7 +35,6 @@ from stereo.message import (
     MsgDefaultCollection,
     MsgDeleteTracks,
     MsgGetPathCompletions,
-    MsgGetRandomTrack,
     MsgGetRows,
     MsgGetTrackInfo,
     MsgHeartbeat,
@@ -44,19 +43,15 @@ from stereo.message import (
     MsgIncPlayCount,
     MsgNotification,
     MsgPathCompletions,
-    MsgPlayId,
     MsgReloadTracks,
     MsgRows,
     MsgSearch,
     MsgSearchCancelAll,
     MsgSearchComplete,
     MsgSearchResult,
-    MsgSearchTrack,
     MsgServer,
     MsgSetCollection,
-    MsgTrackFound,
     MsgTrackInfo,
-    MsgTrackNotFound,
     MsgTrackUpdate,
     MsgUpdateRating,
     MsgUpdateTrack,
@@ -231,13 +226,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         await db.delete_track(ctx, old.yt_id)
                     await update_collection()
 
-            case MsgGetRandomTrack():
-                ctx = state.db_ctx()
-                if ctx is not None:
-                    track = await db.get_random_track(ctx)
-                    if track is not None:
-                        await q_tx.put(MsgPlayId(track.yt_id))
-
             case MsgCollectionContainsId(id, yt_id):
                 ctx = state.db_ctx()
                 if ctx is not None:
@@ -266,18 +254,6 @@ async def websocket_endpoint(websocket: WebSocket):
                             state.search_task = asyncio.create_task(
                                 search_by_label(query, query_id, limit)
                             )
-
-            case MsgSearchTrack(id, title, artist):
-                async with aiohttp.ClientSession() as session:
-                    async for track in lib.search_fuzzy(session, f"{title} - {artist}"):
-                        ctx = state.db_ctx()
-                        exists = False
-                        if ctx is not None:
-                            exists = await db.track_exists(ctx, track.yt_id)
-                        await q_tx.put(MsgTrackFound(id, track, exists))
-                        return
-
-                    await q_tx.put(MsgTrackNotFound(id))
 
             case MsgUpdateRating(yt_id, rating):
                 ctx = state.db_ctx()

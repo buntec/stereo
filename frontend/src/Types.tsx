@@ -58,14 +58,12 @@ export type ClientMsg =
     };
 
 export type ServerMsg =
-  | { type: "pong" }
   | {
       type: "notification";
       message: string;
       kind: "info" | "warn" | "warning" | "error";
     }
   | { type: "heartbeat"; timestamp: number }
-  | { type: "play-id"; ids: string }
   | { type: "validate-track-reply"; is_valid: boolean; id: number }
   | { type: "play-ids"; ids: string[] }
   | { type: "cue-ids"; ids: string[] }
@@ -73,8 +71,6 @@ export type ServerMsg =
   | { type: "track-update"; track: ITrack }
   | { type: "reload-tracks" }
   | { type: "rows"; id: number; rows: ITrack[]; last_row?: number }
-  | { type: "track-found"; id: number; track: ITrack; exists_in_db: boolean }
-  | { type: "track-not-found"; id: number }
   | { type: "backend-info"; version: string }
   | { type: "yt-anon-playlist"; id: number; url: string }
   | { type: "track-info"; track: ITrack }

@@ -5,9 +5,13 @@ import type {
   ServerMsg,
   ClientMsg,
 } from "./Types.tsx";
+
 import { type CustomCellRendererProps } from "ag-grid-react";
+
 import { IconButton, Tooltip, Flex } from "@radix-ui/themes";
+
 import { AgGridReact } from "ag-grid-react";
+
 import {
   type IDatasource,
   type RowClassParams,
@@ -37,6 +41,7 @@ import {
 import { CheckCircledIcon, PlayIcon, ResumeIcon } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
+import logger from "./logger.tsx";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -106,7 +111,7 @@ const PlayControlRenderer: React.FC<
         if ("rows" in msg) {
           context.playIds(msg.rows.map((t: ITrack) => t.yt_id));
         } else {
-          console.warn("failed to get rows");
+          logger.warn("failed to get rows");
         }
       },
     );
@@ -451,6 +456,7 @@ export const TracksGrid = ({
   const rowSelection = useMemo<RowSelectionOptions>(() => {
     return {
       mode: "multiRow",
+      headerCheckbox: false,
     };
   }, []);
 
@@ -485,7 +491,7 @@ export const TracksGrid = ({
     return {
       rowCount: undefined,
       getRows: (params: IGetRowsParams<ITrack>) => {
-        // console.log("asking for " + params.startRow + " to " + params.endRow);
+        logger.debug("asking for " + params.startRow + " to " + params.endRow);
         requestReply(
           { type: "get-rows", ...params },
           function (msg: ServerMsg | { type: string }) {

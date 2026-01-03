@@ -1,5 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 
+import logger from "./logger.tsx";
+
 type Callback<T> = (msg: T) => void;
 
 interface BaseMessage {
@@ -28,7 +30,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
       ws.current = new WebSocket(url);
 
       ws.current.onopen = () => {
-        console.log("WebSocket connected");
+        logger.info("WebSocket connected");
 
         // Start heartbeat
         heartbeatInterval.current = setInterval(() => {
@@ -44,7 +46,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
 
       ws.current.onmessage = (event) => {
         try {
-          // console.info(`Received WS message: ${event.data}`)
+          logger.debug(`Received WS message: ${event.data}`);
           const data = JSON.parse(event.data);
           if (Object.hasOwn(data, "id")) {
             callbacks.current.get(data.id)?.(data);
@@ -60,12 +62,12 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
           }
           onMessage(data);
         } catch (error) {
-          console.warn(`Failed to parse WS message to JSON: ${event.data}`);
+          logger.warn(`Failed to parse WS message to JSON: ${event.data}`);
         }
       };
 
       ws.current.onerror = (err: Event) => {
-        console.error("WebSocket error", err);
+        logger.error("WebSocket error", err);
         callbacks.current.forEach((cb) => cb({ type: "websocket-error" }));
         callbacks.current.clear();
         setIsReady(false);
@@ -73,13 +75,13 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
       };
 
       ws.current.onclose = (event) => {
-        console.log("WebSocket closed: ", event);
+        logger.info("WebSocket closed: ", event);
         callbacks.current.forEach((cb) => cb({ type: "websocket-closed" }));
         callbacks.current.clear();
         setIsReady(false);
         onClose(event);
         if (!isUnmounted) {
-          console.log("Attempting to reconnect WebSocket...");
+          logger.info("Attempting to reconnect WebSocket...");
           setTimeout(() => connect(), 3000);
         }
       };
@@ -95,7 +97,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         clearInterval(heartbeatInterval.current);
       }
       if (ws.current) {
-        console.log("closing WS");
+        logger.info("closing WebSocket");
         ws.current.close();
       }
     };

@@ -5,16 +5,6 @@ from stereo.lib import Collection, Track
 
 
 @dataclass
-class MsgPing:
-    type: Literal["ping"] = "ping"
-
-
-@dataclass
-class MsgPong:
-    type: Literal["pong"] = "pong"
-
-
-@dataclass
 class MsgCollectionInfo:
     id: int | None = None
     collection: Collection | None = None
@@ -97,11 +87,6 @@ class MsgCollectionContainsIdResponse:
 
 
 @dataclass
-class MsgGetRandomTrack:
-    type: Literal["get-random-track"] = "get-random-track"
-
-
-@dataclass
 class MsgDeleteTracks:
     ids: list[str]
     type: Literal["delete-tracks"] = "delete-tracks"
@@ -119,14 +104,6 @@ class MsgValidateTrackReply:
     id: int  # request id
     is_valid: bool
     type: Literal["validate-track-reply"] = "validate-track-reply"
-
-
-@dataclass
-class MsgSearchTrack:
-    id: int  # request id
-    title: str
-    artist: str
-    type: Literal["search-track"] = "search-track"
 
 
 @dataclass
@@ -177,20 +154,6 @@ class MsgCreateCollection:
 
 
 @dataclass
-class MsgTrackFound:
-    id: int  # request id
-    track: Track
-    exists_in_db: bool
-    type: Literal["track-found"] = "track-found"
-
-
-@dataclass
-class MsgTrackNotFound:
-    id: int  # request id
-    type: Literal["track-not-found"] = "track-not-found"
-
-
-@dataclass
 class MsgAddTrack:
     track: Track
     overwrite_existing: bool = False
@@ -219,18 +182,6 @@ class MsgPathCompletions:
 
 
 @dataclass
-class MsgPlayId:
-    id: str
-    type: Literal["play-id"] = "play-id"
-
-
-@dataclass
-class MsgTracks:
-    tracks: list[Track]
-    type: Literal["tracks"] = "tracks"
-
-
-@dataclass
 class MsgRows:
     id: int  # request id
     rows: list[Track]
@@ -254,12 +205,6 @@ class MsgUpdateRating:
     yt_id: str
     rating: int | None
     type: Literal["update-rating"] = "update-rating"
-
-
-@dataclass
-class MsgPlaybackEnded:
-    yt_id: str
-    type: Literal["playback-ended"] = "playback-ended"
 
 
 @dataclass
@@ -324,16 +269,10 @@ class MsgNotification:
 
 
 type MsgServer = (
-    MsgPing
-    | MsgPong
-    | MsgHeartbeat
-    | MsgPlayId
-    | MsgTracks
+    MsgHeartbeat
     | MsgTrackUpdate
     | MsgReloadTracks
     | MsgRows
-    | MsgTrackFound
-    | MsgTrackNotFound
     | MsgBackendInfo
     | MsgTrackInfo
     | MsgCollectionInfo
@@ -350,14 +289,9 @@ type MsgServer = (
 )
 
 type MsgClient = (
-    MsgPing
-    | MsgPong
-    | MsgHeartbeat
-    | MsgGetRandomTrack
+    MsgHeartbeat
     | MsgDeleteTracks
-    | MsgSearchTrack
     | MsgUpdateRating
-    | MsgPlaybackEnded
     | MsgIncPlayCount
     | MsgGetRows
     | MsgAddTrack
