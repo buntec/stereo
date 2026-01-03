@@ -777,8 +777,8 @@ function App() {
   }, [player, playerIsReady]);
 
   const toggleShuffle = useCallback(
-    () => dispatch({ type: "toggle-shuffle" }),
-    [dispatch],
+    () => setSettings({ ...settings, shufflePlay: !settings.shufflePlay }),
+    [settings],
   );
 
   const toggleVideo = useCallback(
