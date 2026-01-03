@@ -14,7 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
 from starlette.routing import Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
-from starlette.websockets import WebSocket
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 import stereo.db as db
 import stereo.lib as lib
@@ -109,12 +109,7 @@ client_msg_adapter = TypeAdapter(MsgClient)
 
 
 def decode_client_msg(msg: str) -> MsgClient:
-    try:
-        result: MsgClient = client_msg_adapter.validate_json(msg)
-        return result
-    except ValidationError:
-        logger.exception("failed to decode client message")
-        raise
+    return client_msg_adapter.validate_json(msg)
 
 
 async def ws_broadcast(msg: MsgServer):
@@ -418,12 +413,17 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async def recv_loop():
         while True:
-            msg_text = await websocket.receive_text()
-            logger.info(f"received WS message: {msg_text}")
             try:
+                msg_text = await websocket.receive_text()
+                logger.info(f"received WS message: {msg_text}")
                 msg = decode_client_msg(msg_text)
-            except Exception:
+            except WebSocketDisconnect:
+                logger.info("websocket disconnected")
+                break
+            except ValidationError:
                 logger.exception("failed to decode client message")
+            except Exception:
+                logger.exception("exception in receive loop")
             else:
                 await q_rx.put(msg)
 
