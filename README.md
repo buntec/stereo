@@ -1,6 +1,10 @@
 # Stereo 📻
 
-Curate and play music in your browser. No account, login or subscription required!
+Curate and play music in your browser.
+No account, login or subscription required!
+
+Works across platforms in any reasonably modern browser.
+Tested with Firefox and Chrome.
 
 # Getting started
 
