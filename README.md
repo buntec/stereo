@@ -28,7 +28,8 @@ For the best possible playback experience, a YouTube Premium subscription or a g
 
 Work in progress! 🚧
 
-<img width="1840" height="1195" alt="Screenshot 2025-12-31 at 16 57 06" src="https://github.com/user-attachments/assets/5c08b099-6b7f-4517-b11c-6c1dcd44f199" />
+<img width="1840" height="1195" alt="Screenshot 2026-01-03 at 18 04 40" src="https://github.com/user-attachments/assets/feb98b68-ef28-4d99-9c86-91da630edddd" />
+
 
 # Development
 
