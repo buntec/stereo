@@ -56,9 +56,7 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
     const newRating = index >= 0 ? index + 1 : null;
 
     setRating(newRating);
-    if (params.context?.updateRating) {
-      params.context.updateRating(params.data?.yt_id, newRating);
-    }
+    params.context.updateRating(params.data?.yt_id, newRating);
   };
 
   return (

@@ -38,6 +38,7 @@ import {
   Tooltip,
   Theme,
   Skeleton,
+  Kbd,
   IconButton,
   Box,
   Flex,
@@ -65,6 +66,7 @@ import ImportDialog from "./ImportDialog.tsx";
 import AppearanceSwitch from "./AppearanceSwitch.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
+import { useKeyboardActions } from "./Keyboard.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
@@ -729,6 +731,84 @@ function App() {
     [updateRating, state.current_id],
   );
 
+  const fastForward = useCallback(
+    (seconds: number) => {
+      if (player) {
+        const t = player.getCurrentTime();
+        player.seekTo(t + seconds, true);
+        player2?.seekTo(t + seconds, true);
+      }
+    },
+    [player, player2],
+  );
+
+  const pausePlayback = useCallback(() => {
+    player?.pauseVideo();
+    player2?.pauseVideo();
+  }, [player, player2]);
+
+  const startPlayback = useCallback(() => {
+    player?.playVideo();
+    player2?.playVideo();
+  }, [player, player2]);
+
+  const stopPlayback = useCallback(() => {
+    player?.stopVideo();
+    player2?.stopVideo();
+  }, [player, player2]);
+
+  const togglePlayback = useCallback(() => {
+    const state = player?.getPlayerState();
+    if (state === window.YT.PlayerState.PLAYING) {
+      pausePlayback();
+    }
+    if (
+      state === window.YT.PlayerState.PAUSED ||
+      state === window.YT.PlayerState.CUED
+    ) {
+      startPlayback();
+    }
+  }, [player]);
+
+  const toggleShuffle = useCallback(
+    () => dispatch({ type: "toggle-shuffle" }),
+    [dispatch],
+  );
+
+  const toggleVideo = useCallback(
+    () => dispatch({ type: "toggle-show-player" }),
+    [dispatch],
+  );
+
+  const centerGridAroundCurrentTrack = useCallback(() => {
+    gridRef.current?.api.ensureNodeVisible(
+      (row: IRowNode<ITrack>) => row.data?.yt_id === state.current_id,
+      "middle",
+    );
+  }, [state.current_id]);
+
+  useKeyboardActions({
+    "0": () => updateCurrentRating(null),
+    "1": () => updateCurrentRating(1),
+    "2": () => updateCurrentRating(2),
+    "3": () => updateCurrentRating(3),
+    "4": () => updateCurrentRating(4),
+    "5": () => updateCurrentRating(5),
+    s: () => toggleShuffle(),
+    v: () => toggleVideo(),
+    c: () => centerGridAroundCurrentTrack(),
+    Space: () => togglePlayback(),
+    Backspace: () => stopPlayback(),
+    ArrowLeft: () => fastForward(-10),
+    ArrowRight: () => fastForward(10),
+    ArrowUp: () => {
+      player?.previousVideo();
+    },
+    ArrowDown: () => {
+      player?.nextVideo();
+    },
+  });
+
   return (
     <Theme appearance={settings.appearance} accentColor="gray" grayColor="gray">
       <Toast.Provider>
@@ -827,21 +907,28 @@ function App() {
             </Text>
           </Flex>
           <Flex direction="row" gap="2" m="2">
-            <Tooltip content="Rewind 10 seconds">
+            <Tooltip
+              content={
+                <>
+                  Rewind 10 seconds <Kbd>←</Kbd>
+                </>
+              }
+            >
               <IconButton
                 variant="soft"
                 size="4"
-                onClick={() => {
-                  if (player) {
-                    const t = player.getCurrentTime();
-                    player.seekTo(t - 10, true);
-                  }
-                }}
+                onClick={() => fastForward(-10)}
               >
                 <DoubleArrowLeftIcon />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Skip to previous track">
+            <Tooltip
+              content={
+                <>
+                  Skip to previous track <Kbd>↑</Kbd>
+                </>
+              }
+            >
               <IconButton
                 variant="soft"
                 size="4"
@@ -850,43 +937,58 @@ function App() {
                 <TrackPreviousIcon />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Start playback">
+            <Tooltip
+              content={
+                <>
+                  Start playback <Kbd>Space</Kbd>
+                </>
+              }
+            >
               <IconButton
                 variant="soft"
                 size="4"
-                onClick={() => {
-                  player?.playVideo();
-                  player2?.playVideo();
-                }}
+                onClick={() => startPlayback()}
               >
                 <PlayIcon />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Pause playback">
+            <Tooltip
+              content={
+                <>
+                  Pause playback <Kbd>Space</Kbd>
+                </>
+              }
+            >
               <IconButton
                 variant="soft"
                 size="4"
-                onClick={() => {
-                  player?.pauseVideo();
-                  player2?.pauseVideo();
-                }}
+                onClick={() => pausePlayback()}
               >
                 <PauseIcon />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Stop playback">
+            <Tooltip
+              content={
+                <>
+                  Stop playback <Kbd>Backspace</Kbd>
+                </>
+              }
+            >
               <IconButton
                 variant="soft"
                 size="4"
-                onClick={() => {
-                  player?.stopVideo();
-                  player2?.stopVideo();
-                }}
+                onClick={() => stopPlayback()}
               >
                 <StopIcon />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Skip to next track">
+            <Tooltip
+              content={
+                <>
+                  Skip to next track <Kbd>↓</Kbd>
+                </>
+              }
+            >
               <IconButton
                 variant="soft"
                 size="4"
@@ -895,51 +997,64 @@ function App() {
                 <TrackNextIcon />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Fast forward 10 seconds">
+            <Tooltip
+              content={
+                <>
+                  Fast-forward 10 seconds <Kbd>→</Kbd>
+                </>
+              }
+            >
               <IconButton
                 variant="soft"
                 size="4"
-                onClick={() => {
-                  if (player) {
-                    const t = player.getCurrentTime();
-                    player.seekTo(t + 10, true);
-                  }
-                }}
+                onClick={() => fastForward(10)}
               >
                 <DoubleArrowRightIcon />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Toggle shuffle play">
+            <Tooltip
+              content={
+                <>
+                  Toggle shuffle play <Kbd>s</Kbd>
+                </>
+              }
+            >
               <IconButton
                 color={state.shuffle_play ? "cyan" : "gray"}
                 variant="soft"
                 size="4"
-                onClick={() => dispatch({ type: "toggle-shuffle" })}
+                onClick={toggleShuffle}
               >
                 <ShuffleIcon />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Center grid around current track">
+            <Tooltip
+              content={
+                <>
+                  Center grid around current track <Kbd>c</Kbd>
+                </>
+              }
+            >
               <IconButton
                 variant="soft"
                 size="4"
-                onClick={() =>
-                  gridRef.current?.api.ensureNodeVisible(
-                    (row: IRowNode<ITrack>) =>
-                      row.data?.yt_id === state.current_id,
-                    "middle",
-                  )
-                }
+                onClick={centerGridAroundCurrentTrack}
               >
                 <Crosshair2Icon />
               </IconButton>
             </Tooltip>
-            <Tooltip content="Toggle video">
+            <Tooltip
+              content={
+                <>
+                  Toggle video <Kbd>v</Kbd>
+                </>
+              }
+            >
               <IconButton
                 color={state.show_player ? "cyan" : "gray"}
                 variant="soft"
                 size="4"
-                onClick={() => dispatch({ type: "toggle-show-player" })}
+                onClick={toggleVideo}
               >
                 <VideoIcon />
               </IconButton>
