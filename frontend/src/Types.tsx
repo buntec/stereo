@@ -125,7 +125,6 @@ export type Action =
     }
   | { type: "rows" }
   | { type: "toggle-shuffle" }
-  | { type: "toggle-show-player" }
   | { type: "toggle-show-player2" };
 
 export type RequestReply = (
@@ -140,4 +139,7 @@ export type Settings = {
   appearance: AppearanceType;
   collectionPath: string;
   useDefaultCollection: boolean;
+  video: boolean;
+  backgroundVideo: boolean;
+  shufflePlay: boolean;
 };

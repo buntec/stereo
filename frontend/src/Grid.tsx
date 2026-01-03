@@ -135,9 +135,10 @@ const PlayControlRenderer: React.FC<
   }, [data]);
 
   return (
-    <Flex gap="3" align="center">
+    <Flex gap="3" align="center" className="track-control-cell">
       <Tooltip content="Open in YouTube">
         <a
+          className="yt-thumbnail-link"
           href={`https://www.youtube.com/watch?v=${data.yt_id}`}
           target="_blank"
         >

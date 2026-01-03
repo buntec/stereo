@@ -17,6 +17,7 @@ import {
   PlusIcon,
   Cross2Icon,
   VideoIcon,
+  MagicWandIcon,
   ResetIcon,
   TrashIcon,
   OpenInNewWindowIcon,
@@ -83,6 +84,9 @@ const defaultSettings: Settings = {
   appearance: "dark",
   collectionPath: "",
   useDefaultCollection: true,
+  video: false,
+  backgroundVideo: true,
+  shufflePlay: false,
 };
 
 type State = {
@@ -102,8 +106,6 @@ type State = {
   queue: string[];
   player_state: number;
   playback_progress_pct?: number;
-  shuffle_play: boolean;
-  show_player: boolean;
   show_player2: boolean;
 
   should_refresh_grid: boolean;
@@ -279,12 +281,6 @@ const reducer = (state: State, action: Action): State => {
         current_time: action.current_time,
       };
 
-    case "toggle-shuffle":
-      return { ...state, shuffle_play: !state.shuffle_play };
-
-    case "toggle-show-player":
-      return { ...state, show_player: !state.show_player };
-
     case "toggle-show-player2":
       return { ...state, show_player2: !state.show_player2 };
 
@@ -324,9 +320,7 @@ function App() {
     playlist: [],
     queue: [],
     track_selection: [],
-    show_player: false,
     show_player2: false,
-    shuffle_play: false,
     player_state: YTPlayerState.UNSTARTED,
     should_refresh_grid: false,
     should_purge_grid: false,
@@ -537,10 +531,12 @@ function App() {
     let yt_id = state.current_id;
 
     if (yt_id && state.player_state === YTPlayerState.PLAYING) {
-      const title = player?.getVideoData().title;
-      dispatch({ type: "set-title", title });
-      // 1 minute of continuous playback triggers play count increase
-      t = setTimeout(() => sendMsg({ type: "inc-play-count", yt_id }), 60000);
+      if (player && playerIsReady) {
+        const title = player.getVideoData().title;
+        dispatch({ type: "set-title", title });
+        // 1 minute of continuous playback triggers play count increase
+        t = setTimeout(() => sendMsg({ type: "inc-play-count", yt_id }), 60000);
+      }
     }
 
     if (state.player_state === YTPlayerState.ENDED) {
@@ -552,7 +548,7 @@ function App() {
         clearTimeout(t);
       }
     };
-  }, [state.player_state, state.current_id]);
+  }, [state.player_state, state.current_id, player, playerIsReady]);
 
   useEffect(() => {
     if (state.current_id) {
@@ -588,24 +584,26 @@ function App() {
 
   useEffect(() => {
     const i = setInterval(() => {
-      const t = Math.max(0.0, player?.getCurrentTime() ?? 0.0);
-      const d = Math.max(1.0, player?.getDuration() ?? 1.0);
-      document.documentElement.style.setProperty(
-        "--stereo-playback-progress",
-        `${t / d}`,
-      );
-      dispatch({
-        type: "set-playback-progress",
-        percent: (100.0 * t) / d,
-        duration: d,
-        current_time: t,
-      });
+      if (player && playerIsReady) {
+        const t = Math.max(0.0, player.getCurrentTime());
+        const d = Math.max(1.0, player.getDuration());
+        document.documentElement.style.setProperty(
+          "--stereo-playback-progress",
+          `${t / d}`,
+        );
+        dispatch({
+          type: "set-playback-progress",
+          percent: (100.0 * t) / d,
+          duration: d,
+          current_time: t,
+        });
+      }
     }, 1000);
 
     return () => {
       clearInterval(i);
     };
-  }, [player, dispatch]);
+  }, [player, playerIsReady, dispatch]);
 
   useEffect(() => {
     dispatch({ type: "clear-search-results" });
@@ -640,10 +638,10 @@ function App() {
   }, [state.search_box_input, state.search_limit, state.search_kind]);
 
   useEffect(() => {
-    if (player) {
-      player.setShuffle(state.shuffle_play);
+    if (player && playerIsReady) {
+      player.setShuffle(settings.shufflePlay);
     }
-  }, [state.shuffle_play]);
+  }, [player, playerIsReady, settings.shufflePlay]);
 
   useEffect(() => {
     if (state.import_from) {
@@ -660,12 +658,12 @@ function App() {
 
   const onSliderValueChange = useCallback(
     (value: number[]) => {
-      if (player) {
+      if (player && playerIsReady && player2 && player2IsReady) {
         const d = player.getDuration();
         const t = player.getCurrentTime();
         if (d) {
           player.seekTo((d * value[0]) / 100.0, true);
-          player2?.seekTo((d * value[0]) / 100.0, true);
+          player2.seekTo((d * value[0]) / 100.0, true);
         }
         dispatch({
           type: "set-playback-progress",
@@ -675,7 +673,7 @@ function App() {
         });
       }
     },
-    [player, player2],
+    [player, player2, playerIsReady, player2IsReady],
   );
 
   const resetColumnState = useCallback(() => {
@@ -733,42 +731,50 @@ function App() {
 
   const fastForward = useCallback(
     (seconds: number) => {
-      if (player) {
+      if (player && playerIsReady && player2 && player2IsReady) {
         const t = player.getCurrentTime();
         player.seekTo(t + seconds, true);
-        player2?.seekTo(t + seconds, true);
+        player2.seekTo(t + seconds, true);
       }
     },
-    [player, player2],
+    [player, playerIsReady, player2, player2IsReady],
   );
 
   const pausePlayback = useCallback(() => {
-    player?.pauseVideo();
-    player2?.pauseVideo();
-  }, [player, player2]);
+    if (player && playerIsReady && player2 && player2IsReady) {
+      player.pauseVideo();
+      player2.pauseVideo();
+    }
+  }, [player, player2, playerIsReady, player2IsReady]);
 
   const startPlayback = useCallback(() => {
-    player?.playVideo();
-    player2?.playVideo();
-  }, [player, player2]);
+    if (player && playerIsReady && player2 && player2IsReady) {
+      player.playVideo();
+      player2.playVideo();
+    }
+  }, [player, player2, playerIsReady, player2IsReady]);
 
   const stopPlayback = useCallback(() => {
-    player?.stopVideo();
-    player2?.stopVideo();
-  }, [player, player2]);
+    if (player && playerIsReady && player2 && player2IsReady) {
+      player.stopVideo();
+      player2.stopVideo();
+    }
+  }, [player, player2, playerIsReady, player2IsReady]);
 
   const togglePlayback = useCallback(() => {
-    const state = player?.getPlayerState();
-    if (state === window.YT.PlayerState.PLAYING) {
-      pausePlayback();
+    if (player && playerIsReady) {
+      const state = player.getPlayerState();
+      if (state === window.YT.PlayerState.PLAYING) {
+        pausePlayback();
+      }
+      if (
+        state === window.YT.PlayerState.PAUSED ||
+        state === window.YT.PlayerState.CUED
+      ) {
+        startPlayback();
+      }
     }
-    if (
-      state === window.YT.PlayerState.PAUSED ||
-      state === window.YT.PlayerState.CUED
-    ) {
-      startPlayback();
-    }
-  }, [player]);
+  }, [player, playerIsReady]);
 
   const toggleShuffle = useCallback(
     () => dispatch({ type: "toggle-shuffle" }),
@@ -776,8 +782,14 @@ function App() {
   );
 
   const toggleVideo = useCallback(
-    () => dispatch({ type: "toggle-show-player" }),
-    [dispatch],
+    () => setSettings({ ...settings, video: !settings.video }),
+    [settings],
+  );
+
+  const toggleBackgroundVideo = useCallback(
+    () =>
+      setSettings({ ...settings, backgroundVideo: !settings.backgroundVideo }),
+    [settings],
   );
 
   const centerGridAroundCurrentTrack = useCallback(() => {
@@ -786,6 +798,18 @@ function App() {
       "middle",
     );
   }, [state.current_id]);
+
+  const nextTrack = useCallback(() => {
+    if (player && playerIsReady) {
+      player.nextVideo();
+    }
+  }, [player, playerIsReady]);
+
+  const prevTrack = useCallback(() => {
+    if (player && playerIsReady) {
+      player.previousVideo();
+    }
+  }, [player, playerIsReady]);
 
   useKeyboardActions({
     "0": () => updateCurrentRating(null),
@@ -796,17 +820,14 @@ function App() {
     "5": () => updateCurrentRating(5),
     s: () => toggleShuffle(),
     v: () => toggleVideo(),
+    b: () => toggleBackgroundVideo(),
     c: () => centerGridAroundCurrentTrack(),
     Space: () => togglePlayback(),
     Backspace: () => stopPlayback(),
     ArrowLeft: () => fastForward(-10),
     ArrowRight: () => fastForward(10),
-    ArrowUp: () => {
-      player?.previousVideo();
-    },
-    ArrowDown: () => {
-      player?.nextVideo();
-    },
+    ArrowUp: () => prevTrack(),
+    ArrowDown: () => nextTrack(),
   });
 
   return (
@@ -879,7 +900,7 @@ function App() {
             />
           </Flex>
           <div
-            className={`background-player ${state.show_player2 ? "" : "hidden"}`}
+            className={`background-player ${state.show_player2 && settings.backgroundVideo ? "" : "hidden"}`}
           >
             <div ref={player2Ref} />
           </div>
@@ -929,11 +950,7 @@ function App() {
                 </>
               }
             >
-              <IconButton
-                variant="soft"
-                size="4"
-                onClick={() => player?.previousVideo()}
-              >
+              <IconButton variant="soft" size="4" onClick={prevTrack}>
                 <TrackPreviousIcon />
               </IconButton>
             </Tooltip>
@@ -944,11 +961,7 @@ function App() {
                 </>
               }
             >
-              <IconButton
-                variant="soft"
-                size="4"
-                onClick={() => startPlayback()}
-              >
+              <IconButton variant="soft" size="4" onClick={startPlayback}>
                 <PlayIcon />
               </IconButton>
             </Tooltip>
@@ -974,11 +987,7 @@ function App() {
                 </>
               }
             >
-              <IconButton
-                variant="soft"
-                size="4"
-                onClick={() => stopPlayback()}
-              >
+              <IconButton variant="soft" size="4" onClick={stopPlayback}>
                 <StopIcon />
               </IconButton>
             </Tooltip>
@@ -989,11 +998,7 @@ function App() {
                 </>
               }
             >
-              <IconButton
-                variant="soft"
-                size="4"
-                onClick={() => player?.nextVideo()}
-              >
+              <IconButton variant="soft" size="4" onClick={nextTrack}>
                 <TrackNextIcon />
               </IconButton>
             </Tooltip>
@@ -1020,7 +1025,7 @@ function App() {
               }
             >
               <IconButton
-                color={state.shuffle_play ? "cyan" : "gray"}
+                color={settings.shufflePlay ? "cyan" : "gray"}
                 variant="soft"
                 size="4"
                 onClick={toggleShuffle}
@@ -1043,6 +1048,7 @@ function App() {
                 <Crosshair2Icon />
               </IconButton>
             </Tooltip>
+
             <Tooltip
               content={
                 <>
@@ -1051,7 +1057,7 @@ function App() {
               }
             >
               <IconButton
-                color={state.show_player ? "cyan" : "gray"}
+                color={settings.video ? "cyan" : "gray"}
                 variant="soft"
                 size="4"
                 onClick={toggleVideo}
@@ -1059,8 +1065,25 @@ function App() {
                 <VideoIcon />
               </IconButton>
             </Tooltip>
+
+            <Tooltip
+              content={
+                <>
+                  Toggle background video <Kbd>b</Kbd>
+                </>
+              }
+            >
+              <IconButton
+                color={settings.backgroundVideo ? "cyan" : "gray"}
+                variant="soft"
+                size="4"
+                onClick={toggleBackgroundVideo}
+              >
+                <MagicWandIcon />
+              </IconButton>
+            </Tooltip>
           </Flex>
-          <div className={`player ${state.show_player ? "" : "hidden"}`}>
+          <div className={`player ${settings.video ? "" : "hidden"}`}>
             <div ref={playerRef} />
           </div>
           {state.search_results && !!state.search_box_input ? (

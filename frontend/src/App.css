@@ -128,6 +128,14 @@
   display: none;
 }
 
+.yt-thumbnail-link {
+  display: flex;
+}
+
+.track-control-cell {
+  height: 100%;
+}
+
 .yt-thumbnail {
   transition: transform 0.1s ease-in-out;
   transform: scale(1);
