@@ -42,7 +42,7 @@ function Notification({ open, setOpen, message, kind }: NotificationProps) {
   return (
     <Toast.Root className="ToastRoot" open={open} onOpenChange={setOpen}>
       <Toast.Description asChild>
-        <Callout.Root variant="soft" color={color}>
+        <Callout.Root variant="surface" color={color}>
           <Callout.Icon>{icon}</Callout.Icon>
           <Callout.Text>{message}</Callout.Text>
         </Callout.Root>

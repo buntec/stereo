@@ -314,8 +314,6 @@ const reducer = (state: State, action: Action): State => {
 };
 
 function App() {
-  const [_, setWsError] = useState<boolean>(false);
-
   const [state, dispatch] = useReducer(reducer, {
     current_id: "",
     playlist: [],
@@ -355,8 +353,18 @@ function App() {
         dispatch(msg);
       }
     },
-    () => setWsError(true),
-    () => setWsError(true),
+    () =>
+      dispatch({
+        type: "notification",
+        message: "WebSocket error encountered.",
+        kind: "error",
+      }),
+    (ev: CloseEvent) =>
+      dispatch({
+        type: "notification",
+        message: `WebSocket connection closed (${ev.reason}${ev.code})`,
+        kind: "warn",
+      }),
   );
 
   const playIds = useCallback(

@@ -32,7 +32,6 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
       ws.current.onopen = () => {
         logger.info("WebSocket connected");
 
-        // Start heartbeat
         heartbeatInterval.current = setInterval(() => {
           if (ws.current && ws.current.readyState === WebSocket.OPEN) {
             ws.current.send(
@@ -74,7 +73,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         onError(err);
       };
 
-      ws.current.onclose = (event) => {
+      ws.current.onclose = (event: CloseEvent) => {
         logger.info("WebSocket closed: ", event);
         callbacks.current.forEach((cb) => cb({ type: "websocket-closed" }));
         callbacks.current.clear();
