@@ -14,6 +14,7 @@ import { type GridState, type IRowNode } from "ag-grid-community";
 import logger from "./logger.tsx";
 
 import {
+  ReloadIcon,
   PlusIcon,
   Cross2Icon,
   VideoIcon,
@@ -649,10 +650,20 @@ function App() {
   }, [player, playerIsReady, settings.shufflePlay]);
 
   useEffect(() => {
-    if (state.import_from) {
-      sendMsg({ type: "check-import-from", path: state.import_from });
-    }
-  }, [state.import_from]);
+    let t = null;
+
+    t = setTimeout(() => {
+      if (state.import_from) {
+        sendMsg({ type: "check-import-from", path: state.import_from });
+      }
+    }, 1000);
+
+    return () => {
+      if (t !== null) {
+        clearTimeout(t);
+      }
+    };
+  }, [state.import_from, sendMsg]);
 
   useEffect(() => {
     if (
@@ -696,6 +707,10 @@ function App() {
     gridRef.current?.api.setFilterModel(null);
   }, []);
 
+  const refreshGrid = useCallback(() => {
+    gridRef.current?.api.purgeInfiniteCache();
+  }, []);
+
   const deselectAll = useCallback(() => {
     gridRef.current?.api.deselectAll();
   }, []);
@@ -721,19 +736,22 @@ function App() {
     }
   }, [sendMsg]);
 
-  const addSelectedTracks = useCallback(() => {
-    if (
-      state.search_results_selection &&
-      state.search_results_selection.length > 0
-    ) {
-      sendMsg({
-        type: "add-tracks",
-        tracks: state.search_results_selection,
-        overwrite_existing: false,
-      });
-      searchGridRef.current?.api.deselectAll();
-    }
-  }, [sendMsg, state.search_results_selection]);
+  const addSelectedTracks = useCallback(
+    (overwrite: boolean) => {
+      if (
+        state.search_results_selection &&
+        state.search_results_selection.length > 0
+      ) {
+        sendMsg({
+          type: "add-tracks",
+          tracks: state.search_results_selection,
+          overwrite_existing: overwrite,
+        });
+        searchGridRef.current?.api.deselectAll();
+      }
+    },
+    [sendMsg, state.search_results_selection],
+  );
 
   const updateCurrentRating = useCallback(
     (rating: number | null) => {
@@ -1105,10 +1123,24 @@ function App() {
           </div>
           {state.search_results && !!state.search_box_input ? (
             <Flex width="100%" gap="2" p="2">
-              <Tooltip content="Add selected tracks">
+              <Tooltip content="Add selected tracks (don't overwrite existing)">
                 <IconButton
                   color="green"
-                  onClick={addSelectedTracks}
+                  onClick={() => addSelectedTracks(false)}
+                  disabled={
+                    !(
+                      state.search_results_selection &&
+                      state.search_results_selection.length > 0
+                    )
+                  }
+                >
+                  <PlusIcon />
+                </IconButton>
+              </Tooltip>
+              <Tooltip content="Add selected tracks (overwrite existing)">
+                <IconButton
+                  color="orange"
+                  onClick={() => addSelectedTracks(true)}
                   disabled={
                     !(
                       state.search_results_selection &&
@@ -1169,11 +1201,16 @@ function App() {
                     });
                   }
                 }}
-                isValidImportFrom={state.import_from_is_valid ?? false}
+                isValidImportFrom={state.import_from_is_valid}
               />
               <Tooltip content="Reset column state">
                 <IconButton variant="soft" onClick={resetColumnState}>
                   <ResetIcon />
+                </IconButton>
+              </Tooltip>
+              <Tooltip content="Force grid refresh">
+                <IconButton variant="soft" onClick={refreshGrid}>
+                  <ReloadIcon />
                 </IconButton>
               </Tooltip>
             </Flex>

@@ -1,5 +1,6 @@
 import {
   Text,
+  Code,
   Button,
   Dialog,
   IconButton,
@@ -17,7 +18,7 @@ type ImportDialogProps = {
   setKeepUserData: (keep: boolean) => void;
   keepUserData: boolean;
   doImport: () => void;
-  isValidImportFrom: boolean;
+  isValidImportFrom?: boolean;
 };
 
 function ImportDialog({
@@ -41,7 +42,10 @@ function ImportDialog({
       <Dialog.Content maxWidth="450px">
         <Dialog.Title>Import</Dialog.Title>
         <Dialog.Description size="2" mb="4">
-          Import tracks from another collection.
+          Import tracks from another collection. You can use an absolute file
+          path like <Code>/path/to/collection.db</Code> or a URL like
+          <Code>https://example.com/collection.db</Code>. In any case, the
+          import source is validated before the import button is enabled.
         </Dialog.Description>
 
         <Flex direction="column" gap="3">
@@ -50,10 +54,15 @@ function ImportDialog({
               Import from
             </Text>
             <TextField.Root
-              color={isValidImportFrom ? "green" : "orange"}
+              color={
+                isValidImportFrom === undefined || !importFrom
+                  ? "gray"
+                  : isValidImportFrom
+                    ? "green"
+                    : "orange"
+              }
               onChange={(ev) => setImportFrom(ev.target.value)}
               value={importFrom}
-              placeholder="/full/path/to/collection"
             />
           </label>
 
@@ -75,7 +84,11 @@ function ImportDialog({
             </Button>
           </Dialog.Close>
           <Dialog.Close>
-            <Button onClick={doImport} disabled={!isValidImportFrom}>
+            <Button
+              color="green"
+              onClick={doImport}
+              disabled={!isValidImportFrom}
+            >
               Import
             </Button>
           </Dialog.Close>

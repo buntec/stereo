@@ -47,6 +47,10 @@
   backdrop-filter: blur(8px);
 }
 
+.ag-list {
+  backdrop-filter: blur(8px);
+}
+
 .row-highlight {
   background-color: var(--cyan-6);
 }

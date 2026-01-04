@@ -7,8 +7,10 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import Literal
 
 import aiohttp
+from anyio import TemporaryDirectory
 from pydantic import TypeAdapter, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
@@ -59,7 +61,7 @@ from stereo.message import (
     MsgValidateTrackReply,
     MsgYTAnonPlaylist,
 )
-from stereo.utils import get_path_completions
+from stereo.utils import download_file, get_path_completions, is_file_or_url
 
 
 class JsonEnc(json.JSONEncoder):
@@ -136,6 +138,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
     logger.info(f"Opening new WS connection: {uid}")
 
+    async def notify_client(
+        msg: str, kind: Literal["info", "warn", "warning", "error"]
+    ) -> None:
+        await q_tx.put(MsgNotification(msg, kind))
+
     async def search_fuzzy(query: str, query_id: int, limit: int):
         async with aiohttp.ClientSession() as session:
             i = 0
@@ -147,9 +154,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         break
             except Exception as ex:
                 logger.exception("search_fuzzy failed")
-                await q_tx.put(
-                    MsgNotification(f"Search failed with exception: {ex}", "error")
-                )
+                await notify_client(f"Search failed with exception: {ex}", "error")
+
             finally:
                 await q_tx.put(MsgSearchComplete(query_id))
 
@@ -164,9 +170,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         break
             except Exception as ex:
                 logger.exception("search_by_artist failed")
-                await q_tx.put(
-                    MsgNotification(f"Search failed with exception: {ex}", "error")
-                )
+                await notify_client(f"Search failed with exception: {ex}", "error")
+
             finally:
                 await q_tx.put(MsgSearchComplete(query_id))
 
@@ -181,9 +186,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         break
             except Exception as ex:
                 logger.exception("search_by_label failed")
-                await q_tx.put(
-                    MsgNotification(f"Search failed with exception: {ex}", "error")
-                )
+                await notify_client(f"Search failed with exception: {ex}", "error")
+
             finally:
                 await q_tx.put(MsgSearchComplete(query_id))
 
@@ -311,10 +315,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 path = Path(path)
 
                 if path.exists():
-                    await q_tx.put(
-                        MsgNotification(
-                            "cannot create collection - file exists!", "error"
-                        )
+                    await notify_client(
+                        "Cannot create collection - file exists!", "error"
                     )
                     return
 
@@ -350,13 +352,69 @@ async def websocket_endpoint(websocket: WebSocket):
 
             case MsgImportFrom(path, keep_user_data):
                 ctx = state.db_ctx()
-                if ctx is not None:
-                    await db.import_from_db(ctx, path, keep_user_data)
-                    await update_collection()
+                match is_file_or_url(path):
+                    case "file":
+                        if ctx is not None:
+                            is_valid = await db.validate_db_schema(path)
+                            if not is_valid:
+                                await notify_client(
+                                    f"Cannot import from invalid collection: {path}",
+                                    "error",
+                                )
+                                return
+
+                            await db.import_from_db(ctx, path, keep_user_data)
+                            await update_collection()
+                    case "url":
+                        async with TemporaryDirectory() as tmp_dir:
+                            db_path = Path(tmp_dir) / "temp-collection.db"
+                            try:
+                                await download_file(path, db_path)
+                            except Exception as ex:
+                                await notify_client(
+                                    f"Downloading collection from {path} failed: {ex}",
+                                    "error",
+                                )
+                                logger.exception(
+                                    f"Failed to download collection from url: {path}"
+                                )
+                            else:
+                                if ctx is not None:
+                                    is_valid = await db.validate_db_schema(db_path)
+                                    if not is_valid:
+                                        await notify_client(
+                                            f"Cannot import from invalid collection: {path}",
+                                            "error",
+                                        )
+                                        return
+                                    await db.import_from_db(
+                                        ctx, str(db_path), keep_user_data
+                                    )
+                                    await update_collection()
+                    case None:
+                        await notify_client(
+                            f"Import source {path} is neither file path nor url",
+                            "error",
+                        )
 
             case MsgCheckImportFrom(path):
-                is_valid = await db.validate_db_schema(path)
-                await q_tx.put(MsgImportFromValid(path, is_valid))
+                match is_file_or_url(path):
+                    case "file":
+                        is_valid = await db.validate_db_schema(path)
+                        await q_tx.put(MsgImportFromValid(path, is_valid))
+                    case "url":
+                        async with TemporaryDirectory() as tmp_dir:
+                            db_path = Path(tmp_dir) / "temp-collection.db"
+                            try:
+                                await download_file(path, db_path)
+                            except Exception:
+                                logger.exception(f"failed to download from {path}")
+                                await q_tx.put(MsgImportFromValid(path, False))
+                            else:
+                                is_valid = await db.validate_db_schema(db_path)
+                                await q_tx.put(MsgImportFromValid(path, is_valid))
+                    case None:
+                        await q_tx.put(MsgImportFromValid(path, False))
 
             case _:
                 logger.warning(f"unhandled WS message: {msg}")
