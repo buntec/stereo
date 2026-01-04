@@ -30,7 +30,6 @@ Work in progress! 🚧
 
 <img width="1840" height="1195" alt="Screenshot 2026-01-03 at 18 04 40" src="https://github.com/user-attachments/assets/feb98b68-ef28-4d99-9c86-91da630edddd" />
 
-
 # Development
 
 Don't forget to rebuild the frontend (`just build-frontend`) before committing frontend changes!

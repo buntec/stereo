@@ -340,6 +340,11 @@ function App() {
     undefined,
   );
 
+  const [recentCollections, setRecentCollections] = useLocalStorage<string[]>(
+    "stereo_app_recent_collections",
+    [],
+  );
+
   const { sendMsg, requestReply } = useWebSocket<ServerMsg, ClientMsg>(
     wsUrl,
     (msg: ServerMsg | ServerMsg[]) => {
@@ -649,6 +654,16 @@ function App() {
     }
   }, [state.import_from]);
 
+  useEffect(() => {
+    if (
+      state.collection &&
+      state.collection_is_valid &&
+      !recentCollections.includes(state.collection.path)
+    ) {
+      setRecentCollections([state.collection.path, ...recentCollections]);
+    }
+  }, [state.collection, state.collection_is_valid, recentCollections]);
+
   const updateRating = useCallback(
     (yt_id: string, rating: number | null) => {
       sendMsg({ type: "update-rating", yt_id, rating });
@@ -864,6 +879,8 @@ function App() {
               }
               suggestions={state.collection_path_completions ?? []}
               size={state.collection?.size}
+              recentCollections={recentCollections}
+              clearRecentCollections={() => setRecentCollections([])}
             />
             <SearchBox
               value={state.search_box_input ?? ""}

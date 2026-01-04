@@ -1,7 +1,55 @@
-import { Tooltip, IconButton, TextField, Flex, Code } from "@radix-ui/themes";
+import {
+  DropdownMenu,
+  Tooltip,
+  IconButton,
+  TextField,
+  Flex,
+  Code,
+} from "@radix-ui/themes";
 import { ResetIcon, PlusCircledIcon, CubeIcon } from "@radix-ui/react-icons";
 
-export interface CollectionSelectorProps {
+type DropDownProps = {
+  isValid: boolean;
+  recentCollections: string[];
+  selectCollection: (collection: string) => void;
+  clearRecent: () => void;
+};
+
+function DropDown({
+  isValid,
+  recentCollections,
+  clearRecent,
+  selectCollection,
+}: DropDownProps) {
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger>
+        <IconButton variant="ghost">
+          <CubeIcon color={isValid ? "green" : "red"} height="16" width="16" />
+        </IconButton>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content>
+        <DropdownMenu.Sub>
+          <DropdownMenu.SubTrigger>Recent collections</DropdownMenu.SubTrigger>
+          <DropdownMenu.SubContent>
+            {recentCollections.map((coll: string, i: number) => (
+              <DropdownMenu.Item
+                key={i}
+                onSelect={() => selectCollection(coll)}
+              >
+                {coll}
+              </DropdownMenu.Item>
+            ))}
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item onSelect={clearRecent}>Clear</DropdownMenu.Item>
+          </DropdownMenu.SubContent>
+        </DropdownMenu.Sub>
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  );
+}
+
+export type CollectionSelectorProps = {
   setValue: (value: string) => void;
   resetToDefault: () => void;
   value: string;
@@ -9,7 +57,9 @@ export interface CollectionSelectorProps {
   suggestions: string[];
   size?: number;
   createCollection: (path: string) => void;
-}
+  recentCollections: string[];
+  clearRecentCollections: () => void;
+};
 
 function CollectionSelector({
   isValid,
@@ -19,6 +69,8 @@ function CollectionSelector({
   suggestions,
   size,
   createCollection,
+  recentCollections,
+  clearRecentCollections,
 }: CollectionSelectorProps) {
   return (
     <Flex className="collection-selector-box" align="center" gap="2" m="2">
@@ -31,7 +83,12 @@ function CollectionSelector({
         onChange={(ev) => setValue(ev.target.value)}
       >
         <TextField.Slot>
-          <CubeIcon color={isValid ? "green" : "red"} height="16" width="16" />
+          <DropDown
+            isValid={isValid}
+            recentCollections={recentCollections}
+            clearRecent={clearRecentCollections}
+            selectCollection={setValue}
+          />
         </TextField.Slot>
         <TextField.Slot>
           <Tooltip content="Return to default collection">
