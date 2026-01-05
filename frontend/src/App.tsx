@@ -417,6 +417,7 @@ function App() {
   useEffect(() => {
     if (state.should_refresh_grid && gridRef.current) {
       gridRef.current.api.refreshInfiniteCache();
+      gridRef.current.api.refreshCells({ force: true, suppressFlash: true });
       dispatch({ type: "grid-refreshed" });
     }
   }, [state.should_refresh_grid]);
