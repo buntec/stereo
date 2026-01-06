@@ -415,16 +415,20 @@ function App() {
   const queryId = useRef<number>(0);
 
   useEffect(() => {
-    if (state.should_refresh_grid && gridRef.current) {
-      gridRef.current.api.refreshInfiniteCache();
-      gridRef.current.api.refreshCells({ force: true, suppressFlash: true });
+    if (state.should_refresh_grid) {
+      if (gridRef.current) {
+        gridRef.current.api.refreshInfiniteCache();
+        gridRef.current.api.refreshCells({ force: true, suppressFlash: true });
+      }
       dispatch({ type: "grid-refreshed" });
     }
   }, [state.should_refresh_grid]);
 
   useEffect(() => {
-    if (state.should_purge_grid && gridRef.current) {
-      gridRef.current.api.purgeInfiniteCache();
+    if (state.should_purge_grid) {
+      if (gridRef.current) {
+        gridRef.current.api.purgeInfiniteCache();
+      }
       dispatch({ type: "grid-purged" });
     }
   }, [state.should_purge_grid]);
@@ -536,10 +540,10 @@ function App() {
   }, [settings.collectionPath]);
 
   useEffect(() => {
-    if (state.current_id) {
+    if (state.current_id && state.current_id !== state.track_info?.yt_id) {
       sendMsg({ type: "get-track-info", yt_id: state.current_id });
     }
-  }, [state.current_id]);
+  }, [state.current_id, state.track_info]);
 
   useEffect(() => {
     let t = null;

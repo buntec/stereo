@@ -41,6 +41,10 @@ def main():
 
     parser.add_argument("--dev", action="store_true", help="run server in dev mode")
 
+    parser.add_argument(
+        "--reload", action="store_true", help="reload server on code changes"
+    )
+
     args = parser.parse_args()
 
     if args.version:
@@ -64,7 +68,7 @@ def main():
 
     cmd.extend(["--host", args.host, "--port", str(args.port), "--log-level", "info"])
 
-    if args.dev:
+    if args.reload:
         cmd.append("--reload")
 
     cmd.append("stereo.server:app")

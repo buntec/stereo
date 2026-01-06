@@ -274,7 +274,6 @@ export const SearchResultsGrid = ({
       field: "release_date",
       headerName: "Release",
       sortable: true,
-      initialSort: "desc",
       filter: true,
       width: 120,
     },
@@ -345,6 +344,7 @@ export const SearchResultsGrid = ({
 
   return (
     <div
+      key="search-results-grid"
       className="grid search-results"
       style={{ height: "100%", width: "100%" }}
     >
@@ -551,7 +551,11 @@ export const TracksGrid = ({
   );
 
   return (
-    <div className="grid" style={{ height: "100%", width: "100%" }}>
+    <div
+      key="tracks-grid"
+      className="grid"
+      style={{ height: "100%", width: "100%" }}
+    >
       <AgGridReact<ITrack>
         theme={theme}
         onGridReady={onGridReady}
