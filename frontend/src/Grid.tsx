@@ -278,6 +278,11 @@ export const SearchResultsGrid = ({
       width: 120,
     },
     {
+      field: "genre",
+      headerName: "Genre",
+      filter: true,
+    },
+    {
       field: "bpm",
       headerName: "BPM",
       filter: true,

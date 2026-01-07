@@ -103,7 +103,10 @@ export function EditTrackDialog({
             <TextField.Root
               value={value.release_date ?? ""}
               onChange={(ev) =>
-                setValue({ ...value, release_date: ev.target.value })
+                setValue({
+                  ...value,
+                  release_date: ev.target.value || undefined,
+                })
               }
             />
           </label>
@@ -135,7 +138,10 @@ export function EditTrackDialog({
             <TextField.Root
               value={value.bpm ?? ""}
               onChange={(ev) =>
-                setValue({ ...value, bpm: parseInt(ev.target.value) })
+                setValue({
+                  ...value,
+                  bpm: ev.target.value ? parseInt(ev.target.value) : undefined,
+                })
               }
             />
           </label>
@@ -157,7 +163,12 @@ export function EditTrackDialog({
             <TextField.Root
               value={value.bp_id ?? ""}
               onChange={(ev) =>
-                setValue({ ...value, bp_id: parseInt(ev.target.value) })
+                setValue({
+                  ...value,
+                  bp_id: ev.target.value
+                    ? parseInt(ev.target.value)
+                    : undefined,
+                })
               }
             />
           </label>

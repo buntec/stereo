@@ -617,12 +617,20 @@ function App() {
           current_time: t,
         });
       }
+
+      if (player && playerIsReady && player2 && player2IsReady) {
+        const t = player.getCurrentTime();
+        const t2 = player2.getCurrentTime();
+        if (t > 0 && t2 > 0 && Math.abs(t - t2) > 0.1) {
+          player2.seekTo(t, true);
+        }
+      }
     }, 1000);
 
     return () => {
       clearInterval(i);
     };
-  }, [player, playerIsReady, dispatch]);
+  }, [player, playerIsReady, player2, player2IsReady, dispatch]);
 
   useEffect(() => {
     dispatch({ type: "clear-search-results" });
