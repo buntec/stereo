@@ -18,13 +18,35 @@
   height: 100vh;
 }
 
+.app-main.fullscreen {
+  justify-content: space-between;
+}
+
+.controls {
+  width: 100%;
+  padding: var(--space-2);
+}
+
+.fullscreen .controls {
+  order: 1;
+}
+
 .toolbar {
   width: 100%;
+}
+
+.fullscreen .toolbar {
+  display: none;
 }
 
 .grid-container {
   flex-grow: 1;
   width: 100%;
+}
+
+.fullscreen .grid-container {
+  display: none;
+  flex-grow: 0;
 }
 
 .grid {
@@ -99,12 +121,16 @@
 }
 
 .title {
+  padding: var(--space-4);
   font-family: var(--code-font-family);
 }
 
 .player {
   position: relative;
   margin: var(--space-2);
+}
+
+.fullscreen .player {
 }
 
 .background-player {
@@ -118,7 +144,7 @@
   height: 100vh;
   width: 100%;
 
-  z-index: -1;
+  z-index: -2;
   filter: blur(16px);
   opacity: 0.5;
   transform: scale(2);
@@ -126,6 +152,10 @@
   animation:
     player-filter 7s linear infinite alternate,
     player-trafo 5s ease infinite alternate;
+}
+
+.fullscreen .grid-controls {
+  display: none;
 }
 
 .hidden {
@@ -161,9 +191,17 @@
 }
 
 .rating-star {
-  font-size: 1.2rem;
+  font-size: 1.5rem;
   transition: transform 0.1s ease-in-out;
   transform: scale(1);
+}
+
+.fullscreen .toggle-video-button {
+  display: none;
+}
+
+.fullscreen .center-grid-around-current-track-button {
+  display: none;
 }
 
 .rating-star:hover {

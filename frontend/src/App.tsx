@@ -20,6 +20,8 @@ import {
   VideoIcon,
   MagicWandIcon,
   ResetIcon,
+  EnterFullScreenIcon,
+  ExitFullScreenIcon,
   TrashIcon,
   OpenInNewWindowIcon,
   ShuffleIcon,
@@ -88,6 +90,7 @@ const defaultSettings: Settings = {
   video: false,
   backgroundVideo: true,
   shufflePlay: false,
+  fullScreen: false,
 };
 
 type State = {
@@ -865,6 +868,10 @@ function App() {
     }
   }, [player, playerIsReady]);
 
+  const toggleFullscreen = useCallback(() => {
+    setSettings({ ...settings, fullScreen: !settings.fullScreen });
+  }, [settings]);
+
   useKeyboardActions({
     "0": () => updateCurrentRating(null),
     "1": () => updateCurrentRating(1),
@@ -876,6 +883,8 @@ function App() {
     v: () => toggleVideo(),
     b: () => toggleBackgroundVideo(),
     c: () => centerGridAroundCurrentTrack(),
+    f: () => toggleFullscreen(),
+    p: () => togglePlayback(),
     Space: () => togglePlayback(),
     Backspace: () => stopPlayback(),
     ArrowLeft: () => fastForward(-10),
@@ -887,7 +896,11 @@ function App() {
   return (
     <Theme appearance={settings.appearance} accentColor="gray" grayColor="gray">
       <Toast.Provider>
-        <Flex className="app-main" direction="column" align="center">
+        <Flex
+          className={`app-main ${settings.fullScreen ? "fullscreen" : ""}`}
+          direction="column"
+          align="center"
+        >
           <Flex
             gapX="2"
             justify="between"
@@ -961,185 +974,222 @@ function App() {
             <div ref={player2Ref} />
           </div>
           <Title title={state.title ?? ""} />
-          <Rating
-            enabled={state.current_id === state.track_info?.yt_id}
-            currentRating={
-              state.current_id === state.track_info?.yt_id
-                ? state.track_info?.rating
-                : undefined
-            }
-            updateRating={updateCurrentRating}
-          />
-          <Flex className="progress-slider" width="30%" align="center" gap="2">
-            <Text>{formatDuration(state.current_time ?? 0)}</Text>
-            <Slider
-              color="pink"
-              size="2"
-              variant="soft"
-              value={[state.playback_progress_pct ?? 0]}
-              onValueChange={onSliderValueChange}
+
+          <Flex direction="column" align="center" gap="2" className="controls">
+            <Rating
+              enabled={state.current_id === state.track_info?.yt_id}
+              currentRating={
+                state.current_id === state.track_info?.yt_id
+                  ? state.track_info?.rating
+                  : undefined
+              }
+              updateRating={updateCurrentRating}
             />
-            <Text>
-              {state.duration ? formatDuration(state.duration) : "--:--"}
-            </Text>
-          </Flex>
-          <Flex direction="row" gap="2" m="2">
-            <Tooltip
-              content={
-                <>
-                  Rewind 10 seconds <Kbd>←</Kbd>
-                </>
-              }
+            <Flex
+              className="progress-slider"
+              width="30%"
+              align="center"
+              gap="2"
             >
-              <IconButton
+              <Text>{formatDuration(state.current_time ?? 0)}</Text>
+              <Slider
+                color="pink"
+                size="2"
                 variant="soft"
-                size="4"
-                onClick={() => fastForward(-10)}
+                value={[state.playback_progress_pct ?? 0]}
+                onValueChange={onSliderValueChange}
+              />
+              <Text>
+                {state.duration ? formatDuration(state.duration) : "--:--"}
+              </Text>
+            </Flex>
+            <Flex direction="row" gap="2" m="2">
+              <Tooltip
+                content={
+                  <>
+                    Rewind 10 seconds <Kbd>←</Kbd>
+                  </>
+                }
               >
-                <DoubleArrowLeftIcon />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              content={
-                <>
-                  Skip to previous track <Kbd>↑</Kbd>
-                </>
-              }
-            >
-              <IconButton variant="soft" size="4" onClick={prevTrack}>
-                <TrackPreviousIcon />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              content={
-                <>
-                  Start playback <Kbd>Space</Kbd>
-                </>
-              }
-            >
-              <IconButton variant="soft" size="4" onClick={startPlayback}>
-                <PlayIcon />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              content={
-                <>
-                  Pause playback <Kbd>Space</Kbd>
-                </>
-              }
-            >
-              <IconButton
-                variant="soft"
-                size="4"
-                onClick={() => pausePlayback()}
-              >
-                <PauseIcon />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              content={
-                <>
-                  Stop playback <Kbd>Backspace</Kbd>
-                </>
-              }
-            >
-              <IconButton variant="soft" size="4" onClick={stopPlayback}>
-                <StopIcon />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              content={
-                <>
-                  Skip to next track <Kbd>↓</Kbd>
-                </>
-              }
-            >
-              <IconButton variant="soft" size="4" onClick={nextTrack}>
-                <TrackNextIcon />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              content={
-                <>
-                  Fast-forward 10 seconds <Kbd>→</Kbd>
-                </>
-              }
-            >
-              <IconButton
-                variant="soft"
-                size="4"
-                onClick={() => fastForward(10)}
-              >
-                <DoubleArrowRightIcon />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              content={
-                <>
-                  Toggle shuffle play <Kbd>s</Kbd>
-                </>
-              }
-            >
-              <IconButton
-                color={settings.shufflePlay ? "cyan" : "gray"}
-                variant="soft"
-                size="4"
-                onClick={toggleShuffle}
-              >
-                <ShuffleIcon />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              content={
-                <>
-                  Center grid around current track <Kbd>c</Kbd>
-                </>
-              }
-            >
-              <IconButton
-                variant="soft"
-                size="4"
-                onClick={centerGridAroundCurrentTrack}
-              >
-                <Crosshair2Icon />
-              </IconButton>
-            </Tooltip>
+                <IconButton
+                  variant="soft"
+                  size="4"
+                  onClick={() => fastForward(-10)}
+                >
+                  <DoubleArrowLeftIcon />
+                </IconButton>
+              </Tooltip>
 
-            <Tooltip
-              content={
-                <>
-                  Toggle video <Kbd>v</Kbd>
-                </>
-              }
-            >
-              <IconButton
-                color={settings.video ? "cyan" : "gray"}
-                variant="soft"
-                size="4"
-                onClick={toggleVideo}
+              <Tooltip
+                content={
+                  <>
+                    Skip to previous track <Kbd>↑</Kbd>
+                  </>
+                }
               >
-                <VideoIcon />
-              </IconButton>
-            </Tooltip>
+                <IconButton variant="soft" size="4" onClick={prevTrack}>
+                  <TrackPreviousIcon />
+                </IconButton>
+              </Tooltip>
 
-            <Tooltip
-              content={
-                <>
-                  Toggle background video <Kbd>b</Kbd>
-                </>
-              }
-            >
-              <IconButton
-                color={settings.backgroundVideo ? "cyan" : "gray"}
-                variant="soft"
-                size="4"
-                onClick={toggleBackgroundVideo}
+              <Tooltip
+                content={
+                  <>
+                    Start playback <Kbd>p</Kbd>
+                  </>
+                }
               >
-                <MagicWandIcon />
-              </IconButton>
-            </Tooltip>
+                <IconButton variant="soft" size="4" onClick={startPlayback}>
+                  <PlayIcon />
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <>
+                    Pause playback <Kbd>p</Kbd>
+                  </>
+                }
+              >
+                <IconButton
+                  variant="soft"
+                  size="4"
+                  onClick={() => pausePlayback()}
+                >
+                  <PauseIcon />
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <>
+                    Stop playback <Kbd>Backspace</Kbd>
+                  </>
+                }
+              >
+                <IconButton variant="soft" size="4" onClick={stopPlayback}>
+                  <StopIcon />
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <>
+                    Skip to next track <Kbd>↓</Kbd>
+                  </>
+                }
+              >
+                <IconButton variant="soft" size="4" onClick={nextTrack}>
+                  <TrackNextIcon />
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <>
+                    Fast-forward 10 seconds <Kbd>→</Kbd>
+                  </>
+                }
+              >
+                <IconButton
+                  variant="soft"
+                  size="4"
+                  onClick={() => fastForward(10)}
+                >
+                  <DoubleArrowRightIcon />
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <>
+                    Toggle shuffle play <Kbd>s</Kbd>
+                  </>
+                }
+              >
+                <IconButton
+                  color={settings.shufflePlay ? "cyan" : "gray"}
+                  variant="soft"
+                  size="4"
+                  onClick={toggleShuffle}
+                >
+                  <ShuffleIcon />
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <>
+                    Center grid around current track <Kbd>c</Kbd>
+                  </>
+                }
+              >
+                <IconButton
+                  className="center-grid-around-current-track-button"
+                  variant="soft"
+                  size="4"
+                  onClick={centerGridAroundCurrentTrack}
+                >
+                  <Crosshair2Icon />
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <>
+                    Toggle video <Kbd>v</Kbd>
+                  </>
+                }
+              >
+                <IconButton
+                  className="toggle-video-button"
+                  color={settings.video ? "cyan" : "gray"}
+                  variant="soft"
+                  size="4"
+                  onClick={toggleVideo}
+                >
+                  <VideoIcon />
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <>
+                    Toggle background video <Kbd>b</Kbd>
+                  </>
+                }
+              >
+                <IconButton
+                  color={settings.backgroundVideo ? "cyan" : "gray"}
+                  variant="soft"
+                  size="4"
+                  onClick={toggleBackgroundVideo}
+                >
+                  <MagicWandIcon />
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip
+                content={
+                  <>
+                    Toggle fullscreen mode <Kbd>f</Kbd>
+                  </>
+                }
+              >
+                <IconButton variant="soft" size="4" onClick={toggleFullscreen}>
+                  {settings.fullScreen ? (
+                    <ExitFullScreenIcon />
+                  ) : (
+                    <EnterFullScreenIcon />
+                  )}
+                </IconButton>
+              </Tooltip>
+            </Flex>
           </Flex>
-          <div className={`player ${settings.video ? "" : "hidden"}`}>
+
+          <div
+            className={`player ${settings.video || settings.fullScreen ? "" : "hidden"}`}
+          >
             <div ref={playerRef} />
           </div>
           {state.search_results && !!state.search_box_input ? (
@@ -1174,7 +1224,7 @@ function App() {
               </Tooltip>
             </Flex>
           ) : (
-            <Flex width="100%" gap="2" p="2">
+            <Flex width="100%" gap="2" p="2" className="grid-controls">
               <Tooltip content="Deselect all">
                 <IconButton
                   variant="soft"
@@ -1195,6 +1245,7 @@ function App() {
                   <TrashIcon />
                 </IconButton>
               </Tooltip>
+
               <Tooltip content="Open selection as YouTube Music playlist (max 50)">
                 <IconButton
                   variant="soft"
@@ -1204,6 +1255,7 @@ function App() {
                   <OpenInNewWindowIcon />
                 </IconButton>
               </Tooltip>
+
               <ImportDialog
                 setImportFrom={(path: string) =>
                   dispatch({ type: "set-import-from", path })
@@ -1224,12 +1276,14 @@ function App() {
                 }}
                 isValidImportFrom={state.import_from_is_valid}
               />
-              <Tooltip content="Reset column state">
+
+              <Tooltip content="Reset columns">
                 <IconButton variant="soft" onClick={resetColumnState}>
                   <ResetIcon />
                 </IconButton>
               </Tooltip>
-              <Tooltip content="Force grid refresh">
+
+              <Tooltip content="Force refresh">
                 <IconButton variant="soft" onClick={refreshGrid}>
                   <ReloadIcon />
                 </IconButton>
@@ -1262,16 +1316,16 @@ function App() {
               />
             )}
           </Box>
-          <Notification
-            open={state.notification_show}
-            setOpen={(open: boolean) =>
-              dispatch({ type: "set-notification-show", show: open })
-            }
-            message={state.notification_msg}
-            kind={state.notification_kind}
-          />
-          <Toast.Viewport className="ToastViewport" />
         </Flex>
+        <Toast.Viewport className="ToastViewport" />
+        <Notification
+          open={state.notification_show}
+          setOpen={(open: boolean) =>
+            dispatch({ type: "set-notification-show", show: open })
+          }
+          message={state.notification_msg}
+          kind={state.notification_kind}
+        />
       </Toast.Provider>
     </Theme>
   );

@@ -142,4 +142,5 @@ export type Settings = {
   video: boolean;
   backgroundVideo: boolean;
   shufflePlay: boolean;
+  fullScreen: boolean;
 };
