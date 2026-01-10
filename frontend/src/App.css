@@ -57,6 +57,13 @@
   --ag-menu-background-color: rgb(from var(--color-surface) r g b / 0.5);
 }
 
+.ag-row {
+}
+
+.ag-row-hover {
+  background-color: rgb(from var(--crimson-6) r g b / 0.15);
+}
+
 .search-results {
   --ag-background-color: rgb(from var(--plum-3) r g b / 0.25);
 }
@@ -74,7 +81,7 @@
 }
 
 .row-highlight {
-  background-color: var(--cyan-6);
+  background-color: var(--pink);
 }
 
 .progress-slider {
@@ -96,8 +103,8 @@
 
   background: linear-gradient(
     to right,
-    var(--cyan-8) var(--stop),
-    var(--cyan-6) var(--stop)
+    rgb(from var(--cyan-8) r g b / 0.25) var(--stop),
+    rgb(from var(--cyan-6) r g b / 0.25) var(--stop)
   );
 }
 
@@ -194,6 +201,10 @@
   font-size: 1.5rem;
   transition: transform 0.1s ease-in-out;
   transform: scale(1);
+}
+
+.grid .rating-star {
+  font-size: 1.2rem;
 }
 
 .fullscreen .toggle-video-button {
