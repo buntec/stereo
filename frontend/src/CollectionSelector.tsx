@@ -6,13 +6,19 @@ import {
   Flex,
   Code,
 } from "@radix-ui/themes";
-import { ResetIcon, PlusCircledIcon, CubeIcon } from "@radix-ui/react-icons";
+import {
+  Cross1Icon,
+  ResetIcon,
+  PlusCircledIcon,
+  CubeIcon,
+} from "@radix-ui/react-icons";
 
 type DropDownProps = {
   isValid: boolean;
   recentCollections: string[];
   selectCollection: (collection: string) => void;
   clearRecent: () => void;
+  removeRecent: (collection: string) => void;
 };
 
 function DropDown({
@@ -20,6 +26,7 @@ function DropDown({
   recentCollections,
   clearRecent,
   selectCollection,
+  removeRecent,
 }: DropDownProps) {
   return (
     <DropdownMenu.Root>
@@ -37,11 +44,27 @@ function DropDown({
                 key={i}
                 onSelect={() => selectCollection(coll)}
               >
-                {coll}
+                <Flex justify="between" align="center" gapX="4" width="100%">
+                  {coll}
+                  <Tooltip content="Remove from list">
+                    <IconButton
+                      variant="ghost"
+                      size="1"
+                      onClick={(ev) => {
+                        ev.preventDefault();
+                        removeRecent(coll);
+                      }}
+                    >
+                      <Cross1Icon />
+                    </IconButton>
+                  </Tooltip>
+                </Flex>
               </DropdownMenu.Item>
             ))}
             <DropdownMenu.Separator />
-            <DropdownMenu.Item onSelect={clearRecent}>Clear</DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={clearRecent}>
+              Clear all
+            </DropdownMenu.Item>
           </DropdownMenu.SubContent>
         </DropdownMenu.Sub>
       </DropdownMenu.Content>
@@ -59,6 +82,7 @@ export type CollectionSelectorProps = {
   createCollection: (path: string) => void;
   recentCollections: string[];
   clearRecentCollections: () => void;
+  removeRecentCollection: (coll: string) => void;
 };
 
 function CollectionSelector({
@@ -71,6 +95,7 @@ function CollectionSelector({
   createCollection,
   recentCollections,
   clearRecentCollections,
+  removeRecentCollection,
 }: CollectionSelectorProps) {
   return (
     <Flex className="collection-selector-box" align="center" gap="2" m="2">
@@ -88,6 +113,7 @@ function CollectionSelector({
             recentCollections={recentCollections}
             clearRecent={clearRecentCollections}
             selectCollection={setValue}
+            removeRecent={removeRecentCollection}
           />
         </TextField.Slot>
         <TextField.Slot>

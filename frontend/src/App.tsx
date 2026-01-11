@@ -948,6 +948,11 @@ function App() {
               size={state.collection?.size}
               recentCollections={recentCollections}
               clearRecentCollections={() => setRecentCollections([])}
+              removeRecentCollection={(coll) => {
+                setRecentCollections(
+                  recentCollections.filter((c) => c !== coll),
+                );
+              }}
             />
             <SearchBox
               value={state.search_box_input ?? ""}
