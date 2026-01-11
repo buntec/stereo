@@ -59,7 +59,7 @@ import type {
 } from "./Types.tsx";
 
 import { useWebSocket } from "./WebSocket.tsx";
-import { useYouTube, type YouTubeOptions } from "./YT.tsx";
+import { useYTPlayer, type YouTubeOptions } from "./YT.tsx";
 import { formatDuration, useLocalStorage } from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid } from "./Grid.tsx";
 import SearchBox from "./SearchBox.tsx";
@@ -480,7 +480,7 @@ function App() {
     containerRef: playerRef,
     player,
     isReady: playerIsReady,
-  } = useYouTube(playerOptions);
+  } = useYTPlayer(playerOptions);
 
   const player2Options: YouTubeOptions = useMemo(() => {
     return {
@@ -508,7 +508,7 @@ function App() {
     containerRef: player2Ref,
     player: player2,
     isReady: player2IsReady,
-  } = useYouTube(player2Options);
+  } = useYTPlayer(player2Options);
 
   useEffect(() => {
     logger.debug("state:", state);
@@ -566,8 +566,12 @@ function App() {
       if (player && playerIsReady) {
         const title = player.getVideoData().title;
         dispatch({ type: "set-title", title });
+
         // 1 minute of continuous playback triggers play count increase
         t = setTimeout(() => sendMsg({ type: "inc-play-count", yt_id }), 60000);
+
+        // keep shuffle setting in sync
+        player.setShuffle(settings.shufflePlay);
       }
     }
 
@@ -580,7 +584,14 @@ function App() {
         clearTimeout(t);
       }
     };
-  }, [sendMsg, state.player_state, state.current_id, player, playerIsReady]);
+  }, [
+    sendMsg,
+    state.player_state,
+    state.current_id,
+    player,
+    playerIsReady,
+    settings.shufflePlay,
+  ]);
 
   useEffect(() => {
     if (state.current_id) {

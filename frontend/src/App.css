@@ -1,6 +1,3 @@
-#root {
-}
-
 .radix-themes {
   --cursor-button: pointer;
   --cursor-checkbox: pointer;
@@ -55,9 +52,6 @@
   --ag-foreground-color: var(--gray-12);
   --ag-background-color: rgb(from var(--color-background) r g b / 0.25);
   --ag-menu-background-color: rgb(from var(--color-surface) r g b / 0.5);
-}
-
-.ag-row {
 }
 
 .ag-row-hover {
@@ -135,9 +129,6 @@
 .player {
   position: relative;
   margin: var(--space-2);
-}
-
-.fullscreen .player {
 }
 
 .background-player {

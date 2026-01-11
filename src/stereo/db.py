@@ -3,6 +3,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Tuple
 
 import aiosqlite
 
@@ -203,38 +204,13 @@ async def get_total_track_count(ctx: Context) -> int:
             return row[0] if row else 0
 
 
-async def get_rows(
-    ctx: Context, startRow: int, endRow: int, sort_model: list | None = None
-) -> list[Track]:
-    limit = endRow - startRow
-    offset = startRow
-
-    sort_by = None
-    descending = False
-    if sort_model:
-        sort_by = sort_model[0]["colId"]
-        descending = sort_model[0]["sort"] == "desc"
-
-    tracks = await get_tracks(
-        ctx, limit=limit, offset=offset, sort_by=sort_by, descending=descending
-    )
-
-    return tracks
-
-
-async def get_rows_2(
-    ctx: Context,
-    startRow: int,
-    endRow: int,
-    sortModel: list[SortModelItem],
+def where_clause_from_filter_model(
     filterModel: dict[str, FilterModelItem | CombinedFilterModelItem],
-) -> list[Track]:
-    query = "SELECT * FROM tracks"
+) -> Tuple[str, list] | None:
     where_clauses = []
     params: list = []
 
     for field, item in filterModel.items():
-        # TODO
         if isinstance(item, FilterModelItem):
             if item.filterType == "text":
                 if item.type == "contains":
@@ -278,9 +254,48 @@ async def get_rows_2(
                     params.append(item.filter)
                     where_clauses.append(f"{field} < ?")
                     params.append(item.filterTo)
+            elif item.filterType == "date":
+                if item.type == "equals":
+                    where_clauses.append(f"{field} = ?")
+                    params.append(item.dateFrom)
+                elif item.type == "notEqual":
+                    where_clauses.append(f"{field} <> ?")
+                    params.append(item.dateFrom)
+                elif item.type == "greaterThan":
+                    where_clauses.append(f"{field} > ?")
+                    params.append(item.dateFrom)
+                elif item.type == "lessThan":
+                    where_clauses.append(f"{field} < ?")
+                    params.append(item.dateFrom)
+                elif item.type == "lessThanOrEqual":
+                    where_clauses.append(f"{field} <= ?")
+                    params.append(item.dateFrom)
+                elif item.type == "inRange":
+                    where_clauses.append(f"{field} >= ?")
+                    params.append(item.dateFrom)
+                    where_clauses.append(f"{field} < ?")
+                    params.append(item.dateTo)
 
     if where_clauses:
-        query += " WHERE " + " AND ".join(where_clauses)
+        return " WHERE " + " AND ".join(where_clauses), params
+
+
+# for ag-grid data source
+async def get_rows(
+    ctx: Context,
+    startRow: int,
+    endRow: int,
+    sortModel: list[SortModelItem],
+    filterModel: dict[str, FilterModelItem | CombinedFilterModelItem],
+) -> list[Track]:
+    query = "SELECT * FROM tracks"
+
+    params: list = []
+
+    where_clause_and_params = where_clause_from_filter_model(filterModel)
+    if where_clause_and_params:
+        query += where_clause_and_params[0]
+        params.extend(where_clause_and_params[1])
 
     if sortModel:
         sort_parts: list[str] = []
@@ -307,21 +322,12 @@ async def count_rows(
     filterModel: dict[str, FilterModelItem | CombinedFilterModelItem] = {},
 ) -> int:
     query = "SELECT COUNT(*) FROM tracks"
-    where_clauses = []
     params: list = []
 
-    for field, item in filterModel.items():
-        # TODO
-        if isinstance(item, FilterModelItem):
-            if item.filterType == "text" and item.type == "contains":
-                where_clauses.append(f"{field} LIKE ?")
-                params.append(f"%{item.filter}%")
-            elif item.type == "equals":
-                where_clauses.append(f"{field} = ?")
-                params.append(item.filter)
-
-    if where_clauses:
-        query += " WHERE " + " AND ".join(where_clauses)
+    where_clause_and_params = where_clause_from_filter_model(filterModel)
+    if where_clause_and_params:
+        query += where_clause_and_params[0]
+        params.extend(where_clause_and_params[1])
 
     async with aiosqlite.connect(ctx.path) as db:
         async with db.execute(query, params) as cursor:

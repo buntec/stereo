@@ -306,7 +306,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 ctx = state.db_ctx()
                 if ctx is not None:
                     n_rows = await db.count_rows(ctx, filter_model)
-                    tracks = await db.get_rows_2(
+                    tracks = await db.get_rows(
                         ctx, start_row, end_row, sort_model, filter_model
                     )
                     await q_tx.put(MsgRows(id, tracks, n_rows))

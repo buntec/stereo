@@ -22,7 +22,7 @@ interface UseYouTubeReturn {
 // Shared state outside the hook instance
 let apiLoadingStatus: "uninitialized" | "loading" | "ready" = "uninitialized";
 
-export const useYouTube = (options: YouTubeOptions = {}): UseYouTubeReturn => {
+export const useYTPlayer = (options: YouTubeOptions = {}): UseYouTubeReturn => {
   const [player, setPlayer] = useState<YT.Player | null>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
 

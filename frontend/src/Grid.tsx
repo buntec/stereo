@@ -488,6 +488,9 @@ export const TracksGrid = ({
 
   const defaultColDef = useMemo<ColDef>(() => {
     return {
+      filterParams: {
+        buttons: ["clear"],
+      },
       // flex: 1,
     };
   }, []);
