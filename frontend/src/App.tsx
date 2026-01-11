@@ -347,8 +347,7 @@ function App() {
     [],
   );
 
-  const { sendMsg, requestReply } = useWebSocket<ServerMsg, ClientMsg>(
-    wsUrl,
+  const wsOnMessage = useCallback(
     (msg: ServerMsg | ServerMsg[]) => {
       if (Array.isArray(msg)) {
         msg.forEach(dispatch);
@@ -356,18 +355,34 @@ function App() {
         dispatch(msg);
       }
     },
+    [dispatch],
+  );
+
+  const wsOnError = useCallback(
     () =>
       dispatch({
         type: "notification",
         message: "WebSocket error encountered.",
         kind: "error",
       }),
+    [dispatch],
+  );
+
+  const wsOnClose = useCallback(
     (ev: CloseEvent) =>
       dispatch({
         type: "notification",
         message: `WebSocket connection closed (${ev.reason}${ev.code})`,
         kind: "warn",
       }),
+    [dispatch],
+  );
+
+  const { sendMsg, requestReply } = useWebSocket<ServerMsg, ClientMsg>(
+    wsUrl,
+    wsOnMessage,
+    wsOnError,
+    wsOnClose,
   );
 
   const playIds = useCallback(
@@ -404,14 +419,7 @@ function App() {
         },
       );
     }
-  }, [
-    gridReady,
-    gridRef.current,
-    cueIds,
-    requestReply,
-    state.playlist,
-    state.queue,
-  ]);
+  }, [gridReady, cueIds, requestReply, state.playlist, state.queue]);
 
   const searchGridRef = useRef<AgGridReact<ITrack>>(null);
 
@@ -521,6 +529,8 @@ function App() {
     state.default_collection,
     settings.useDefaultCollection,
     settings.collectionPath,
+    settings,
+    setSettings,
   ]);
 
   useEffect(() => {
@@ -540,17 +550,17 @@ function App() {
         },
       );
     }
-  }, [settings.collectionPath]);
+  }, [settings.collectionPath, requestReply]);
 
   useEffect(() => {
     if (state.current_id && state.current_id !== state.track_info?.yt_id) {
       sendMsg({ type: "get-track-info", yt_id: state.current_id });
     }
-  }, [state.current_id, state.track_info]);
+  }, [state.current_id, state.track_info, sendMsg]);
 
   useEffect(() => {
     let t = null;
-    let yt_id = state.current_id;
+    const yt_id = state.current_id;
 
     if (yt_id && state.player_state === YTPlayerState.PLAYING) {
       if (player && playerIsReady) {
@@ -570,13 +580,13 @@ function App() {
         clearTimeout(t);
       }
     };
-  }, [state.player_state, state.current_id, player, playerIsReady]);
+  }, [sendMsg, state.player_state, state.current_id, player, playerIsReady]);
 
   useEffect(() => {
     if (state.current_id) {
       player2?.loadVideoById(state.current_id);
     }
-  }, [state.current_id]);
+  }, [state.current_id, player2]);
 
   useEffect(() => {
     if (state.playlist && player && playerIsReady) {
@@ -665,7 +675,7 @@ function App() {
         clearTimeout(t);
       }
     };
-  }, [state.search_box_input, state.search_limit, state.search_kind]);
+  }, [sendMsg, state.search_box_input, state.search_limit, state.search_kind]);
 
   useEffect(() => {
     if (player && playerIsReady) {
@@ -697,7 +707,12 @@ function App() {
     ) {
       setRecentCollections([state.collection.path, ...recentCollections]);
     }
-  }, [state.collection, state.collection_is_valid, recentCollections]);
+  }, [
+    state.collection,
+    state.collection_is_valid,
+    recentCollections,
+    setRecentCollections,
+  ]);
 
   const updateRating = useCallback(
     (yt_id: string, rating: number | null) => {
@@ -758,7 +773,7 @@ function App() {
         }
       });
     }
-  }, [sendMsg]);
+  }, [requestReply]);
 
   const addSelectedTracks = useCallback(
     (overwrite: boolean) => {
@@ -831,22 +846,22 @@ function App() {
         startPlayback();
       }
     }
-  }, [player, playerIsReady]);
+  }, [player, playerIsReady, pausePlayback, startPlayback]);
 
   const toggleShuffle = useCallback(
     () => setSettings({ ...settings, shufflePlay: !settings.shufflePlay }),
-    [settings],
+    [settings, setSettings],
   );
 
   const toggleVideo = useCallback(
     () => setSettings({ ...settings, video: !settings.video }),
-    [settings],
+    [settings, setSettings],
   );
 
   const toggleBackgroundVideo = useCallback(
     () =>
       setSettings({ ...settings, backgroundVideo: !settings.backgroundVideo }),
-    [settings],
+    [settings, setSettings],
   );
 
   const centerGridAroundCurrentTrack = useCallback(() => {
@@ -870,7 +885,7 @@ function App() {
 
   const toggleFullscreen = useCallback(() => {
     setSettings({ ...settings, fullScreen: !settings.fullScreen });
-  }, [settings]);
+  }, [settings, setSettings]);
 
   useKeyboardActions({
     "0": () => updateCurrentRating(null),
@@ -1035,7 +1050,7 @@ function App() {
               <Tooltip
                 content={
                   <>
-                    Start playback <Kbd>p</Kbd>
+                    Start playback <Kbd>Space</Kbd> / <Kbd>p</Kbd>
                   </>
                 }
               >
@@ -1047,7 +1062,7 @@ function App() {
               <Tooltip
                 content={
                   <>
-                    Pause playback <Kbd>p</Kbd>
+                    Pause playback <Kbd>Space</Kbd> / <Kbd>p</Kbd>
                   </>
                 }
               >

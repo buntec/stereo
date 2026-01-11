@@ -76,7 +76,7 @@ export const useYouTube = (options: YouTubeOptions = {}): UseYouTubeReturn => {
         playerRef.current = null;
       }
     };
-  }, []);
+  }, [options]);
 
   return { containerRef, player, isReady };
 };

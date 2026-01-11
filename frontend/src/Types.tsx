@@ -29,7 +29,7 @@ export type SearchKind = "fuzzy" | "by-label" | "by-artist";
 
 export type ClientMsg =
   | { type: "set-collection"; path: string }
-  | { type: "validate-track"; track: any; id?: number }
+  | { type: "validate-track"; track: unknown; id?: number }
   | { type: "create-collection"; path: string }
   | { type: "collection-contains-id"; yt_id: string }
   | { type: "get-track-info"; yt_id: string }
@@ -45,8 +45,8 @@ export type ClientMsg =
       type: "get-rows";
       startRow: number;
       endRow: number;
-      sortModel: any;
-      filterModel: any;
+      sortModel: unknown;
+      filterModel: unknown;
     }
   | { type: "add-tracks"; tracks: ITrack[]; overwrite_existing: boolean }
   | {

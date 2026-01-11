@@ -11,7 +11,7 @@ function Rating({ enabled, currentRating, updateRating }: RatingProps) {
   const [rating, setRating] = useState<number | null>(null);
 
   useEffect(() => {
-    setRating(currentRating ?? null);
+    setTimeout(() => setRating(currentRating ?? null));
   }, [currentRating]);
 
   const handleClick = useCallback(

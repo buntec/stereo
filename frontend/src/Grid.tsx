@@ -48,9 +48,18 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
   const [rating, setRating] = useState<number | null>(null);
 
+  // very hacky!
   useEffect(() => {
-    setRating(params.value ?? null);
-  }, [params.value]);
+    const t = setInterval(() => {
+      if ((params.value ?? null) !== rating) {
+        setRating(params.value ?? null);
+      }
+    }, 250);
+
+    return () => {
+      clearInterval(t);
+    };
+  }, [rating, setRating, params.value]);
 
   const handleClick = (index: number) => {
     const newRating = index >= 0 ? index + 1 : null;
@@ -85,11 +94,9 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
 };
 
 const PlayControlRenderer: React.FC<
-  CustomCellRendererProps<ITrack, any, TracksGridContext>
+  CustomCellRendererProps<ITrack, unknown, TracksGridContext>
 > = (params) => {
   const { data, node, api, context } = params;
-
-  if (!data) return null;
 
   const handlePlayFromHere = useCallback(() => {
     const startRow = node.rowIndex ?? 0;
@@ -106,11 +113,13 @@ const PlayControlRenderer: React.FC<
         }
       },
     );
-  }, [params]);
+  }, [api, context, node.rowIndex]);
 
   const handlePlay = useCallback(() => {
-    context.playIds([data.yt_id]);
-  }, [params]);
+    if (data) {
+      context.playIds([data.yt_id]);
+    }
+  }, [context, data]);
 
   const [value, setValue] = useState(data);
 
@@ -124,15 +133,19 @@ const PlayControlRenderer: React.FC<
         }
       });
     }
-  }, [value]);
+  }, [value, context, data]);
 
   const commit = useCallback(() => {
-    context.sendMsg({ type: "update-track", old: data, new: value });
+    if (data && value) {
+      context.sendMsg({ type: "update-track", old: data, new: value });
+    }
   }, [context, data, value]);
 
   const resetValue = useCallback(() => {
     setValue(data);
   }, [data]);
+
+  if (!data || !value) return null;
 
   return (
     <Flex gap="3" align="center" className="track-control-cell">
@@ -184,30 +197,39 @@ const PlayControlRenderer: React.FC<
 };
 
 const SearchPlayControlRenderer: React.FC<
-  CustomCellRendererProps<ITrack, any, SearchResultsGridContext>
+  CustomCellRendererProps<ITrack, ITrack, SearchResultsGridContext>
 > = (params) => {
   const { data, context } = params;
 
-  if (!data) return null;
-
   const handlePlay = useCallback(() => {
-    context.playIds([data.yt_id]);
-  }, [params]);
+    if (data) {
+      context.playIds([data.yt_id]);
+    }
+  }, [data, context]);
 
   const [exists, setExists] = useState<boolean | null>(null);
 
   useEffect(() => {
-    context.requestReply(
-      { type: "collection-contains-id", yt_id: data.yt_id },
-      (msg) => {
-        if ("contains_id" in msg) {
-          setExists(msg.contains_id);
-        } else {
-          throw new Error("unexpected response shape");
-        }
-      },
-    );
-  }, [data.yt_id, context.lastCollectionUpdate, context.requestReply]);
+    if (data?.yt_id) {
+      context.requestReply(
+        { type: "collection-contains-id", yt_id: data.yt_id },
+        (msg) => {
+          if ("contains_id" in msg) {
+            setExists(msg.contains_id);
+          } else {
+            throw new Error("unexpected response shape");
+          }
+        },
+      );
+    }
+  }, [
+    context,
+    data?.yt_id,
+    context.lastCollectionUpdate,
+    context.requestReply,
+  ]);
+
+  if (!data) return null;
 
   return (
     <Flex gap="2" align="center">
@@ -419,7 +441,7 @@ export const TracksGrid = ({
       headerName: "Release",
       sortable: true,
       initialSort: "desc",
-      filter: true,
+      filter: "agDateColumnFilter",
       width: 120,
     },
     {
@@ -430,20 +452,20 @@ export const TracksGrid = ({
     {
       field: "bpm",
       headerName: "BPM",
-      filter: true,
+      filter: "agNumberColumnFilter",
       width: 80,
       cellStyle: { textAlign: "right" },
     },
     {
       field: "rating",
       headerName: "Rating",
-      filter: true,
+      filter: "agNumberColumnFilter",
       cellRenderer: RatingRenderer,
     },
     {
       field: "play_count",
       headerName: "Plays",
-      filter: true,
+      filter: "agNumberColumnFilter",
       width: 80,
       cellStyle: { textAlign: "right" },
     },
@@ -502,7 +524,7 @@ export const TracksGrid = ({
         );
       },
     };
-  }, []);
+  }, [requestReply]);
 
   const rowClassRules = useMemo(() => {
     return {
@@ -517,7 +539,7 @@ export const TracksGrid = ({
       updateRating(yt_id, rating);
       gridRef.current?.api.refreshInfiniteCache();
     },
-    [updateRating],
+    [updateRating, gridRef],
   );
 
   const context: TracksGridContext = useMemo(() => {

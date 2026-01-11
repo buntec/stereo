@@ -236,16 +236,48 @@ async def get_rows_2(
     for field, item in filterModel.items():
         # TODO
         if isinstance(item, FilterModelItem):
-            if item.filterType == "text" and item.type == "contains":
-                where_clauses.append(f"{field} LIKE ?")
-                params.append(f"%{item.filter}%")
-            elif item.type == "equals":
-                where_clauses.append(f"{field} = ?")
-                params.append(item.filter)
-            elif item.type == "blank":
-                where_clauses.append(f"{field} IS NULL")
-            elif item.type == "notBlank":
-                where_clauses.append(f"{field} IS NOT NULL")
+            if item.filterType == "text":
+                if item.type == "contains":
+                    where_clauses.append(f"{field} LIKE ?")
+                    params.append(f"%{item.filter}%")
+                elif item.type == "equals":
+                    where_clauses.append(f"{field} = ?")
+                    params.append(item.filter)
+                elif item.type == "notEqual":
+                    where_clauses.append(f"{field} <> ?")
+                    params.append(item.filter)
+                elif item.type == "blank":
+                    where_clauses.append(f"{field} IS NULL")
+                elif item.type == "notBlank":
+                    where_clauses.append(f"{field} IS NOT NULL")
+            elif item.filterType == "number":
+                if item.type == "greaterThan":
+                    where_clauses.append(f"{field} > ?")
+                    params.append(item.filter)
+                elif item.type == "greaterThanOrEqual":
+                    where_clauses.append(f"{field} >= ?")
+                    params.append(item.filter)
+                elif item.type == "lessThan":
+                    where_clauses.append(f"{field} < ?")
+                    params.append(item.filter)
+                elif item.type == "lessThanOrEqual":
+                    where_clauses.append(f"{field} <= ?")
+                    params.append(item.filter)
+                elif item.type == "equals":
+                    where_clauses.append(f"{field} = ?")
+                    params.append(item.filter)
+                elif item.type == "notEqual":
+                    where_clauses.append(f"{field} <> ?")
+                    params.append(item.filter)
+                elif item.type == "blank":
+                    where_clauses.append(f"{field} IS NULL")
+                elif item.type == "notBlank":
+                    where_clauses.append(f"{field} IS NOT NULL")
+                elif item.type == "inRange":
+                    where_clauses.append(f"{field} >= ?")
+                    params.append(item.filter)
+                    where_clauses.append(f"{field} < ?")
+                    params.append(item.filterTo)
 
     if where_clauses:
         query += " WHERE " + " AND ".join(where_clauses)

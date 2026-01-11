@@ -5,7 +5,7 @@ import logger from "./logger.tsx";
 type Callback<T> = (msg: T) => void;
 
 interface BaseMessage {
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
@@ -60,7 +60,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
             });
           }
           onMessage(data);
-        } catch (error) {
+        } catch {
           logger.warn(`Failed to parse WS message to JSON: ${event.data}`);
         }
       };
@@ -100,7 +100,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         ws.current.close();
       }
     };
-  }, [url]);
+  }, [url, onClose, onError, onMessage]);
 
   useEffect(() => {
     if (ws.current?.readyState === WebSocket.OPEN) {
