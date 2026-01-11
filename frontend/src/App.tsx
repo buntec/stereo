@@ -23,7 +23,6 @@ import {
   EnterFullScreenIcon,
   ExitFullScreenIcon,
   TrashIcon,
-  OpenInNewWindowIcon,
   ShuffleIcon,
   DoubleArrowLeftIcon,
   DoubleArrowRightIcon,
@@ -67,6 +66,7 @@ import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector from "./CollectionSelector.tsx";
 import ImportDialog from "./ImportDialog.tsx";
+import ExportDropDown from "./ExportDropDown.tsx";
 import AppearanceSwitch from "./AppearanceSwitch.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
@@ -763,6 +763,16 @@ function App() {
     }
   }, [sendMsg]);
 
+  const exportSelectedTracksToCollection = useCallback(
+    (collection: string) => {
+      const tracks = gridRef.current?.api.getSelectedRows();
+      if (tracks) {
+        sendMsg({ type: "export-tracks-to-collection", tracks, collection });
+      }
+    },
+    [sendMsg],
+  );
+
   const openSelectedTracksAsYTMPlaylist = useCallback(() => {
     const selectedRows = gridRef.current?.api.getSelectedRows();
     if (selectedRows) {
@@ -1266,15 +1276,12 @@ function App() {
                 </IconButton>
               </Tooltip>
 
-              <Tooltip content="Open selection as YouTube Music playlist (max 50)">
-                <IconButton
-                  variant="soft"
-                  onClick={openSelectedTracksAsYTMPlaylist}
-                  disabled={state.track_selection.length === 0}
-                >
-                  <OpenInNewWindowIcon />
-                </IconButton>
-              </Tooltip>
+              <ExportDropDown
+                disabled={state.track_selection.length === 0}
+                recentCollections={recentCollections}
+                exportToCollection={exportSelectedTracksToCollection}
+                exportToYTM={openSelectedTracksAsYTMPlaylist}
+              />
 
               <ImportDialog
                 setImportFrom={(path: string) =>

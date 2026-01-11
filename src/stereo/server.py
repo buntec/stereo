@@ -36,6 +36,7 @@ from stereo.message import (
     MsgCreateYTAnonPlaylist,
     MsgDefaultCollection,
     MsgDeleteTracks,
+    MsgExportTracksToCollection,
     MsgGetPathCompletions,
     MsgGetRows,
     MsgGetTrackInfo,
@@ -217,6 +218,30 @@ async def websocket_endpoint(websocket: WebSocket):
                     await db.delete_tracks(ctx, ids)
                     await q_tx.put(MsgReloadTracks())
                     await update_collection()
+
+            case MsgExportTracksToCollection(tracks, collection):
+                if tracks and collection:
+                    path = Path(collection)
+                    is_valid = await db.validate_db_schema(path)
+                    if is_valid:
+                        ctx = db.Context(path)
+                        try:
+                            await db.insert_tracks(ctx, tracks, ignore_existing=False)
+                        except Exception as ex:
+                            await notify_client(
+                                f"Export failed: exception occurred while inserting tracks into {collection}: {ex}",
+                                "error",
+                            )
+                        else:
+                            await notify_client(
+                                f"Succesfully exported {len(tracks)} track(s) to {collection}",
+                                "info",
+                            )
+                    else:
+                        await notify_client(
+                            f"Export failed: {collection} is not a valid collection",
+                            "error",
+                        )
 
             case MsgCreateYTAnonPlaylist(id, ids):
                 url = await lib.yt_create_anon_playlist(ids)

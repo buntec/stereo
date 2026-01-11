@@ -93,6 +93,13 @@ class MsgDeleteTracks:
 
 
 @dataclass
+class MsgExportTracksToCollection:
+    tracks: list[Track]
+    collection: str
+    type: Literal["export-tracks-to-collection"] = "export-tracks-to-collection"
+
+
+@dataclass
 class MsgValidateTrack:
     id: int  # request id
     track: dict[str, Any]
@@ -308,4 +315,5 @@ type MsgClient = (
     | MsgCreateYTAnonPlaylist
     | MsgUpdateTrack
     | MsgValidateTrack
+    | MsgExportTracksToCollection
 )

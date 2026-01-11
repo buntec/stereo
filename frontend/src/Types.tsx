@@ -42,6 +42,11 @@ export type ClientMsg =
   | { type: "update-track"; old: ITrack; new: ITrack }
   | { type: "delete-tracks"; ids: string[] }
   | {
+      type: "export-tracks-to-collection";
+      tracks: ITrack[];
+      collection: string;
+    }
+  | {
       type: "get-rows";
       startRow: number;
       endRow: number;
