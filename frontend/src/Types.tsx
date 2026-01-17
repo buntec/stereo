@@ -70,8 +70,10 @@ export type ServerMsg =
     }
   | { type: "heartbeat"; timestamp: number }
   | { type: "validate-track-reply"; is_valid: boolean; id: number }
-  | { type: "play-ids"; ids: string[] }
-  | { type: "cue-ids"; ids: string[] }
+  | { type: "set-playlist"; ids: string[] }
+  | { type: "play-id"; id: string }
+  | { type: "play-next-track" }
+  | { type: "play-prev-track" }
   | { type: "tracks"; tracks: ITrack[] }
   | { type: "track-update"; track: ITrack }
   | { type: "reload-tracks" }

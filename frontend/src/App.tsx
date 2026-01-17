@@ -59,8 +59,8 @@ import type {
 } from "./Types.tsx";
 
 import { useWebSocket } from "./WebSocket.tsx";
-import { useYTPlayer, type YouTubeOptions } from "./YT.tsx";
-import { formatDuration, useLocalStorage } from "./Utils.tsx";
+import { useYTPlayer, type YTPlayerOptions } from "./YT.tsx";
+import { formatDuration, useLocalStorage, shuffleArray } from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid } from "./Grid.tsx";
 import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
@@ -103,11 +103,11 @@ type State = {
   collection_last_update?: number;
 
   current_id?: string;
+  player_id?: string;
   duration?: number;
   current_time?: number;
   title?: string;
   playlist: string[];
-  queue: string[];
   player_state: number;
   playback_progress_pct?: number;
   show_player2: boolean;
@@ -138,14 +138,53 @@ type State = {
 
 const reducer = (state: State, action: Action): State => {
   switch (action.type) {
-    case "play-ids":
+    case "set-playlist": {
+      if (!state.current_id && action.ids.length > 0) {
+        return { ...state, playlist: action.ids, current_id: action.ids[0] };
+      }
       return { ...state, playlist: action.ids };
+    }
 
-    case "cue-ids":
-      return { ...state, queue: action.ids };
+    case "play-id":
+      return { ...state, current_id: action.id };
+
+    case "play-next-track": {
+      if (state.playlist.length > 0) {
+        const id = state.current_id ?? state.playlist[0];
+        const i = state.playlist.indexOf(id);
+        console.log("play-next-track", id, i);
+        if (i >= 0) {
+          return {
+            ...state,
+            current_id: state.playlist[(i + 1) % state.playlist.length],
+          };
+        }
+        return { ...state, current_id: state.playlist[0] };
+      }
+      return { ...state };
+    }
+
+    case "play-prev-track": {
+      if (state.playlist.length > 0) {
+        const id = state.current_id ?? state.playlist[0];
+        const i = state.playlist.indexOf(id);
+        console.log("play-prev-track", id, i);
+        if (i >= 0) {
+          return {
+            ...state,
+            current_id:
+              state.playlist[
+                (i + state.playlist.length - 1) % state.playlist.length
+              ],
+          };
+        }
+        return { ...state, current_id: state.playlist[0] };
+      }
+      return { ...state };
+    }
 
     case "player-state-change":
-      return { ...state, player_state: action.state, current_id: action.id };
+      return { ...state, player_state: action.state, player_id: action.id };
 
     case "set-player2-visible":
       return { ...state, show_player2: action.visible };
@@ -318,9 +357,7 @@ const reducer = (state: State, action: Action): State => {
 
 function App() {
   const [state, dispatch] = useReducer(reducer, {
-    current_id: "",
     playlist: [],
-    queue: [],
     track_selection: [],
     show_player2: false,
     player_state: YTPlayerState.UNSTARTED,
@@ -385,41 +422,50 @@ function App() {
     wsOnClose,
   );
 
-  const playIds = useCallback(
-    (ids: string[]) => dispatch({ type: "play-ids", ids }),
-    [dispatch],
-  );
-
-  const cueIds = useCallback(
-    (ids: string[]) => dispatch({ type: "cue-ids", ids }),
-    [dispatch],
+  const playId = useCallback(
+    (id: string) => dispatch({ type: "play-id", id }),
+    [],
   );
 
   const gridRef = useRef<AgGridReact<ITrack>>(null);
   const [gridReady, setGridReady] = useState(false);
 
+  const updatePlaylist = useCallback(
+    (shuffle: boolean) => {
+      if (gridReady && gridRef.current) {
+        const api = gridRef.current.api;
+        const filterModel = api.getState().filter?.filterModel;
+        const sortModel = api.getState().sort?.sortModel;
+        requestReply(
+          {
+            type: "get-rows",
+            startRow: 0,
+            endRow: 10000,
+            filterModel,
+            sortModel,
+          },
+          function (msg: ServerMsg | { type: string }) {
+            if ("rows" in msg) {
+              let ids = msg.rows.map((t: ITrack) => t.yt_id);
+              if (shuffle) {
+                ids = shuffleArray(ids);
+              }
+              dispatch({ type: "set-playlist", ids });
+            } else {
+              logger.warn("failed to get rows");
+            }
+          },
+        );
+      }
+    },
+    [requestReply, gridReady],
+  );
+
   useEffect(() => {
-    if (
-      gridReady &&
-      state.playlist.length === 0 &&
-      state.queue.length === 0 &&
-      gridRef.current
-    ) {
-      const api = gridRef.current.api;
-      const filterModel = api.getState().filter?.filterModel;
-      const sortModel = api.getState().sort?.sortModel;
-      requestReply(
-        { type: "get-rows", startRow: 0, endRow: 200, filterModel, sortModel },
-        function (msg: ServerMsg | { type: string }) {
-          if ("rows" in msg) {
-            cueIds(msg.rows.map((t: ITrack) => t.yt_id));
-          } else {
-            logger.warn("failed to get rows");
-          }
-        },
-      );
+    if (state.playlist.length === 0) {
+      updatePlaylist(settings.shufflePlay);
     }
-  }, [gridReady, cueIds, requestReply, state.playlist, state.queue]);
+  }, [state.playlist, updatePlaylist, settings.shufflePlay, gridReady]);
 
   const searchGridRef = useRef<AgGridReact<ITrack>>(null);
 
@@ -444,16 +490,24 @@ function App() {
     }
   }, [state.should_purge_grid]);
 
-  const playerOptions: YouTubeOptions = useMemo(() => {
+  const playerOptions: YTPlayerOptions = useMemo(() => {
     return {
       playerVars: {
         autoplay: 1,
         modestbranding: 1,
         color: "white",
         controls: 0,
+        disablekb: 1,
         rel: 0,
         playsinline: 1,
         enablejsapi: 1,
+      },
+      onError: (event) => {
+        dispatch({
+          type: "notification",
+          message: `YouTube playback error: ${event.data}`,
+          kind: "error",
+        });
       },
       onStateChange: (event: YT.OnStateChangeEvent) => {
         if (event.data === window.YT.PlayerState.PLAYING) {
@@ -471,6 +525,7 @@ function App() {
             state: YTPlayerState.ENDED,
             id,
           });
+          dispatch({ type: "play-next-track" });
         }
       },
     };
@@ -482,7 +537,7 @@ function App() {
     isReady: playerIsReady,
   } = useYTPlayer(playerOptions);
 
-  const player2Options: YouTubeOptions = useMemo(() => {
+  const player2Options: YTPlayerOptions = useMemo(() => {
     return {
       playerVars: {
         autoplay: 1,
@@ -560,7 +615,7 @@ function App() {
 
   useEffect(() => {
     let t = null;
-    const yt_id = state.current_id;
+    const yt_id = state.player_id;
 
     if (yt_id && state.player_state === YTPlayerState.PLAYING) {
       if (player && playerIsReady) {
@@ -569,9 +624,6 @@ function App() {
 
         // 1 minute of continuous playback triggers play count increase
         t = setTimeout(() => sendMsg({ type: "inc-play-count", yt_id }), 60000);
-
-        // keep shuffle setting in sync
-        player.setShuffle(settings.shufflePlay);
       }
     }
 
@@ -584,39 +636,17 @@ function App() {
         clearTimeout(t);
       }
     };
-  }, [
-    sendMsg,
-    state.player_state,
-    state.current_id,
-    player,
-    playerIsReady,
-    settings.shufflePlay,
-  ]);
+  }, [sendMsg, state.player_state, state.player_id, player, playerIsReady]);
 
   useEffect(() => {
-    if (state.current_id) {
-      player2?.loadVideoById(state.current_id);
+    if (state.current_id && player && playerIsReady) {
+      const id = player?.getVideoData().video_id;
+      if (id !== state.current_id) {
+        player?.loadVideoById(state.current_id);
+        player2?.loadVideoById(state.current_id);
+      }
     }
-  }, [state.current_id, player2]);
-
-  useEffect(() => {
-    if (state.playlist && player && playerIsReady) {
-      player.loadPlaylist(state.playlist);
-    }
-  }, [state.playlist, player, playerIsReady]);
-
-  useEffect(() => {
-    if (
-      state.queue.length > 0 &&
-      player &&
-      playerIsReady &&
-      player2 &&
-      player2IsReady
-    ) {
-      player.cuePlaylist(state.queue);
-      player2.cuePlaylist(state.queue);
-    }
-  }, [state.queue, player, playerIsReady, player2, player2IsReady]);
+  }, [state.current_id, player, playerIsReady, player2]);
 
   useEffect(() => {
     searchGridRef.current?.api.refreshCells({
@@ -687,12 +717,6 @@ function App() {
       }
     };
   }, [sendMsg, state.search_box_input, state.search_limit, state.search_kind]);
-
-  useEffect(() => {
-    if (player && playerIsReady) {
-      player.setShuffle(settings.shufflePlay);
-    }
-  }, [player, playerIsReady, settings.shufflePlay]);
 
   useEffect(() => {
     let t = null;
@@ -869,10 +893,11 @@ function App() {
     }
   }, [player, playerIsReady, pausePlayback, startPlayback]);
 
-  const toggleShuffle = useCallback(
-    () => setSettings({ ...settings, shufflePlay: !settings.shufflePlay }),
-    [settings, setSettings],
-  );
+  const toggleShuffle = useCallback(() => {
+    const shufflePlay = !settings.shufflePlay;
+    setSettings({ ...settings, shufflePlay });
+    updatePlaylist(shufflePlay);
+  }, [settings, setSettings, updatePlaylist]);
 
   const toggleVideo = useCallback(
     () => setSettings({ ...settings, video: !settings.video }),
@@ -892,17 +917,23 @@ function App() {
     );
   }, [state.current_id]);
 
-  const nextTrack = useCallback(() => {
-    if (player && playerIsReady) {
-      player.nextVideo();
-    }
-  }, [player, playerIsReady]);
+  const nextTrack = useCallback(
+    () => dispatch({ type: "play-next-track" }),
+    [dispatch],
+  );
 
-  const prevTrack = useCallback(() => {
-    if (player && playerIsReady) {
-      player.previousVideo();
-    }
-  }, [player, playerIsReady]);
+  const prevTrack = useCallback(
+    () => dispatch({ type: "play-prev-track" }),
+    [dispatch],
+  );
+
+  const onTrackGridStateUpdate = useCallback(
+    (state: GridState) => {
+      updatePlaylist(settings.shufflePlay); // update playlist according to sort/filter models
+      setGridState(state); // save to local storage
+    },
+    [setGridState, updatePlaylist, settings.shufflePlay],
+  );
 
   const toggleFullscreen = useCallback(() => {
     setSettings({ ...settings, fullScreen: !settings.fullScreen });
@@ -1333,7 +1364,7 @@ function App() {
               <SearchResultsGrid
                 gridRef={searchGridRef}
                 currentId={state.current_id}
-                playIds={playIds}
+                playId={playId}
                 requestReply={requestReply}
                 dispatch={dispatch}
                 tracks={state.search_results}
@@ -1343,14 +1374,14 @@ function App() {
               <TracksGrid
                 gridRef={gridRef}
                 currentId={state.current_id}
-                playIds={playIds}
+                playId={playId}
                 updateRating={updateRating}
                 requestReply={requestReply}
                 dispatch={dispatch}
                 sendMsg={sendMsg}
                 setGridReady={setGridReady}
                 initialState={gridState}
-                onStateUpdate={setGridState}
+                onStateUpdate={onTrackGridStateUpdate}
               />
             )}
           </Box>

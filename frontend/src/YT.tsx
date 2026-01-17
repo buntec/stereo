@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
-export interface YouTubeOptions {
+export interface YTPlayerOptions {
   playerVars?: YT.PlayerVars;
   onReady?: (event: YT.PlayerEvent) => void;
   onStateChange?: (event: YT.OnStateChangeEvent) => void;
+  onError?: (event: YT.OnErrorEvent) => void;
 }
 
 declare global {
@@ -22,7 +23,9 @@ interface UseYouTubeReturn {
 // Shared state outside the hook instance
 let apiLoadingStatus: "uninitialized" | "loading" | "ready" = "uninitialized";
 
-export const useYTPlayer = (options: YouTubeOptions = {}): UseYouTubeReturn => {
+export const useYTPlayer = (
+  options: YTPlayerOptions = {},
+): UseYouTubeReturn => {
   const [player, setPlayer] = useState<YT.Player | null>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
 
@@ -43,7 +46,15 @@ export const useYTPlayer = (options: YouTubeOptions = {}): UseYouTubeReturn => {
             options.onReady?.(event);
           },
           onStateChange: (event: YT.OnStateChangeEvent) => {
+            console.info(`YT player state changed: ${event.data}`);
             options.onStateChange?.(event);
+          },
+          onError: (event) => {
+            console.error(`YT player error: ${event.data}`);
+            options.onError?.(event);
+          },
+          onAutoplayBlocked: (event) => {
+            console.info(`YT autoplay blocked: ${event}`);
           },
         },
       });

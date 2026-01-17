@@ -38,7 +38,7 @@ import {
   type Dispatch,
 } from "react";
 
-import { CheckCircledIcon, PlayIcon, ResumeIcon } from "@radix-ui/react-icons";
+import { CheckCircledIcon, PlayIcon } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import logger from "./logger.tsx";
@@ -96,28 +96,11 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
 const PlayControlRenderer: React.FC<
   CustomCellRendererProps<ITrack, unknown, TracksGridContext>
 > = (params) => {
-  const { data, node, api, context } = params;
-
-  const handlePlayFromHere = useCallback(() => {
-    const startRow = node.rowIndex ?? 0;
-    const endRow = startRow + 200; // 200 seems to be the max supported by YT
-    const filterModel = api.getState().filter?.filterModel;
-    const sortModel = api.getState().sort?.sortModel;
-    context.requestReply(
-      { type: "get-rows", startRow, endRow, filterModel, sortModel },
-      function (msg: ServerMsg | { type: string }) {
-        if ("rows" in msg) {
-          context.playIds(msg.rows.map((t: ITrack) => t.yt_id));
-        } else {
-          logger.warn("failed to get rows");
-        }
-      },
-    );
-  }, [api, context, node.rowIndex]);
+  const { data, context } = params;
 
   const handlePlay = useCallback(() => {
     if (data) {
-      context.playIds([data.yt_id]);
+      context.playId(data.yt_id);
     }
   }, [context, data]);
 
@@ -174,17 +157,6 @@ const PlayControlRenderer: React.FC<
         </IconButton>
       </Tooltip>
 
-      <Tooltip content="Play from here">
-        <IconButton
-          variant="ghost"
-          size="1"
-          onClick={handlePlayFromHere}
-          aria-label="Play from here"
-        >
-          <ResumeIcon />
-        </IconButton>
-      </Tooltip>
-
       <EditTrackDialog
         isValid={isValid}
         value={value}
@@ -203,7 +175,7 @@ const SearchPlayControlRenderer: React.FC<
 
   const handlePlay = useCallback(() => {
     if (data) {
-      context.playIds([data.yt_id]);
+      context.playId(data.yt_id);
     }
   }, [data, context]);
 
@@ -260,7 +232,7 @@ const SearchPlayControlRenderer: React.FC<
 interface SearchResultsGridProps {
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
   currentId?: string;
-  playIds: (ids: string[]) => void;
+  playId: (id: string) => void;
   requestReply: RequestReply;
   dispatch: Dispatch<Action>;
   tracks?: ITrack[];
@@ -268,14 +240,14 @@ interface SearchResultsGridProps {
 }
 
 type SearchResultsGridContext = {
-  playIds: (ids: string[]) => void;
+  playId: (id: string) => void;
   requestReply: RequestReply;
   lastCollectionUpdate?: number;
 };
 
 export const SearchResultsGrid = ({
   gridRef,
-  playIds,
+  playId,
   requestReply,
   dispatch,
   tracks,
@@ -360,8 +332,8 @@ export const SearchResultsGrid = ({
   );
 
   const context: SearchResultsGridContext = useMemo(() => {
-    return { requestReply, playIds, lastCollectionUpdate };
-  }, [requestReply, playIds, lastCollectionUpdate]);
+    return { requestReply, playId, lastCollectionUpdate };
+  }, [requestReply, playId, lastCollectionUpdate]);
 
   const getRowId = useCallback(
     (params: GetRowIdParams<ITrack>) =>
@@ -397,7 +369,7 @@ export const SearchResultsGrid = ({
 interface TracksGridProps {
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
   currentId?: string;
-  playIds: (ids: string[]) => void;
+  playId: (id: string) => void;
   updateRating: (yt_id: string, rating: number | null) => void;
   requestReply: RequestReply;
   dispatch: Dispatch<Action>;
@@ -408,7 +380,7 @@ interface TracksGridProps {
 }
 
 type TracksGridContext = {
-  playIds: (ids: string[]) => void;
+  playId: (id: string) => void;
   requestReply: RequestReply;
   updateRating: (yt_id: string, rating: number) => void;
   sendMsg: (msg: ClientMsg) => void;
@@ -417,7 +389,7 @@ type TracksGridContext = {
 export const TracksGrid = ({
   gridRef,
   currentId,
-  playIds,
+  playId,
   updateRating,
   requestReply,
   dispatch,
@@ -549,10 +521,10 @@ export const TracksGrid = ({
     return {
       updateRating: updateRatingAndRefresh,
       requestReply,
-      playIds,
+      playId,
       sendMsg,
     };
-  }, [updateRatingAndRefresh, requestReply, playIds, sendMsg]);
+  }, [updateRatingAndRefresh, requestReply, playId, sendMsg]);
 
   const onSelectionChanged = useCallback(
     (ev: SelectionChangedEvent<ITrack>) => {
