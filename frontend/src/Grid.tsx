@@ -576,7 +576,6 @@ export const TracksGrid = ({
         rowBuffer={10}
         rowModelType={"infinite"}
         cacheBlockSize={100}
-        cacheOverflowSize={2}
         maxConcurrentDatasourceRequests={4}
         infiniteInitialRowCount={1000}
         maxBlocksInCache={10}

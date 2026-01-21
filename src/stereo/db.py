@@ -468,6 +468,52 @@ async def validate_db_schema(db_path: Path | str) -> bool:
         return False
 
 
+async def get_row_index(
+    ctx: Context,
+    yt_id: str,
+    sortModel: list[SortModelItem],
+    filterModel: dict[str, FilterModelItem | CombinedFilterModelItem],
+) -> int:
+    """Return integer index of YT id in sorted and possibly filtered rows. Return -1 if not found."""
+
+    where_clause = "1=1"
+
+    where_clause_and_params = where_clause_from_filter_model(filterModel)
+
+    params = []
+
+    if where_clause_and_params:
+        params.extend(where_clause_and_params[1])
+        where_clause = where_clause_and_params[0]
+
+    sort_parts: list = []
+
+    if sortModel:
+        for sort_item in sortModel:
+            direction = "ASC" if sort_item.sort == "asc" else "DESC"
+            sort_parts.append(f"{sort_item.colId} {direction}")
+
+    order_by = ", ".join(sort_parts)
+
+    query = f"""
+        SELECT row_idx FROM (
+            SELECT
+                yt_id,
+                (ROW_NUMBER() OVER (ORDER BY {order_by})) - 1 AS row_idx
+            FROM tracks
+            {where_clause}
+        ) AS numbered_rows
+        WHERE yt_id = ?
+    """
+
+    params.append(yt_id)
+
+    async with aiosqlite.connect(ctx.path) as db:
+        async with db.execute(query, params) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else -1
+
+
 if __name__ == "__main__":
 
     async def run():

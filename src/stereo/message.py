@@ -257,6 +257,24 @@ class MsgGetRows:
 
 
 @dataclass
+class MsgGetRowIndex:
+    id: int
+    yt_id: str
+    sortModel: list[SortModelItem] = field(default_factory=list)
+    filterModel: dict[str, FilterModelItem | CombinedFilterModelItem] = field(
+        default_factory=dict
+    )
+    type: Literal["get-row-index"] = "get-row-index"
+
+
+@dataclass
+class MsgRowIndex:
+    id: int
+    index: int
+    type: Literal["row-index"] = "row-index"
+
+
+@dataclass
 class MsgGetTrackInfo:
     yt_id: str
     type: Literal["get-track-info"] = "get-track-info"
@@ -293,6 +311,7 @@ type MsgServer = (
     | MsgImportFromValid
     | MsgYTAnonPlaylist
     | MsgValidateTrackReply
+    | MsgRowIndex
 )
 
 type MsgClient = (
@@ -316,4 +335,5 @@ type MsgClient = (
     | MsgUpdateTrack
     | MsgValidateTrack
     | MsgExportTracksToCollection
+    | MsgGetRowIndex
 )

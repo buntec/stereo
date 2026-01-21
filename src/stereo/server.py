@@ -38,6 +38,7 @@ from stereo.message import (
     MsgDeleteTracks,
     MsgExportTracksToCollection,
     MsgGetPathCompletions,
+    MsgGetRowIndex,
     MsgGetRows,
     MsgGetTrackInfo,
     MsgHeartbeat,
@@ -47,6 +48,7 @@ from stereo.message import (
     MsgNotification,
     MsgPathCompletions,
     MsgReloadTracks,
+    MsgRowIndex,
     MsgRows,
     MsgSearch,
     MsgSearchCancelAll,
@@ -310,6 +312,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         ctx, start_row, end_row, sort_model, filter_model
                     )
                     await q_tx.put(MsgRows(id, tracks, n_rows))
+
+            case MsgGetRowIndex(id, yt_id, sort_model, filter_model):
+                ctx = state.db_ctx()
+                if ctx is not None:
+                    index = await db.get_row_index(ctx, yt_id, sort_model, filter_model)
+                    await q_tx.put(MsgRowIndex(id, index))
 
             case MsgAddTrack(track, overwrite_existing):
                 ctx = state.db_ctx()

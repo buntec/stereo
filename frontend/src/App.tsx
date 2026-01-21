@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { AgGridReact } from "ag-grid-react";
-import { type GridState, type IRowNode } from "ag-grid-community";
+import { type GridState } from "ag-grid-community";
 import logger from "./logger.tsx";
 
 import {
@@ -344,6 +344,7 @@ const reducer = (state: State, action: Action): State => {
     case "rows":
     case "yt-anon-playlist":
     case "tracks":
+    case "row-index":
     case "heartbeat":
     case "collection-contains-id-response":
     case "path-completions":
@@ -911,11 +912,30 @@ function App() {
   );
 
   const centerGridAroundCurrentTrack = useCallback(() => {
-    gridRef.current?.api.ensureNodeVisible(
-      (row: IRowNode<ITrack>) => row.data?.yt_id === state.current_id,
-      "middle",
-    );
-  }, [state.current_id]);
+    if (state.current_id && gridReady && gridRef.current) {
+      const api = gridRef.current.api;
+      const filterModel = api.getState().filter?.filterModel;
+      const sortModel = api.getState().sort?.sortModel;
+      requestReply(
+        {
+          type: "get-row-index",
+          yt_id: state.current_id,
+          filterModel,
+          sortModel,
+        },
+        function (msg: ServerMsg | { type: string }) {
+          if ("index" in msg) {
+            gridRef.current?.api.ensureIndexVisible(
+              msg.index as number,
+              "middle",
+            );
+          } else {
+            logger.warn("failed to get row index");
+          }
+        },
+      );
+    }
+  }, [gridReady, requestReply, state.current_id]);
 
   const nextTrack = useCallback(
     () => dispatch({ type: "play-next-track" }),

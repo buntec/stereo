@@ -53,6 +53,12 @@ export type ClientMsg =
       sortModel: unknown;
       filterModel: unknown;
     }
+  | {
+      type: "get-row-index";
+      yt_id: string;
+      sortModel: unknown;
+      filterModel: unknown;
+    }
   | { type: "add-tracks"; tracks: ITrack[]; overwrite_existing: boolean }
   | {
       type: "search";
@@ -78,6 +84,10 @@ export type ServerMsg =
   | { type: "track-update"; track: ITrack }
   | { type: "reload-tracks" }
   | { type: "rows"; id: number; rows: ITrack[]; last_row?: number }
+  | {
+      type: "row-index";
+      index: number;
+    }
   | { type: "backend-info"; version: string }
   | { type: "yt-anon-playlist"; id: number; url: string }
   | { type: "track-info"; track: ITrack }

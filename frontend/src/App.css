@@ -55,7 +55,7 @@
 }
 
 .ag-row-hover {
-  background-color: rgb(from var(--crimson-6) r g b / 0.15);
+  background-color: rgb(from var(--cyan-6) r g b / 0.15);
 }
 
 .search-results {
@@ -72,10 +72,6 @@
 
 .ag-list {
   backdrop-filter: blur(8px);
-}
-
-.row-highlight {
-  background-color: var(--pink);
 }
 
 .progress-slider {
@@ -97,8 +93,8 @@
 
   background: linear-gradient(
     to right,
-    rgb(from var(--cyan-8) r g b / 0.25) var(--stop),
-    rgb(from var(--cyan-6) r g b / 0.25) var(--stop)
+    rgb(from var(--pink-8) r g b / 0.25) var(--stop),
+    rgb(from var(--pink-4) r g b / 0.25) var(--stop)
   );
 }
 
