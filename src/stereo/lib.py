@@ -459,7 +459,7 @@ async def bp_get_label_releases(
                                 artists = [a["name"].strip() for a in track["artists"]]
                                 track_name = track["name"].strip()
                                 mix_name = track["mix_name"].strip()
-                                isrc = track["isrc"].strip()
+                                isrc = track["isrc"].strip() if track["isrc"] else None
                                 key = track["key"]["name"].strip()
                                 release_date = date.fromisoformat(
                                     track["new_release_date"]
