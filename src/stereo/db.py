@@ -476,7 +476,7 @@ async def get_row_index(
 ) -> int:
     """Return integer index of YT id in sorted and possibly filtered rows. Return -1 if not found."""
 
-    where_clause = "1=1"
+    where_clause = "WHERE 1=1"  # default
 
     where_clause_and_params = where_clause_from_filter_model(filterModel)
 
