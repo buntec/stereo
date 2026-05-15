@@ -315,7 +315,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             case MsgGetRowIndex(id, yt_id, sort_model, filter_model):
                 ctx = state.db_ctx()
-                if ctx is not None:
+                if ctx is not None and sort_model:
                     index = await db.get_row_index(ctx, yt_id, sort_model, filter_model)
                     await q_tx.put(MsgRowIndex(id, index))
 

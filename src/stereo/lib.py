@@ -13,6 +13,7 @@ import thefuzz.process
 import yaml
 from aiohttp import ClientSession
 from bs4 import BeautifulSoup
+from curl_cffi.requests import AsyncSession as BeatportSession
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -181,9 +182,9 @@ def shorten_string(s: str, maxlen: int) -> str:
     return s
 
 
-async def bp_search_tracks(session: ClientSession, q: str) -> list[BPTrack]:
+async def bp_search_tracks(session: BeatportSession, q: str) -> list[BPTrack]:
     logger.info(f"searching Beatport with query: {q}")
-    async with session.get(
+    response = await session.get(
         "https://www.beatport.com/search/tracks",
         params={
             "q": q,
@@ -191,39 +192,39 @@ async def bp_search_tracks(session: ClientSession, q: str) -> list[BPTrack]:
             "per_page": 1000,
             "page": 1,
         },
-    ) as response:
-        html = await response.text()
-        logger.debug(f"Beatport response: {html}")
-        soup = BeautifulSoup(html, "html.parser")
-        script_tags = soup.find_all("script")
-        tracks = []
-        for tag in script_tags:
-            if tag.get("id") == "__NEXT_DATA__":
-                for el in tag.contents:
-                    json_blob = json.loads(str(el))
-                    for query in json_blob["props"]["pageProps"]["dehydratedState"][
-                        "queries"
-                    ]:
-                        data = query.get("state", {}).get("data", {}).get("data", [])
-                        for item in data:
-                            artists = [x["artist_name"] for x in item["artists"]]
-                            bpt = BPTrack(
-                                artists,
-                                item.get("bpm"),
-                                item.get("key_name"),
-                                item.get("isrc"),
-                                label=item.get("label", {}).get("label_name"),
-                                release_date=datetime.fromisoformat(
-                                    item["release_date"]
-                                ).date(),
-                                track_id=item["track_id"],
-                                track_name=item["track_name"].strip(),
-                                mix_name=item["mix_name"].strip(),
-                                genre=[i["genre_name"].strip() for i in item["genre"]],
-                            )
-                            tracks.append(bpt)
-        logger.info(f"Beatport search results:\n{tracks}")
-        return tracks
+    )
+    html = response.text
+    logger.debug(f"Beatport response: {html}")
+    soup = BeautifulSoup(html, "html.parser")
+    script_tags = soup.find_all("script")
+    tracks = []
+    for tag in script_tags:
+        if tag.get("id") == "__NEXT_DATA__":
+            for el in tag.contents:
+                json_blob = json.loads(str(el))
+                for query in json_blob["props"]["pageProps"]["dehydratedState"][
+                    "queries"
+                ]:
+                    data = query.get("state", {}).get("data", {}).get("data", [])
+                    for item in data:
+                        artists = [x["artist_name"] for x in item["artists"]]
+                        bpt = BPTrack(
+                            artists,
+                            item.get("bpm"),
+                            item.get("key_name"),
+                            item.get("isrc"),
+                            label=item.get("label", {}).get("label_name"),
+                            release_date=datetime.fromisoformat(
+                                item["release_date"]
+                            ).date(),
+                            track_id=item["track_id"],
+                            track_name=item["track_name"].strip(),
+                            mix_name=item["mix_name"].strip(),
+                            genre=[i["genre_name"].strip() for i in item["genre"]],
+                        )
+                        tracks.append(bpt)
+    logger.info(f"Beatport search results:\n{tracks}")
+    return tracks
 
 
 def yt_select_best_match(
@@ -350,72 +351,72 @@ def read_pl_from_csv(filepath: str) -> list[CsvRow]:
 
 
 async def bp_search_labels(
-    session: ClientSession, name: str, limit: int
+    session: BeatportSession, name: str, limit: int
 ) -> list[BPLabel]:
-    async with session.get(
+    response = await session.get(
         "https://www.beatport.com/search/labels",
         params={"q": name},
-    ) as response:
-        html = await response.text()
-        soup = BeautifulSoup(html, "html.parser")
-        script_tags = soup.find_all("script")
-        labels = []
-        for tag in script_tags:
-            if tag.get("id") == "__NEXT_DATA__":
-                for el in tag.contents:
-                    json_blob = json.loads(str(el))
-                    for query in json_blob["props"]["pageProps"]["dehydratedState"][
-                        "queries"
-                    ]:
-                        data = query.get("state", {}).get("data", {}).get("data", [])
-                        for item in data:
-                            labels.append(
-                                BPLabel(
-                                    item["label_name"].strip(),
-                                    item["label_name"].strip(),
-                                    item["label_id"],
-                                )
+    )
+    html = response.text
+    soup = BeautifulSoup(html, "html.parser")
+    script_tags = soup.find_all("script")
+    labels = []
+    for tag in script_tags:
+        if tag.get("id") == "__NEXT_DATA__":
+            for el in tag.contents:
+                json_blob = json.loads(str(el))
+                for query in json_blob["props"]["pageProps"]["dehydratedState"][
+                    "queries"
+                ]:
+                    data = query.get("state", {}).get("data", {}).get("data", [])
+                    for item in data:
+                        labels.append(
+                            BPLabel(
+                                item["label_name"].strip(),
+                                item["label_name"].strip(),
+                                item["label_id"],
                             )
-                            if len(labels) >= limit:
-                                return labels
-        return labels
+                        )
+                        if len(labels) >= limit:
+                            return labels
+    return labels
 
 
 async def bp_search_artist(
-    session: ClientSession, name: str, limit: int
+    session: BeatportSession, name: str, limit: int
 ) -> list[BPArtist]:
-    async with session.get(
+    response = await session.get(
         "https://www.beatport.com/search/artists",
         params={"q": name},
-    ) as response:
-        html = await response.text()
-        soup = BeautifulSoup(html, "html.parser")
-        script_tags = soup.find_all("script")
-        artists = []
-        for tag in script_tags:
-            if tag.get("id") == "__NEXT_DATA__":
-                for el in tag.contents:
-                    json_blob = json.loads(str(el))
-                    for query in json_blob["props"]["pageProps"]["dehydratedState"][
-                        "queries"
-                    ]:
-                        data = query.get("state", {}).get("data", {}).get("data", [])
-                        for item in data:
-                            artists.append(
-                                BPArtist(
-                                    item["artist_name"].strip(),
-                                    item["artist_name"].strip(),
-                                    item["artist_id"],
-                                    item["artist_image_uri"],
-                                )
+    )
+    html = response.text
+    soup = BeautifulSoup(html, "html.parser")
+    script_tags = soup.find_all("script")
+    artists = []
+    for tag in script_tags:
+        if tag.get("id") == "__NEXT_DATA__":
+            for el in tag.contents:
+                json_blob = json.loads(str(el))
+                for query in json_blob["props"]["pageProps"]["dehydratedState"][
+                    "queries"
+                ]:
+                    data = query.get("state", {}).get("data", {}).get("data", [])
+                    for item in data:
+                        artists.append(
+                            BPArtist(
+                                item["artist_name"].strip(),
+                                item["artist_name"].strip(),
+                                item["artist_id"],
+                                item["artist_image_uri"],
                             )
-                            if len(artists) >= limit:
-                                return artists
-        return artists
+                        )
+                        if len(artists) >= limit:
+                            return artists
+    return artists
 
 
 async def bp_get_label_releases(
-    session: ClientSession,
+    session: BeatportSession,
     label: BPLabel,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -433,60 +434,60 @@ async def bp_get_label_releases(
         start_date = date(1990, 1, 1)
         params["publish_date"] = f"{start_date.isoformat()}:{end_date.isoformat()}"
 
-    async with session.get(
+    response = await session.get(
         f"https://www.beatport.com/label/{label.name}/{label.id}/tracks",
         params=params,
-    ) as response:
-        html = await response.text()
-        logger.debug(f"Beatport label release search response: {html}")
-        bp_tracks = []
-        soup = BeautifulSoup(html, "html.parser")
-        script_tags = soup.find_all("script")
-        for tag in script_tags:
-            if tag.get("id") == "__NEXT_DATA__":
-                for el in tag.contents:
-                    json_blob = json.loads(str(el))
-                    for query in json_blob["props"]["pageProps"]["dehydratedState"][
-                        "queries"
-                    ]:
-                        if "tracks" in query["queryKey"]:
-                            tracks = (
-                                query.get("state", {})
-                                .get("data", {})
-                                .get("results", [])
+    )
+    html = response.text
+    logger.debug(f"Beatport label release search response: {html}")
+    bp_tracks = []
+    soup = BeautifulSoup(html, "html.parser")
+    script_tags = soup.find_all("script")
+    for tag in script_tags:
+        if tag.get("id") == "__NEXT_DATA__":
+            for el in tag.contents:
+                json_blob = json.loads(str(el))
+                for query in json_blob["props"]["pageProps"]["dehydratedState"][
+                    "queries"
+                ]:
+                    if "tracks" in query["queryKey"]:
+                        tracks = (
+                            query.get("state", {}).get("data", {}).get("results", [])
+                        )
+                        for track in tracks:
+                            artists = [a["name"].strip() for a in track["artists"]]
+                            track_name = track["name"].strip()
+                            mix_name = track["mix_name"].strip()
+                            isrc = track["isrc"].strip() if track["isrc"] else None
+                            key = (
+                                track["key"]["name"].strip()
+                                if track.get("key")
+                                else None
                             )
-                            for track in tracks:
-                                artists = [a["name"].strip() for a in track["artists"]]
-                                track_name = track["name"].strip()
-                                mix_name = track["mix_name"].strip()
-                                isrc = track["isrc"].strip() if track["isrc"] else None
-                                key = track["key"]["name"].strip()
-                                release_date = date.fromisoformat(
-                                    track["new_release_date"]
+                            release_date = date.fromisoformat(track["new_release_date"])
+                            bpm = track["bpm"]
+                            genre = track["genre"]["name"].strip()
+                            track_id = track["id"]
+                            label = track["release"]["label"]["name"].strip()
+                            bp_tracks.append(
+                                BPTrack(
+                                    artists,
+                                    bpm,
+                                    key,
+                                    isrc,
+                                    label,
+                                    release_date,
+                                    track_id,
+                                    track_name,
+                                    mix_name,
+                                    [genre],
                                 )
-                                bpm = track["bpm"]
-                                genre = track["genre"]["name"].strip()
-                                track_id = track["id"]
-                                label = track["release"]["label"]["name"].strip()
-                                bp_tracks.append(
-                                    BPTrack(
-                                        artists,
-                                        bpm,
-                                        key,
-                                        isrc,
-                                        label,
-                                        release_date,
-                                        track_id,
-                                        track_name,
-                                        mix_name,
-                                        [genre],
-                                    )
-                                )
-        return bp_tracks
+                            )
+    return bp_tracks
 
 
 async def bp_get_artist_releases(
-    session: ClientSession,
+    session: BeatportSession,
     artist: BPArtist,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -504,56 +505,56 @@ async def bp_get_artist_releases(
         start_date = date(1990, 1, 1)
         params["publish_date"] = f"{start_date.isoformat()}:{end_date.isoformat()}"
 
-    async with session.get(
+    response = await session.get(
         f"https://www.beatport.com/artist/{artist.name}/{artist.id}/tracks",
         params=params,
-    ) as response:
-        html = await response.text()
-        logger.debug(f"Beatport label release search response: {html}")
-        bp_tracks = []
-        soup = BeautifulSoup(html, "html.parser")
-        script_tags = soup.find_all("script")
-        for tag in script_tags:
-            if tag.get("id") == "__NEXT_DATA__":
-                for el in tag.contents:
-                    json_blob = json.loads(str(el))
-                    for query in json_blob["props"]["pageProps"]["dehydratedState"][
-                        "queries"
-                    ]:
-                        if "tracks" in query["queryKey"]:
-                            tracks = (
-                                query.get("state", {})
-                                .get("data", {})
-                                .get("results", [])
+    )
+    html = response.text
+    logger.debug(f"Beatport artist release search response: {html}")
+    bp_tracks = []
+    soup = BeautifulSoup(html, "html.parser")
+    script_tags = soup.find_all("script")
+    for tag in script_tags:
+        if tag.get("id") == "__NEXT_DATA__":
+            for el in tag.contents:
+                json_blob = json.loads(str(el))
+                for query in json_blob["props"]["pageProps"]["dehydratedState"][
+                    "queries"
+                ]:
+                    if "tracks" in query["queryKey"]:
+                        tracks = (
+                            query.get("state", {}).get("data", {}).get("results", [])
+                        )
+                        for track in tracks:
+                            artists = [a["name"].strip() for a in track["artists"]]
+                            track_name = track["name"].strip()
+                            mix_name = track["mix_name"].strip()
+                            isrc = track["isrc"].strip() if track["isrc"] else None
+                            key = (
+                                track["key"]["name"].strip()
+                                if track.get("key")
+                                else None
                             )
-                            for track in tracks:
-                                artists = [a["name"].strip() for a in track["artists"]]
-                                track_name = track["name"].strip()
-                                mix_name = track["mix_name"].strip()
-                                isrc = track["isrc"].strip()
-                                key = track["key"]["name"].strip()
-                                release_date = date.fromisoformat(
-                                    track["new_release_date"]
+                            release_date = date.fromisoformat(track["new_release_date"])
+                            bpm = track["bpm"]
+                            genre = track["genre"]["name"].strip()
+                            track_id = track["id"]
+                            label = track["release"]["label"]["name"].strip()
+                            bp_tracks.append(
+                                BPTrack(
+                                    artists,
+                                    bpm,
+                                    key,
+                                    isrc,
+                                    label,
+                                    release_date,
+                                    track_id,
+                                    track_name,
+                                    mix_name,
+                                    [genre],
                                 )
-                                bpm = track["bpm"]
-                                genre = track["genre"]["name"].strip()
-                                track_id = track["id"]
-                                label = track["release"]["label"]["name"].strip()
-                                bp_tracks.append(
-                                    BPTrack(
-                                        artists,
-                                        bpm,
-                                        key,
-                                        isrc,
-                                        label,
-                                        release_date,
-                                        track_id,
-                                        track_name,
-                                        mix_name,
-                                        [genre],
-                                    )
-                                )
-        return bp_tracks
+                            )
+    return bp_tracks
 
 
 async def bp_search_label_releases_fallback(
@@ -751,29 +752,34 @@ async def yt_get_metadata(session: ClientSession, video_id: str):
 async def get_label_releases(
     session: ClientSession, label_name: str, start_date: date | None = None
 ) -> AsyncGenerator[Track]:
-    bp_labels = await bp_search_labels(session, label_name, limit=1)
-    if bp_labels:
-        tracks = await bp_get_label_releases(session, bp_labels[0], start_date)
-        for track in tracks:
-            q = f"{track.track_name} {', '.join(track.artists)} {track.label}"
-            yt_vids = await yt_search_simple(session, q, 1)
-            yield Track.from_bp_track(track, yt_vids[0].id)
+    async with BeatportSession(impersonate="chrome124") as bp_session:
+        bp_labels = await bp_search_labels(bp_session, label_name, limit=1)
+        if bp_labels:
+            tracks = await bp_get_label_releases(bp_session, bp_labels[0], start_date)
+            for track in tracks:
+                q = f"{track.track_name} {', '.join(track.artists)} {track.label}"
+                yt_vids = await yt_search_simple(session, q, 1)
+                if yt_vids:
+                    yield Track.from_bp_track(track, yt_vids[0].id)
 
 
 async def get_artist_releases(
     session: ClientSession, artist_name: str, start_date: date | None = None
 ) -> AsyncGenerator[Track]:
-    bp_artists = await bp_search_artist(session, artist_name, limit=1)
-    if bp_artists:
-        tracks = await bp_get_artist_releases(session, bp_artists[0], start_date)
-        for track in tracks:
-            q = f"{track.track_name} {', '.join(track.artists)} {track.label}"
-            yt_vids = await yt_search_simple(session, q, 1)
-            yield Track.from_bp_track(track, yt_vids[0].id)
+    async with BeatportSession(impersonate="chrome124") as bp_session:
+        bp_artists = await bp_search_artist(bp_session, artist_name, limit=1)
+        if bp_artists:
+            tracks = await bp_get_artist_releases(bp_session, bp_artists[0], start_date)
+            for track in tracks:
+                q = f"{track.track_name} {', '.join(track.artists)} {track.label}"
+                yt_vids = await yt_search_simple(session, q, 1)
+                if yt_vids:
+                    yield Track.from_bp_track(track, yt_vids[0].id)
 
 
 async def search_fuzzy(session: ClientSession, query: str) -> AsyncGenerator[Track]:
-    bp_tracks = await bp_search_tracks(session, query)
+    async with BeatportSession(impersonate="chrome124") as bp_session:
+        bp_tracks = await bp_search_tracks(bp_session, query)
     for track in bp_tracks:
         q = f"{track.track_name} {', '.join(track.artists)} {track.label}"
         yt_vids = await yt_search_simple(session, q, 1)
