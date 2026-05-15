@@ -375,6 +375,10 @@ function App() {
     defaultSettings,
   );
 
+  const [filteredRowCount, setFilteredRowCount] = useState<number | undefined>(
+    undefined,
+  );
+
   const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
     "stereo_app_grid_state",
     undefined,
@@ -1377,6 +1381,44 @@ function App() {
                   <ReloadIcon />
                 </IconButton>
               </Tooltip>
+
+              {filteredRowCount !== undefined && (
+                <Tooltip
+                  content={
+                    filteredRowCount !== state.collection?.size
+                      ? `${filteredRowCount} of ${state.collection?.size} tracks match active filters`
+                      : `${filteredRowCount} tracks`
+                  }
+                >
+                  <Flex
+                    align="center"
+                    gap="1"
+                    px="2"
+                    className="row-count"
+                  >
+                    <Text
+                      size="2"
+                      color={
+                        filteredRowCount !== state.collection?.size
+                          ? "blue"
+                          : "gray"
+                      }
+                      weight="bold"
+                    >
+                      {filteredRowCount}
+                    </Text>
+                    {filteredRowCount !== state.collection?.size &&
+                      state.collection?.size !== undefined && (
+                        <Text size="2" color="gray">
+                          / {state.collection.size}
+                        </Text>
+                      )}
+                    <Text size="2" color="gray">
+                      tracks
+                    </Text>
+                  </Flex>
+                </Tooltip>
+              )}
             </Flex>
           )}
           <Box className="grid-container">
@@ -1402,6 +1444,7 @@ function App() {
                 setGridReady={setGridReady}
                 initialState={gridState}
                 onStateUpdate={onTrackGridStateUpdate}
+                onRowCountChange={setFilteredRowCount}
               />
             )}
           </Box>

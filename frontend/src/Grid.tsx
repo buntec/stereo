@@ -377,6 +377,7 @@ interface TracksGridProps {
   setGridReady: (ready: boolean) => void;
   initialState?: GridState;
   onStateUpdate: (state: GridState) => void;
+  onRowCountChange?: (count: number) => void;
 }
 
 type TracksGridContext = {
@@ -397,6 +398,7 @@ export const TracksGrid = ({
   setGridReady,
   initialState,
   onStateUpdate,
+  onRowCountChange,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -491,6 +493,9 @@ export const TracksGrid = ({
           function (msg: ServerMsg | { type: string }) {
             if ("rows" in msg) {
               params.successCallback(msg.rows, msg.last_row);
+              if (msg.last_row !== undefined) {
+                onRowCountChange?.(msg.last_row);
+              }
             } else {
               params.failCallback();
             }
@@ -499,7 +504,7 @@ export const TracksGrid = ({
         );
       },
     };
-  }, [requestReply]);
+  }, [requestReply, onRowCountChange]);
 
   const rowClassRules = useMemo(() => {
     return {

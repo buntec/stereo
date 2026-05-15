@@ -156,6 +156,11 @@
   display: none;
 }
 
+.row-count {
+  border-radius: var(--radius-2);
+  border: 1px solid var(--gray-a6);
+}
+
 .yt-thumbnail-link {
   display: flex;
 }
