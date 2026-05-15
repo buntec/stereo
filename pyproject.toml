@@ -55,3 +55,4 @@ deno = ">=2.3.4,<2.4"
 [tool.pytest.ini_options]
 log_cli = true
 log_cli_level = "INFO"
+asyncio_mode = "auto"

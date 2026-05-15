@@ -18,5 +18,8 @@ run-frontend-dev *args:
 run-backend-dev *args:
     uv run stereo --dev -v {{ args }}
 
+test *args:
+    uv run pytest tests/ {{ args }}
+
 format:
     treefmt

@@ -802,20 +802,13 @@ async def yt_create_anon_playlist(video_ids: list[str]) -> str:
 
 
 async def txs_search(query: str) -> list[TXSTrack]:
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    async with ClientSession() as session:
+    async with BeatportSession(impersonate="chrome124") as session:
         res = await session.get(
             "https://www.traxsource.com/search",
-            headers=HEADERS,
             params={"term": query},
         )
 
-        html = await res.text()
+        html = res.text
 
         # with open("dump.html", "w") as f:
         #     f.write(html)
@@ -855,78 +848,3 @@ async def txs_search(query: str) -> list[TXSTrack]:
         return tracks
 
 
-if __name__ == "__main__":
-
-    async def test_yt_search():
-        async with ClientSession() as session:
-            vids = await yt_search_simple(session, "walls mosoo deco", 3)
-            print(vids)
-
-    async def test_yt_get_metadata():
-        async with ClientSession() as session:
-            md = await yt_get_metadata(session, "ieLNrlLUhWo")
-            print(md)
-
-    async def test_get_label_releases():
-        async with ClientSession() as session:
-            async for track in get_label_releases(
-                session, "Magnifik Music", date(2025, 1, 1)
-            ):
-                print(track)
-
-    async def test_get_artist_releases():
-        async with ClientSession() as session:
-            async for track in get_artist_releases(
-                session, "kadosh ofc", date(2025, 1, 1)
-            ):
-                print(track)
-
-    async def test_mb_search():
-        async with ClientSession() as session:
-            tracks = await mb_search_recording(
-                'recording:"houdini" AND artist:"dua lipa"', session
-            )
-            print(tracks)
-
-    async def test_bp_search():
-        async with ClientSession() as session:
-            tracks = await bp_search_tracks(session, "kadosh")
-            print(tracks)
-
-    async def test_bp_search_artist():
-        async with ClientSession() as session:
-            artist = await bp_search_artist(session, "kadosh", 10)
-            print(artist[:5])
-
-    async def test_search_fuzzy():
-        async with ClientSession() as session:
-            query = "auguxt what that means"
-            # query = "henry saiz love mythology"
-            i = 0
-            async for track in search_fuzzy(session, query):
-                i += 1
-                print(track)
-                if i >= 5:
-                    break
-
-    async def test_yt_anon_playlist():
-        ids = ["nP60jajfMdw", "0h6VHeysvh4", "tDDsbq8PqBM"]
-        url = await yt_create_anon_playlist(ids)
-        print(url)
-
-    async def test_txs_search():
-        tracks = await txs_search("juno ride with me")
-        print(tracks)
-        tracks = await txs_search("ajna anahata")
-        print(tracks)
-
-    # asyncio.run(test_yt_search())
-    # asyncio.run(test_get_label_releases())
-    # asyncio.run(test_get_artist_releases())
-    # asyncio.run(test_search_fuzzy())
-    # asyncio.run(test_bp_search())
-    # asyncio.run(test_bp_search_artist())
-    # asyncio.run(test_yt_get_metadata())
-    # asyncio.run(test_mb_search())
-    # asyncio.run(test_yt_anon_playlist())
-    asyncio.run(test_txs_search())
