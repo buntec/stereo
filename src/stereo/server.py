@@ -9,8 +9,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
 
-import aiohttp
 from anyio import TemporaryDirectory
+from curl_cffi.requests import AsyncSession
 from pydantic import TypeAdapter, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.applications import Starlette
@@ -147,7 +147,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await q_tx.put(MsgNotification(msg, kind))
 
     async def search_fuzzy(query: str, query_id: int, limit: int):
-        async with aiohttp.ClientSession() as session:
+        async with AsyncSession(impersonate="chrome124") as session:
             i = 0
             try:
                 async for track in lib.search_fuzzy(session, query):
@@ -163,7 +163,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 await q_tx.put(MsgSearchComplete(query_id))
 
     async def search_by_artist(query: str, query_id: int, limit: int):
-        async with aiohttp.ClientSession() as session:
+        async with AsyncSession(impersonate="chrome124") as session:
             i = 0
             try:
                 async for track in lib.get_artist_releases(session, query):
@@ -179,7 +179,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 await q_tx.put(MsgSearchComplete(query_id))
 
     async def search_by_label(query: str, query_id: int, limit: int):
-        async with aiohttp.ClientSession() as session:
+        async with AsyncSession(impersonate="chrome124") as session:
             i = 0
             try:
                 async for track in lib.get_label_releases(session, query):

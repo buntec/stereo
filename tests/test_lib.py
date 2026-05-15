@@ -1,11 +1,11 @@
 """Integration tests for lib.py — hit real external APIs."""
 
 import pytest
-from aiohttp import ClientSession
 from datetime import date
 
+from curl_cffi.requests import AsyncSession
+
 from stereo.lib import (
-    BeatportSession,
     bp_search_artist,
     bp_search_tracks,
     get_artist_releases,
@@ -20,7 +20,7 @@ from stereo.lib import (
 
 @pytest.mark.asyncio
 async def test_yt_search():
-    async with ClientSession() as session:
+    async with AsyncSession(impersonate="chrome124") as session:
         vids = await yt_search_simple(session, "walls mosoo deco", 3)
     assert len(vids) > 0
     assert vids[0].id
@@ -29,7 +29,7 @@ async def test_yt_search():
 
 @pytest.mark.asyncio
 async def test_bp_search_tracks():
-    async with BeatportSession(impersonate="chrome124") as session:
+    async with AsyncSession(impersonate="chrome124") as session:
         tracks = await bp_search_tracks(session, "kadosh")
     assert len(tracks) > 0
     assert tracks[0].track_name
@@ -38,7 +38,7 @@ async def test_bp_search_tracks():
 
 @pytest.mark.asyncio
 async def test_bp_search_artist():
-    async with BeatportSession(impersonate="chrome124") as session:
+    async with AsyncSession(impersonate="chrome124") as session:
         artists = await bp_search_artist(session, "kadosh", 10)
     assert len(artists) > 0
     assert artists[0].display_name
@@ -46,9 +46,11 @@ async def test_bp_search_artist():
 
 @pytest.mark.asyncio
 async def test_get_label_releases():
-    async with ClientSession() as session:
+    async with AsyncSession(impersonate="chrome124") as session:
         tracks = []
-        async for track in get_label_releases(session, "Magnifik Music", date(2025, 1, 1)):
+        async for track in get_label_releases(
+            session, "Magnifik Music", date(2025, 1, 1)
+        ):
             tracks.append(track)
             if len(tracks) >= 3:
                 break
@@ -59,7 +61,7 @@ async def test_get_label_releases():
 
 @pytest.mark.asyncio
 async def test_get_artist_releases():
-    async with ClientSession() as session:
+    async with AsyncSession(impersonate="chrome124") as session:
         tracks = []
         async for track in get_artist_releases(session, "kadosh ofc", date(2025, 1, 1)):
             tracks.append(track)
@@ -72,7 +74,7 @@ async def test_get_artist_releases():
 
 @pytest.mark.asyncio
 async def test_search_fuzzy():
-    async with ClientSession() as session:
+    async with AsyncSession(impersonate="chrome124") as session:
         tracks = []
         async for track in search_fuzzy(session, "auguxt what that means"):
             tracks.append(track)
@@ -84,7 +86,7 @@ async def test_search_fuzzy():
 
 @pytest.mark.asyncio
 async def test_mb_search():
-    async with ClientSession() as session:
+    async with AsyncSession(impersonate="chrome124") as session:
         recordings = await mb_search_recording(
             'recording:"houdini" AND artist:"dua lipa"', session
         )

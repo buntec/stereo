@@ -11,9 +11,8 @@ from typing import Any, AsyncGenerator
 import thefuzz.fuzz
 import thefuzz.process
 import yaml
-from aiohttp import ClientSession
 from bs4 import BeautifulSoup
-from curl_cffi.requests import AsyncSession as BeatportSession
+from curl_cffi.requests import AsyncSession
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -182,7 +181,7 @@ def shorten_string(s: str, maxlen: int) -> str:
     return s
 
 
-async def bp_search_tracks(session: BeatportSession, q: str) -> list[BPTrack]:
+async def bp_search_tracks(session: AsyncSession, q: str) -> list[BPTrack]:
     logger.info(f"searching Beatport with query: {q}")
     response = await session.get(
         "https://www.beatport.com/search/tracks",
@@ -293,36 +292,36 @@ def bp_select_best_match(
     return None
 
 
-async def mb_search_recording(query: str, session: ClientSession) -> list[MBRecording]:
+async def mb_search_recording(query: str, session: AsyncSession) -> list[MBRecording]:
     """example query: "love mythology AND artist:'henry saiz'"""
 
     logger.info(f"searching MusicBrainz with query: {query}")
 
-    async with session.get(
+    response = await session.get(
         "http://musicbrainz.org/ws/2/recording",
         params={"fmt": "json", "query": query},
-    ) as response:
-        data = await response.json()
-        logger.debug(f"MusicBrainz response: {data}")
-        # with open("dump.json", "w") as f:
-        #     json.dump(data, f)
-        recs = []
-        for rec in data.get("recordings", []):
-            id = rec.get("id")
-            title = rec.get("title")
-            release_date = None
-            if "first-release-date" in rec:
-                try:
-                    release_date = date.fromisoformat(rec["first-release-date"])
-                except ValueError:
-                    pass
-            artists = []
-            for a in rec.get("artist-credit", []):
-                name = a.get("name")
-                artists.append(name)
-            recs.append(MBRecording(title, id, artists, release_date))
-        logger.info(f"MusicBrainz search results:\n{recs}")
-        return recs
+    )
+    data = response.json()
+    logger.debug(f"MusicBrainz response: {data}")
+    # with open("dump.json", "w") as f:
+    #     json.dump(data, f)
+    recs = []
+    for rec in data.get("recordings", []):
+        id = rec.get("id")
+        title = rec.get("title")
+        release_date = None
+        if "first-release-date" in rec:
+            try:
+                release_date = date.fromisoformat(rec["first-release-date"])
+            except ValueError:
+                pass
+        artists = []
+        for a in rec.get("artist-credit", []):
+            name = a.get("name")
+            artists.append(name)
+        recs.append(MBRecording(title, id, artists, release_date))
+    logger.info(f"MusicBrainz search results:\n{recs}")
+    return recs
 
 
 async def retry(f, n: int, label: str):
@@ -351,7 +350,7 @@ def read_pl_from_csv(filepath: str) -> list[CsvRow]:
 
 
 async def bp_search_labels(
-    session: BeatportSession, name: str, limit: int
+    session: AsyncSession, name: str, limit: int
 ) -> list[BPLabel]:
     response = await session.get(
         "https://www.beatport.com/search/labels",
@@ -383,7 +382,7 @@ async def bp_search_labels(
 
 
 async def bp_search_artist(
-    session: BeatportSession, name: str, limit: int
+    session: AsyncSession, name: str, limit: int
 ) -> list[BPArtist]:
     response = await session.get(
         "https://www.beatport.com/search/artists",
@@ -416,7 +415,7 @@ async def bp_search_artist(
 
 
 async def bp_get_label_releases(
-    session: BeatportSession,
+    session: AsyncSession,
     label: BPLabel,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -487,7 +486,7 @@ async def bp_get_label_releases(
 
 
 async def bp_get_artist_releases(
-    session: BeatportSession,
+    session: AsyncSession,
     artist: BPArtist,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -558,72 +557,72 @@ async def bp_get_artist_releases(
 
 
 async def bp_search_label_releases_fallback(
-    session: ClientSession,
+    session: AsyncSession,
     label: BPLabel,
     start_date: date,
     end_date: date = date.today(),
 ) -> list[BPTrack]:
-    async with session.get(
+    response = await session.get(
         f"https://www.beatport.com/label/{label.name}/{label.id}/tracks",
         params={
             "page": 1,
             "per_page": 1000,
             "publish_date": f"{start_date.isoformat()}:{end_date.isoformat()}",
         },
-    ) as response:
-        html = await response.text()
-        soup = BeautifulSoup(html, "html.parser")
-        elements = soup.select(".row.tracks-table")
-        tracks = []
-        for element in elements:
-            title_tag = element.select("div.title a")[0]
-            track_name = str(title_tag.attrs["title"])
-            track_id = int(str(title_tag.attrs["href"]).split("/")[-1])
+    )
+    html = response.text
+    soup = BeautifulSoup(html, "html.parser")
+    elements = soup.select(".row.tracks-table")
+    tracks = []
+    for element in elements:
+        title_tag = element.select("div.title a")[0]
+        track_name = str(title_tag.attrs["title"])
+        track_id = int(str(title_tag.attrs["href"]).split("/")[-1])
 
-            title_strings = list(title_tag.stripped_strings)
-            # track_name = title_strings[0]
-            mix_name = title_strings[1]
+        title_strings = list(title_tag.stripped_strings)
+        # track_name = title_strings[0]
+        mix_name = title_strings[1]
 
-            artists = []
+        artists = []
 
-            artist_tags = element.select("div.title a")[1:]
-            for tag in artist_tags:
-                artists.append(str(tag.attrs["title"]))
+        artist_tags = element.select("div.title a")[1:]
+        for tag in artist_tags:
+            artists.append(str(tag.attrs["title"]))
 
-            label_tag = element.select("div.label a")[0]
-            label0 = str(label_tag.attrs["title"])
+        label_tag = element.select("div.label a")[0]
+        label0 = str(label_tag.attrs["title"])
 
-            # tracks = element.find_all(href=re.compile("^/track"))
-            # for track in tracks:
-            #     print(track["href"])
+        # tracks = element.find_all(href=re.compile("^/track"))
+        # for track in tracks:
+        #     print(track["href"])
 
-            genre_tag = element.select("div.bpm > a")[0]
-            genre = str(genre_tag.attrs["title"])
+        genre_tag = element.select("div.bpm > a")[0]
+        genre = str(genre_tag.attrs["title"])
 
-            bpm_tag = element.select("div.bpm > div")[0]
-            bpm = int(str(bpm_tag.contents[0]))
-            key = str(bpm_tag.contents[4]).strip("- ")
+        bpm_tag = element.select("div.bpm > div")[0]
+        bpm = int(str(bpm_tag.contents[0]))
+        key = str(bpm_tag.contents[4]).strip("- ")
 
-            date_tag = element.select("div.date")[0]
-            release_date = date.fromisoformat(date_tag.text)
-            track = BPTrack(
-                artists,
-                bpm,
-                key,
-                None,
-                label0,
-                release_date,
-                track_id,
-                track_name,
-                mix_name,
-                [genre],
-            )
-            tracks.append(track)
-        return tracks
+        date_tag = element.select("div.date")[0]
+        release_date = date.fromisoformat(date_tag.text)
+        track = BPTrack(
+            artists,
+            bpm,
+            key,
+            None,
+            label0,
+            release_date,
+            track_id,
+            track_name,
+            mix_name,
+            [genre],
+        )
+        tracks.append(track)
+    return tracks
 
 
 async def yt_search_simple(
-    session: ClientSession, query: str, limit: int
+    session: AsyncSession, query: str, limit: int
 ) -> list[YTVideo]:
     HEADERS = {
         "User-Agent": "Mozilla/5.0",
@@ -690,7 +689,7 @@ async def yt_search_simple(
                 },
             )
 
-            data = await response.json()
+            data = response.json()
 
             # with open("dump.json", "w") as f:
             #     json.dump(data, f)
@@ -706,7 +705,7 @@ async def yt_search_simple(
 
 
 # not super useful as it doesn't include music meta data
-async def yt_get_metadata(session: ClientSession, video_id: str):
+async def yt_get_metadata(session: AsyncSession, video_id: str):
     HEADERS = {
         "User-Agent": "Mozilla/5.0",
         "Accept-Language": "en-US,en;q=0.9",
@@ -736,7 +735,7 @@ async def yt_get_metadata(session: ClientSession, video_id: str):
                 },
             )
 
-            data = await response.json()
+            data = response.json()
 
             with open("dump.json", "w") as f:
                 json.dump(data, f)
@@ -750,9 +749,9 @@ async def yt_get_metadata(session: ClientSession, video_id: str):
 
 
 async def get_label_releases(
-    session: ClientSession, label_name: str, start_date: date | None = None
+    session: AsyncSession, label_name: str, start_date: date | None = None
 ) -> AsyncGenerator[Track]:
-    async with BeatportSession(impersonate="chrome124") as bp_session:
+    async with AsyncSession(impersonate="chrome124") as bp_session:
         bp_labels = await bp_search_labels(bp_session, label_name, limit=1)
         if bp_labels:
             tracks = await bp_get_label_releases(bp_session, bp_labels[0], start_date)
@@ -764,9 +763,9 @@ async def get_label_releases(
 
 
 async def get_artist_releases(
-    session: ClientSession, artist_name: str, start_date: date | None = None
+    session: AsyncSession, artist_name: str, start_date: date | None = None
 ) -> AsyncGenerator[Track]:
-    async with BeatportSession(impersonate="chrome124") as bp_session:
+    async with AsyncSession(impersonate="chrome124") as bp_session:
         bp_artists = await bp_search_artist(bp_session, artist_name, limit=1)
         if bp_artists:
             tracks = await bp_get_artist_releases(bp_session, bp_artists[0], start_date)
@@ -777,8 +776,8 @@ async def get_artist_releases(
                     yield Track.from_bp_track(track, yt_vids[0].id)
 
 
-async def search_fuzzy(session: ClientSession, query: str) -> AsyncGenerator[Track]:
-    async with BeatportSession(impersonate="chrome124") as bp_session:
+async def search_fuzzy(session: AsyncSession, query: str) -> AsyncGenerator[Track]:
+    async with AsyncSession(impersonate="chrome124") as bp_session:
         bp_tracks = await bp_search_tracks(bp_session, query)
     for track in bp_tracks:
         q = f"{track.track_name} {', '.join(track.artists)} {track.label}"
@@ -788,21 +787,24 @@ async def search_fuzzy(session: ClientSession, query: str) -> AsyncGenerator[Tra
 
 
 async def get_final_url(url):
-    async with ClientSession() as session:
-        async with session.get(url, allow_redirects=True) as response:
-            return response.url
+    async with AsyncSession(impersonate="chrome124") as session:
+        response = await session.get(url, allow_redirects=True)
+        return response.url
 
 
 async def yt_create_anon_playlist(video_ids: list[str]) -> str:
+    from urllib.parse import parse_qs, urlparse
+
     base_url = "http://www.youtube.com/watch_videos?video_ids="
     url = f"{base_url}{','.join(video_ids)}"
     final_url = await get_final_url(url)
-    list = final_url.query.get("list")
-    return f"https://music.youtube.com/watch?list={list}"
+    parsed = urlparse(str(final_url))
+    list_id = parse_qs(parsed.query).get("list", [None])[0]
+    return f"https://music.youtube.com/watch?list={list_id}"
 
 
 async def txs_search(query: str) -> list[TXSTrack]:
-    async with BeatportSession(impersonate="chrome124") as session:
+    async with AsyncSession(impersonate="chrome124") as session:
         res = await session.get(
             "https://www.traxsource.com/search",
             params={"term": query},
@@ -846,5 +848,3 @@ async def txs_search(query: str) -> list[TXSTrack]:
             )
             tracks.append(track)
         return tracks
-
-

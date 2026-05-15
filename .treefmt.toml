@@ -5,7 +5,7 @@ includes = ["*.py"]
 
 
 [formatter.prettier]
-command = "prettier"
+command = "prettierd"
 options = ["--write"]
 includes = [
   "*.css",
