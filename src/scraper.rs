@@ -401,29 +401,6 @@ pub async fn yt_create_anon_playlist(
     Ok(format!("https://music.youtube.com/watch?list={list_id}"))
 }
 
-// ── Fuzzy matching ────────────────────────────────────────────────────────────
-
-fn token_sort_similarity(a: &str, b: &str) -> f64 {
-    let sort = |s: &str| -> String {
-        let mut tokens: Vec<&str> = s.split_whitespace().collect();
-        tokens.sort_unstable();
-        tokens.join(" ")
-    };
-    let a_sorted = sort(&a.to_lowercase());
-    let b_sorted = sort(&b.to_lowercase());
-    strsim::normalized_levenshtein(&a_sorted, &b_sorted) * 100.0
-}
-
-fn best_match_idx(query: &str, choices: &[String], cutoff: f64) -> Option<usize> {
-    choices
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (i, token_sort_similarity(query, c)))
-        .filter(|(_, s)| *s >= cutoff)
-        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(i, _)| i)
-}
-
 // ── Search entry points (stream results via channel) ─────────────────────────
 
 async fn run_search<F, Fut>(tx: &mpsc::Sender<MsgServer>, query_id: i64, label: &str, f: F)

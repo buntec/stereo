@@ -135,7 +135,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
 
     let mut client_rx = client_rx;
     while let Some(msg) = client_rx.recv().await {
-        if let Err(e) = handle_msg(&mut state, &settings, &server_tx, &http_client, msg).await {
+        if let Err(e) = handle_msg(&mut state, &server_tx, &http_client, msg).await {
             tracing::error!("Message handling error: {e}");
         }
     }
@@ -241,7 +241,6 @@ async fn update_collection_info(state: &mut SessionState, tx: &mpsc::Sender<MsgS
 
 async fn handle_msg(
     state: &mut SessionState,
-    settings: &Arc<Settings>,
     tx: &mpsc::Sender<MsgServer>,
     client: &Arc<wreq::Client>,
     msg: MsgClient,
