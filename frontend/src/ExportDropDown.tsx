@@ -1,15 +1,17 @@
 import { Tooltip, DropdownMenu, IconButton, Flex } from "@radix-ui/themes";
 import { Share2Icon } from "@radix-ui/react-icons";
+import { collectionLabel } from "./CollectionSelector.tsx";
+import type { ICollection } from "./Types.tsx";
 
 type ExportDropDownProps = {
-  recentCollections: string[];
+  collections: ICollection[];
   exportToCollection: (coll: string) => void;
   exportToYTM: () => void;
   disabled: boolean;
 };
 
 function ExportDropDown({
-  recentCollections,
+  collections,
   exportToCollection,
   exportToYTM,
   disabled,
@@ -29,13 +31,13 @@ function ExportDropDown({
             Export selection to collection
           </DropdownMenu.SubTrigger>
           <DropdownMenu.SubContent>
-            {recentCollections.map((coll: string, i: number) => (
+            {collections.map((c) => (
               <DropdownMenu.Item
-                key={i}
-                onSelect={() => exportToCollection(coll)}
+                key={c.path}
+                onSelect={() => exportToCollection(c.path)}
               >
                 <Flex justify="between" align="center" gapX="4" width="100%">
-                  {coll}
+                  {collectionLabel(c.path)}
                 </Flex>
               </DropdownMenu.Item>
             ))}

@@ -51,6 +51,7 @@ import {
 import type {
   ITrack,
   ICollection,
+  IRepo,
   SearchKind,
   Action,
   ClientMsg,
@@ -65,6 +66,7 @@ import { TracksGrid, SearchResultsGrid } from "./Grid.tsx";
 import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector from "./CollectionSelector.tsx";
+import RepoSelector from "./RepoSelector.tsx";
 import ImportDialog from "./ImportDialog.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
 import AppearanceSwitch from "./AppearanceSwitch.tsx";
@@ -85,8 +87,8 @@ const YTPlayerState = {
 
 const defaultSettings: Settings = {
   appearance: "dark",
+  repoPath: "",
   collectionPath: "",
-  useDefaultCollection: true,
   video: false,
   backgroundVideo: true,
   shufflePlay: false,
@@ -95,11 +97,12 @@ const defaultSettings: Settings = {
 
 type State = {
   backend_version?: string;
+  home_dir?: string;
+  repos?: IRepo[];
+  collections?: ICollection[];
 
   collection?: ICollection;
-  default_collection?: ICollection;
   collection_is_valid?: boolean;
-  collection_path_completions?: string[];
   collection_last_update?: number;
 
   current_id?: string;
@@ -134,6 +137,8 @@ type State = {
   import_from?: string;
   import_from_keep_user_data?: boolean;
   import_from_is_valid?: boolean;
+
+  git_remote?: string | null;
 };
 
 const reducer = (state: State, action: Action): State => {
@@ -190,7 +195,7 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, show_player2: action.visible };
 
     case "backend-info":
-      return { ...state, backend_version: action.version };
+      return { ...state, backend_version: action.version, home_dir: action.home_dir };
 
     case "set-title":
       return { ...state, title: action.title };
@@ -206,9 +211,6 @@ const reducer = (state: State, action: Action): State => {
 
     case "collection-is-valid":
       return { ...state, collection_is_valid: true };
-
-    case "collection-path-completions":
-      return { ...state, collection_path_completions: action.paths };
 
     case "collection-info":
       if (action.error_message) {
@@ -251,9 +253,6 @@ const reducer = (state: State, action: Action): State => {
         return { ...state, import_from_is_valid: action.is_valid };
       }
       return { ...state };
-
-    case "default-collection":
-      return { ...state, default_collection: action.collection };
 
     case "grid-refreshed":
       return { ...state, should_refresh_grid: false };
@@ -341,6 +340,16 @@ const reducer = (state: State, action: Action): State => {
         notification_show: true,
       };
 
+    case "git-remote":
+      return { ...state, git_remote: action.url };
+
+    case "repos":
+      return { ...state, repos: action.repos };
+
+    case "collections":
+      return { ...state, collections: action.collections };
+
+    case "default-collection":
     case "rows":
     case "yt-anon-playlist":
     case "tracks":
@@ -384,11 +393,6 @@ function App() {
     undefined,
   );
 
-  const [recentCollections, setRecentCollections] = useLocalStorage<string[]>(
-    "stereo_app_recent_collections",
-    [],
-  );
-
   const wsOnMessage = useCallback(
     (msg: ServerMsg | ServerMsg[]) => {
       if (Array.isArray(msg)) {
@@ -411,12 +415,14 @@ function App() {
   );
 
   const wsOnClose = useCallback(
-    (ev: CloseEvent) =>
+    (ev: CloseEvent) => {
+      dispatch({ type: "repos", repos: [] });
       dispatch({
         type: "notification",
         message: `WebSocket connection closed (${ev.reason}${ev.code})`,
         kind: "warn",
-      }),
+      });
+    },
     [dispatch],
   );
 
@@ -574,43 +580,58 @@ function App() {
     logger.debug("state:", state);
   }, [state]);
 
+  // Auto-select repo when list first arrives (or changes)
+  useEffect(() => {
+    if (!state.repos || state.repos.length === 0) return;
+    const paths = state.repos.map((r) => r.path);
+    const target = paths.includes(settings.repoPath)
+      ? settings.repoPath
+      : state.repos[0].path;
+    if (target !== settings.repoPath) {
+      setSettings({ ...settings, repoPath: target });
+    }
+    sendMsg({ type: "set-repo", path: target });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.repos]);
+
+  // Auto-select collection when list changes after a repo switch
+  useEffect(() => {
+    if (!state.collections || state.collections.length === 0) return;
+    const paths = state.collections.map((c) => c.path);
+    const target = paths.includes(settings.collectionPath)
+      ? settings.collectionPath
+      : state.collections[0].path;
+    if (target !== settings.collectionPath) {
+      setSettings({ ...settings, collectionPath: target });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.collections]);
+
+  // Keep settings.collectionPath in sync when backend switches collection (e.g. after CreateCollection)
   useEffect(() => {
     if (
-      settings.useDefaultCollection &&
-      state.default_collection &&
-      !settings.collectionPath
+      state.collection &&
+      state.collection_is_valid &&
+      state.collection.path !== settings.collectionPath
     ) {
-      setSettings({
-        ...settings,
-        collectionPath: state.default_collection.path,
-      });
+      setSettings({ ...settings, collectionPath: state.collection.path });
     }
-  }, [
-    state.default_collection,
-    settings.useDefaultCollection,
-    settings.collectionPath,
-    settings,
-    setSettings,
-  ]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.collection, state.collection_is_valid]);
 
+  // Only send set-collection after a repo has been selected (state.collections defined)
   useEffect(() => {
-    if (settings.collectionPath) {
+    if (settings.collectionPath && state.collections !== undefined) {
       requestReply(
         { type: "set-collection", path: settings.collectionPath },
         (msg) => {
           if ("collection" in msg) {
             dispatch({ type: "collection-is-valid" });
           }
-          if ("path_completions" in msg) {
-            dispatch({
-              type: "collection-path-completions",
-              paths: msg.path_completions,
-            });
-          }
         },
       );
     }
-  }, [settings.collectionPath, requestReply]);
+  }, [settings.collectionPath, state.collections, requestReply]);
 
   useEffect(() => {
     if (state.current_id && state.current_id !== state.track_info?.yt_id) {
@@ -738,21 +759,6 @@ function App() {
       }
     };
   }, [state.import_from, sendMsg]);
-
-  useEffect(() => {
-    if (
-      state.collection &&
-      state.collection_is_valid &&
-      !recentCollections.includes(state.collection.path)
-    ) {
-      setRecentCollections([state.collection.path, ...recentCollections]);
-    }
-  }, [
-    state.collection,
-    state.collection_is_valid,
-    recentCollections,
-    setRecentCollections,
-  ]);
 
   const updateRating = useCallback(
     (yt_id: string, rating: number | null) => {
@@ -998,37 +1004,38 @@ function App() {
             wrap="wrap-reverse"
             className="toolbar"
           >
+            <RepoSelector
+              repos={state.repos ?? []}
+              value={settings.repoPath}
+              setValue={(path) => {
+                setSettings({ ...settings, repoPath: path });
+                sendMsg({ type: "set-repo", path });
+              }}
+              onClone={(url) => {
+                // Optimistically derive the local path so auto-select picks the right repo
+                if (state.home_dir) {
+                  const name = url
+                    .replace(/\/$/, "")
+                    .replace(/\.git$/, "")
+                    .split("/")
+                    .pop() ?? "repo";
+                  const path = `${state.home_dir}/${name}`;
+                  setSettings({ ...settings, repoPath: path });
+                }
+                sendMsg({ type: "clone-repo", url });
+              }}
+            />
             <CollectionSelector
               isValid={state.collection_is_valid ?? true}
-              createCollection={(path: string) =>
-                sendMsg({ type: "create-collection", path })
-              }
-              resetToDefault={() => {
-                if (state.default_collection) {
-                  setSettings({
-                    ...settings,
-                    collectionPath: state.default_collection?.path,
-                    useDefaultCollection: true,
-                  });
-                }
-              }}
+              collections={state.collections ?? []}
               value={settings.collectionPath}
-              setValue={(value: string) =>
-                setSettings({
-                  ...settings,
-                  collectionPath: value,
-                  useDefaultCollection: false,
-                })
+              setValue={(path) =>
+                setSettings({ ...settings, collectionPath: path })
               }
-              suggestions={state.collection_path_completions ?? []}
+              onCreate={(name) =>
+                sendMsg({ type: "create-collection", name })
+              }
               size={state.collection?.size}
-              recentCollections={recentCollections}
-              clearRecentCollections={() => setRecentCollections([])}
-              removeRecentCollection={(coll) => {
-                setRecentCollections(
-                  recentCollections.filter((c) => c !== coll),
-                );
-              }}
             />
             <SearchBox
               value={state.search_box_input ?? ""}
@@ -1344,7 +1351,7 @@ function App() {
 
               <ExportDropDown
                 disabled={state.track_selection.length === 0}
-                recentCollections={recentCollections}
+                collections={state.collections ?? []}
                 exportToCollection={exportSelectedTracksToCollection}
                 exportToYTM={openSelectedTracksAsYTMPlaylist}
               />

@@ -25,12 +25,17 @@ export interface ICollection {
   size: number;
 }
 
+export interface IRepo {
+  path: string;
+  remote: string | null;
+}
+
 export type SearchKind = "fuzzy" | "by-label" | "by-artist";
 
 export type ClientMsg =
   | { type: "set-collection"; path: string }
   | { type: "validate-track"; track: unknown; id?: number }
-  | { type: "create-collection"; path: string }
+  | { type: "create-collection"; name: string }
   | { type: "collection-contains-id"; yt_id: string }
   | { type: "get-track-info"; yt_id: string }
   | { type: "import-from"; path: string; keep_user_data: boolean }
@@ -66,7 +71,13 @@ export type ClientMsg =
       query_id: number;
       kind: SearchKind;
       limit: number;
-    };
+    }
+  | { type: "get-git-remote" }
+  | { type: "set-git-remote"; url: string | null }
+  | { type: "set-repo"; path: string }
+  | { type: "clone-repo"; url: string }
+  | { type: "list-repos" }
+  | { type: "list-collections" };
 
 export type ServerMsg =
   | {
@@ -88,7 +99,7 @@ export type ServerMsg =
       type: "row-index";
       index: number;
     }
-  | { type: "backend-info"; version: string }
+  | { type: "backend-info"; version: string; home_dir: string }
   | { type: "yt-anon-playlist"; id: number; url: string }
   | { type: "track-info"; track: ITrack }
   | {
@@ -111,7 +122,10 @@ export type ServerMsg =
       type: "collection-contains-id-response";
       id: number;
       contains_id: boolean;
-    };
+    }
+  | { type: "git-remote"; url: string | null }
+  | { type: "repos"; repos: IRepo[] }
+  | { type: "collections"; collections: ICollection[] };
 
 export type Action =
   | ServerMsg
@@ -123,7 +137,6 @@ export type Action =
   | { type: "set-notification-show"; show: boolean }
   | { type: "clear-title" }
   | { type: "collection-is-valid" }
-  | { type: "collection-path-completions"; paths?: string[] }
   | { type: "grid-refreshed" }
   | { type: "grid-purged" }
   | { type: "search-box-input"; input: string }
@@ -154,8 +167,8 @@ export type AppearanceType = "light" | "dark";
 
 export type Settings = {
   appearance: AppearanceType;
+  repoPath: string;
   collectionPath: string;
-  useDefaultCollection: boolean;
   video: boolean;
   backgroundVideo: boolean;
   shufflePlay: boolean;

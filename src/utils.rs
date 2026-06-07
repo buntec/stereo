@@ -1,5 +1,99 @@
 use std::path::{Path, PathBuf};
 
+pub async fn ensure_default_repo(home: &Path) -> anyhow::Result<()> {
+    tokio::fs::create_dir_all(home).await?;
+
+    let has_repos = std::fs::read_dir(home)
+        .map(|entries| {
+            entries.flatten().any(|e| {
+                e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    && e.path().join(".git").exists()
+            })
+        })
+        .unwrap_or(false);
+
+    if has_repos {
+        return Ok(());
+    }
+
+    let root_dbs: Vec<PathBuf> = std::fs::read_dir(home)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| {
+                    e.path().extension().map(|x| x == "db").unwrap_or(false)
+                        && e.file_type().map(|t| t.is_file()).unwrap_or(false)
+                })
+                .map(|e| e.path())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let default_repo = home.join("stereo");
+    tokio::fs::create_dir_all(&default_repo).await?;
+
+    for src in &root_dbs {
+        if let Some(filename) = src.file_name() {
+            let dst = default_repo.join(filename);
+            if let Err(e) = tokio::fs::rename(src, &dst).await {
+                tracing::warn!("Failed to move {} to stereo/: {e}", src.display());
+            }
+        }
+    }
+
+    let root_gitignore = home.join(".gitignore");
+    if root_gitignore.exists() {
+        let _ = tokio::fs::rename(&root_gitignore, default_repo.join(".gitignore")).await;
+    }
+
+    crate::git::init_if_needed(&default_repo).await?;
+    tracing::info!("Created default repo at {}", default_repo.display());
+    Ok(())
+}
+
+pub async fn list_repos(home: &Path) -> Vec<crate::models::Repo> {
+    let Ok(entries) = std::fs::read_dir(home) else {
+        return vec![];
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| {
+            e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && e.path().join(".git").exists()
+        })
+        .map(|e| e.path())
+        .collect();
+    dirs.sort();
+
+    let mut repos = Vec::new();
+    for path in dirs {
+        let remote = crate::git::get_remote(&path).await;
+        if remote.is_some() {
+            repos.push(crate::models::Repo { path, remote });
+        }
+    }
+    repos
+}
+
+pub fn list_repo_collections(repo: &Path) -> Vec<crate::models::Collection> {
+    let Ok(entries) = std::fs::read_dir(repo) else {
+        return vec![];
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| {
+            e.path().extension().map(|x| x == "db").unwrap_or(false)
+                && e.file_type().map(|t| t.is_file()).unwrap_or(false)
+        })
+        .map(|e| e.path())
+        .collect();
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| crate::models::Collection { path, size: 0 })
+        .collect()
+}
+
 pub fn get_path_completions(prefix: &str) -> Vec<String> {
     let expanded = expand_tilde(prefix);
     let path = PathBuf::from(&expanded);

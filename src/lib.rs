@@ -1,4 +1,5 @@
 pub mod db;
+pub mod git;
 pub mod message;
 pub mod models;
 pub mod scraper;

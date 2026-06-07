@@ -11,6 +11,13 @@ fn deserialize_path<'de, D: serde::Deserializer<'de>>(d: D) -> Result<PathBuf, D
     Ok(PathBuf::from(s))
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct Repo {
+    #[serde(serialize_with = "serialize_path")]
+    pub path: PathBuf,
+    pub remote: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Collection {
     #[serde(

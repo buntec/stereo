@@ -1,152 +1,121 @@
+import { useState } from "react";
 import {
-  DropdownMenu,
-  Tooltip,
+  Select,
+  Dialog,
+  Button,
   IconButton,
   TextField,
   Flex,
+  Text,
+  Tooltip,
   Code,
 } from "@radix-ui/themes";
-import {
-  Cross1Icon,
-  ResetIcon,
-  PlusCircledIcon,
-  CubeIcon,
-} from "@radix-ui/react-icons";
+import { CubeIcon, PlusCircledIcon } from "@radix-ui/react-icons";
+import type { ICollection } from "./Types.tsx";
 
-type DropDownProps = {
-  isValid: boolean;
-  recentCollections: string[];
-  selectCollection: (collection: string) => void;
-  clearRecent: () => void;
-  removeRecent: (collection: string) => void;
-};
-
-function DropDown({
-  isValid,
-  recentCollections,
-  clearRecent,
-  selectCollection,
-  removeRecent,
-}: DropDownProps) {
-  return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger>
-        <IconButton variant="ghost">
-          <CubeIcon color={isValid ? "green" : "red"} height="16" width="16" />
-        </IconButton>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content>
-        <DropdownMenu.Sub>
-          <DropdownMenu.SubTrigger>Recent collections</DropdownMenu.SubTrigger>
-          <DropdownMenu.SubContent>
-            {recentCollections.map((coll: string, i: number) => (
-              <DropdownMenu.Item
-                key={i}
-                onSelect={() => selectCollection(coll)}
-              >
-                <Flex justify="between" align="center" gapX="4" width="100%">
-                  {coll}
-                  <Tooltip content="Remove from list">
-                    <IconButton
-                      variant="ghost"
-                      size="1"
-                      onClick={(ev) => {
-                        ev.preventDefault();
-                        removeRecent(coll);
-                      }}
-                    >
-                      <Cross1Icon />
-                    </IconButton>
-                  </Tooltip>
-                </Flex>
-              </DropdownMenu.Item>
-            ))}
-            <DropdownMenu.Separator />
-            <DropdownMenu.Item onSelect={clearRecent}>
-              Clear all
-            </DropdownMenu.Item>
-          </DropdownMenu.SubContent>
-        </DropdownMenu.Sub>
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
-  );
+export function collectionLabel(path: string): string {
+  return path.split("/").pop() ?? path;
 }
 
 export type CollectionSelectorProps = {
-  setValue: (value: string) => void;
-  resetToDefault: () => void;
+  collections: ICollection[];
   value: string;
+  setValue: (path: string) => void;
+  onCreate: (name: string) => void;
   isValid: boolean;
-  suggestions: string[];
   size?: number;
-  createCollection: (path: string) => void;
-  recentCollections: string[];
-  clearRecentCollections: () => void;
-  removeRecentCollection: (coll: string) => void;
 };
 
 function CollectionSelector({
-  isValid,
+  collections,
   value,
   setValue,
-  resetToDefault,
-  suggestions,
+  onCreate,
+  isValid,
   size,
-  createCollection,
-  recentCollections,
-  clearRecentCollections,
-  removeRecentCollection,
 }: CollectionSelectorProps) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+
+  const selectedValue = collections.some((c) => c.path === value)
+    ? value
+    : undefined;
+
   return (
     <Flex className="collection-selector-box" align="center" gap="2" m="2">
-      <TextField.Root
-        list="collection-datalist"
-        className="collection-text-field"
-        size="2"
-        variant="soft"
-        value={value}
-        onChange={(ev) => setValue(ev.target.value)}
-      >
-        <TextField.Slot>
-          <DropDown
-            isValid={isValid}
-            recentCollections={recentCollections}
-            clearRecent={clearRecentCollections}
-            selectCollection={setValue}
-            removeRecent={removeRecentCollection}
-          />
-        </TextField.Slot>
-        <TextField.Slot>
-          <Tooltip content="Return to default collection">
-            <IconButton variant="ghost" onClick={resetToDefault}>
-              <ResetIcon />
-            </IconButton>
-          </Tooltip>
-        </TextField.Slot>
-        <TextField.Slot>
-          {isValid ? (
-            <Tooltip content={`Collection contains ${size} tracks`}>
-              <Code>{size}</Code>
-            </Tooltip>
-          ) : (
-            <Tooltip content="Create new collection at current path">
-              <IconButton
-                color="green"
-                variant="ghost"
-                onClick={() => createCollection(value)}
-              >
-                <PlusCircledIcon />
-              </IconButton>
-            </Tooltip>
-          )}
-        </TextField.Slot>
-      </TextField.Root>
+      <CubeIcon color={isValid ? "green" : "red"} height="16" width="16" />
 
-      <datalist id="collection-datalist">
-        {suggestions.map((s: string) => (
-          <option key={s} value={s}></option>
-        ))}
-      </datalist>
+      <Select.Root value={selectedValue} onValueChange={setValue}>
+        <Select.Trigger variant="soft" placeholder="Select collection…" />
+        <Select.Content>
+          {collections.map((c) => (
+            <Select.Item key={c.path} value={c.path}>
+              {collectionLabel(c.path)}
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Root>
+
+      {isValid && size !== undefined && (
+        <Tooltip content={`Collection contains ${size} tracks`}>
+          <Code>{size}</Code>
+        </Tooltip>
+      )}
+
+      <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
+        <Tooltip content="Create new collection">
+          <Dialog.Trigger>
+            <IconButton variant="soft">
+              <PlusCircledIcon />
+            </IconButton>
+          </Dialog.Trigger>
+        </Tooltip>
+
+        <Dialog.Content maxWidth="380px">
+          <Dialog.Title>New Collection</Dialog.Title>
+          <Dialog.Description size="2" mb="4">
+            Enter a name for the new collection. It will be created as{" "}
+            <Code>{newName || "name"}.db</Code> in the current repo.
+          </Dialog.Description>
+
+          <label>
+            <Text as="div" size="2" mb="1" weight="bold">
+              Collection name
+            </Text>
+            <TextField.Root
+              value={newName}
+              placeholder="my-sets"
+              onChange={(ev) =>
+                setNewName(ev.target.value.replace(/[/\\]/g, ""))
+              }
+            />
+          </label>
+
+          <Flex gap="3" mt="4" justify="end">
+            <Dialog.Close>
+              <Button
+                variant="soft"
+                color="gray"
+                onClick={() => setNewName("")}
+              >
+                Cancel
+              </Button>
+            </Dialog.Close>
+            <Dialog.Close>
+              <Button
+                color="green"
+                disabled={!newName.trim()}
+                onClick={() => {
+                  onCreate(newName.trim());
+                  setNewName("");
+                }}
+              >
+                Create
+              </Button>
+            </Dialog.Close>
+          </Flex>
+        </Dialog.Content>
+      </Dialog.Root>
     </Flex>
   );
 }

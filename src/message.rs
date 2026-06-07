@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::{Collection, Track};
+use crate::models::{Collection, Repo, Track};
 
 // ── Server → Client ──────────────────────────────────────────────────────────
 
@@ -20,6 +20,13 @@ pub enum MsgServer {
     },
     BackendInfo {
         version: String,
+        home_dir: String,
+    },
+    Repos {
+        repos: Vec<Repo>,
+    },
+    Collections {
+        collections: Vec<Collection>,
     },
     Heartbeat {
         timestamp: i64,
@@ -58,6 +65,9 @@ pub enum MsgServer {
     YtAnonPlaylist {
         id: i64,
         url: String,
+    },
+    GitRemote {
+        url: Option<String>,
     },
     ValidateTrackReply {
         id: i64,
@@ -181,7 +191,7 @@ pub enum MsgClient {
         path: String,
     },
     CreateCollection {
-        path: String,
+        name: String,
     },
     GetPathCompletions {
         id: i64,
@@ -210,6 +220,18 @@ pub enum MsgClient {
         id: i64,
         yt_ids: Vec<String>,
     },
+    GetGitRemote,
+    SetGitRemote {
+        url: Option<String>,
+    },
+    SetRepo {
+        path: String,
+    },
+    CloneRepo {
+        url: String,
+    },
+    ListRepos,
+    ListCollections,
     UpdateTrack {
         old: Track,
         new: Track,
