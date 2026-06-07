@@ -7,7 +7,7 @@ use rust_embed::RustEmbed;
 use stereo_backend::{server, settings::Settings};
 
 #[derive(RustEmbed, Clone)]
-#[folder = "../src/stereo/statics"]
+#[folder = "dist"]
 struct Assets;
 
 #[tokio::main]
