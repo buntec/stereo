@@ -27,3 +27,6 @@ dist-ssr
 *.local
 
 _version.py
+
+# Rust
+backend/target/

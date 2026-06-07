@@ -1,0 +1,41 @@
+[package]
+name = "stereo-backend"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "stereo"
+path = "src/main.rs"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["fs"] }
+tower = "0.4"
+futures = "0.3"
+
+# HTTP client with Chrome TLS fingerprint impersonation to bypass Beatport bot-detection.
+wreq = { version = "6.0.0-rc.29", features = ["json", "gzip", "brotli", "stream", "query"] }
+wreq-util = "3.0.0-rc.12"
+
+# HTML parsing (replaces BeautifulSoup4)
+scraper = "0.19"
+
+# SQLite (replaces aiosqlite)
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+strsim = "0.11"
+tempfile = "3"
+clap = { version = "4", features = ["derive", "env"] }
+url = "2"
