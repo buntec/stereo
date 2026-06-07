@@ -2,9 +2,8 @@ use std::path::Path;
 
 use anyhow::Context;
 use sqlx::{
-    Row,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow},
-    SqlitePool,
+    Row, SqlitePool,
 };
 
 use crate::{
@@ -13,8 +12,23 @@ use crate::{
 };
 
 const VALID_COLUMNS: &[&str] = &[
-    "yt_id", "bp_id", "mb_id", "title", "mix_name", "artists", "release_date", "label",
-    "album", "length", "bpm", "genre", "key", "mood", "rating", "play_count", "last_played",
+    "yt_id",
+    "bp_id",
+    "mb_id",
+    "title",
+    "mix_name",
+    "artists",
+    "release_date",
+    "label",
+    "album",
+    "length",
+    "bpm",
+    "genre",
+    "key",
+    "mood",
+    "rating",
+    "play_count",
+    "last_played",
 ];
 
 pub async fn open_pool(path: &Path) -> anyhow::Result<SqlitePool> {
@@ -59,7 +73,11 @@ pub async fn insert_track(
     track: &Track,
     ignore_if_exists: bool,
 ) -> anyhow::Result<()> {
-    let on_conflict = if ignore_if_exists { "IGNORE" } else { "REPLACE" };
+    let on_conflict = if ignore_if_exists {
+        "IGNORE"
+    } else {
+        "REPLACE"
+    };
     let sql = format!(
         "INSERT OR {on_conflict} INTO tracks \
          (yt_id, bp_id, mb_id, title, mix_name, artists, release_date, label, album, \
@@ -157,11 +175,10 @@ pub async fn delete_tracks(pool: &SqlitePool, yt_ids: &[String]) -> anyhow::Resu
 }
 
 pub async fn get_track(pool: &SqlitePool, yt_id: &str) -> anyhow::Result<Option<Track>> {
-    let row: Option<SqliteRow> =
-        sqlx::query("SELECT * FROM tracks WHERE yt_id = ?")
-            .bind(yt_id)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<SqliteRow> = sqlx::query("SELECT * FROM tracks WHERE yt_id = ?")
+        .bind(yt_id)
+        .fetch_optional(pool)
+        .await?;
     row.map(|r| Track::from_db_row(&r)).transpose()
 }
 
@@ -231,11 +248,7 @@ fn build_where_clause(filter_model: &FilterModelMap) -> (String, Vec<SqlParam>) 
             "text" => match item.filter_op.as_str() {
                 "contains" => {
                     clauses.push(format!("{field} LIKE ?"));
-                    let v = item
-                        .filter
-                        .as_ref()
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let v = item.filter.as_ref().and_then(|v| v.as_str()).unwrap_or("");
                     params.push(SqlParam::Text(format!("%{v}%")));
                 }
                 "equals" => {
@@ -481,10 +494,8 @@ pub async fn validate_db_schema(path: &Path) -> bool {
             return Ok(false);
         }
 
-        let found_cols: std::collections::HashSet<String> = rows
-            .iter()
-            .map(|r| r.get::<String, _>("name"))
-            .collect();
+        let found_cols: std::collections::HashSet<String> =
+            rows.iter().map(|r| r.get::<String, _>("name")).collect();
 
         let pk_cols: std::collections::HashSet<String> = rows
             .iter()
@@ -493,9 +504,23 @@ pub async fn validate_db_schema(path: &Path) -> bool {
             .collect();
 
         let expected: std::collections::HashSet<&str> = [
-            "yt_id", "bp_id", "mb_id", "title", "mix_name", "artists", "release_date",
-            "label", "album", "length", "bpm", "genre", "key", "mood", "rating",
-            "play_count", "last_played",
+            "yt_id",
+            "bp_id",
+            "mb_id",
+            "title",
+            "mix_name",
+            "artists",
+            "release_date",
+            "label",
+            "album",
+            "length",
+            "bpm",
+            "genre",
+            "key",
+            "mood",
+            "rating",
+            "play_count",
+            "last_played",
         ]
         .iter()
         .copied()
@@ -522,8 +547,20 @@ pub async fn import_from_db(
         .context("source path is not valid UTF-8")?;
 
     let mut cols = vec![
-        "yt_id", "bp_id", "mb_id", "title", "mix_name", "artists", "release_date", "label",
-        "album", "length", "bpm", "genre", "key", "mood",
+        "yt_id",
+        "bp_id",
+        "mb_id",
+        "title",
+        "mix_name",
+        "artists",
+        "release_date",
+        "label",
+        "album",
+        "length",
+        "bpm",
+        "genre",
+        "key",
+        "mood",
     ];
 
     if keep_user_data {

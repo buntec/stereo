@@ -107,7 +107,9 @@ async fn test_insert_tracks_batch() {
 #[tokio::test]
 async fn test_delete_track() {
     let (pool, _dir) = setup().await;
-    db::insert_track(&pool, &make_track("del1"), true).await.unwrap();
+    db::insert_track(&pool, &make_track("del1"), true)
+        .await
+        .unwrap();
 
     db::delete_track(&pool, "del1").await.unwrap();
 
@@ -133,7 +135,9 @@ async fn test_delete_tracks_multiple() {
 #[tokio::test]
 async fn test_track_exists() {
     let (pool, _dir) = setup().await;
-    db::insert_track(&pool, &make_track("ex1"), true).await.unwrap();
+    db::insert_track(&pool, &make_track("ex1"), true)
+        .await
+        .unwrap();
 
     assert!(db::track_exists(&pool, "ex1").await.unwrap());
     assert!(!db::track_exists(&pool, "nothere").await.unwrap());
@@ -249,7 +253,9 @@ async fn test_get_rows_text_filter() {
 #[tokio::test]
 async fn test_update_rating() {
     let (pool, _dir) = setup().await;
-    db::insert_track(&pool, &make_track("rate1"), true).await.unwrap();
+    db::insert_track(&pool, &make_track("rate1"), true)
+        .await
+        .unwrap();
 
     db::update_rating(&pool, "rate1", Some(4)).await.unwrap();
 
@@ -337,7 +343,9 @@ async fn test_import_from_db() {
 
     // Import into dest DB
     let (dst_pool, _dst_dir) = setup().await;
-    db::import_from_db(&dst_pool, &src_path, false).await.unwrap();
+    db::import_from_db(&dst_pool, &src_path, false)
+        .await
+        .unwrap();
 
     let n = db::count_rows(&dst_pool, &HashMap::new()).await.unwrap();
     assert_eq!(n, 3);

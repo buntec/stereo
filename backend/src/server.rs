@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use axum::{
     extract::{
-        State,
         ws::{Message, WebSocket, WebSocketUpgrade},
+        State,
     },
     response::IntoResponse,
 };
@@ -135,9 +135,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
 
     let mut client_rx = client_rx;
     while let Some(msg) = client_rx.recv().await {
-        if let Err(e) =
-            handle_msg(&mut state, &settings, &server_tx, &http_client, msg).await
-        {
+        if let Err(e) = handle_msg(&mut state, &settings, &server_tx, &http_client, msg).await {
             tracing::error!("Message handling error: {e}");
         }
     }
@@ -227,10 +225,7 @@ async fn notify(tx: &mpsc::Sender<MsgServer>, msg: &str, kind: &str) {
         .await;
 }
 
-async fn update_collection_info(
-    state: &mut SessionState,
-    tx: &mpsc::Sender<MsgServer>,
-) {
+async fn update_collection_info(state: &mut SessionState, tx: &mpsc::Sender<MsgServer>) {
     state.refresh_count(&Default::default()).await;
     if let Some(col) = &state.collection {
         let _ = tx
@@ -258,7 +253,9 @@ async fn handle_msg(
 
         MsgClient::ValidateTrack { id, track } => {
             let is_valid = serde_json::from_value::<Track>(track).is_ok();
-            let _ = tx.send(MsgServer::ValidateTrackReply { id, is_valid }).await;
+            let _ = tx
+                .send(MsgServer::ValidateTrackReply { id, is_valid })
+                .await;
         }
 
         MsgClient::DeleteTracks { ids } => {
@@ -350,15 +347,15 @@ async fn handle_msg(
                 let c = client.clone();
                 let limit = limit as usize;
                 let handle = match kind {
-                    SearchKind::Fuzzy => tokio::spawn(scraper::search_fuzzy(
-                        c, tx2, query, query_id, limit,
-                    )),
-                    SearchKind::ByLabel => tokio::spawn(scraper::search_by_label(
-                        c, tx2, query, query_id, limit,
-                    )),
-                    SearchKind::ByArtist => tokio::spawn(scraper::search_by_artist(
-                        c, tx2, query, query_id, limit,
-                    )),
+                    SearchKind::Fuzzy => {
+                        tokio::spawn(scraper::search_fuzzy(c, tx2, query, query_id, limit))
+                    }
+                    SearchKind::ByLabel => {
+                        tokio::spawn(scraper::search_by_label(c, tx2, query, query_id, limit))
+                    }
+                    SearchKind::ByArtist => {
+                        tokio::spawn(scraper::search_by_artist(c, tx2, query, query_id, limit))
+                    }
                 };
                 state.search_task = Some(handle);
             }
@@ -458,7 +455,12 @@ async fn handle_msg(
         MsgClient::CreateCollection { path } => {
             let path = std::path::PathBuf::from(&path);
             if path.exists() {
-                notify(tx, "Cannot create collection — file already exists", "error").await;
+                notify(
+                    tx,
+                    "Cannot create collection — file already exists",
+                    "error",
+                )
+                .await;
                 return Ok(());
             }
             if let Some(parent) = path.parent() {
@@ -514,7 +516,10 @@ async fn handle_msg(
             let _ = tx.send(MsgServer::PathCompletions { id, paths }).await;
         }
 
-        MsgClient::ImportFrom { path, keep_user_data } => {
+        MsgClient::ImportFrom {
+            path,
+            keep_user_data,
+        } => {
             let src = match utils::is_file_or_url(&path) {
                 Some(k) => k,
                 None => {
@@ -572,7 +577,12 @@ async fn handle_msg(
                     let tmp = match tempfile::tempdir() {
                         Ok(t) => t,
                         Err(_) => {
-                            let _ = tx.send(MsgServer::ImportFromValid { path, is_valid: false }).await;
+                            let _ = tx
+                                .send(MsgServer::ImportFromValid {
+                                    path,
+                                    is_valid: false,
+                                })
+                                .await;
                             return Ok(());
                         }
                     };

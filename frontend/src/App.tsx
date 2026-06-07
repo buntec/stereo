@@ -1390,12 +1390,7 @@ function App() {
                       : `${filteredRowCount} tracks`
                   }
                 >
-                  <Flex
-                    align="center"
-                    gap="1"
-                    px="2"
-                    className="row-count"
-                  >
+                  <Flex align="center" gap="1" px="2" className="row-count">
                     <Text
                       size="2"
                       color={

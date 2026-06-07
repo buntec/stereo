@@ -33,4 +33,5 @@ test *args:
     cargo test --manifest-path backend/Cargo.toml {{ args }}
 
 format:
-    treefmt
+    cargo fmt --manifest-path backend/Cargo.toml
+    bun run prettier --write "frontend/src/**/*.{ts,tsx,css}"

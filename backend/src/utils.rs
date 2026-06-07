@@ -22,7 +22,11 @@ pub fn get_path_completions(prefix: &str) -> Vec<String> {
     match std::fs::read_dir(&parent) {
         Ok(entries) => entries
             .flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with(partial.as_str()))
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(partial.as_str())
+            })
             .map(|e| e.path().to_string_lossy().to_string())
             .collect(),
         Err(_) => vec![],

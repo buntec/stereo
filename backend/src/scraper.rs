@@ -79,7 +79,10 @@ fn parse_bp_track_from_search(item: &serde_json::Value) -> Option<BPTrack> {
     let mix_name = item["mix_name"].as_str()?.trim().to_string();
     let release_date = parse_release_date(item["release_date"].as_str().unwrap_or(""))?;
     let track_id = item["track_id"].as_i64()?;
-    let label = item["label"]["label_name"].as_str().unwrap_or("").to_string();
+    let label = item["label"]["label_name"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     let bpm = item["bpm"].as_i64();
     let key = item["key_name"].as_str().map(String::from);
     let isrc = item["isrc"].as_str().map(String::from);
@@ -92,7 +95,18 @@ fn parse_bp_track_from_search(item: &serde_json::Value) -> Option<BPTrack> {
         })
         .unwrap_or_default();
 
-    Some(BPTrack { artists, bpm, key, isrc, label, release_date, track_id, track_name, mix_name, genre })
+    Some(BPTrack {
+        artists,
+        bpm,
+        key,
+        isrc,
+        label,
+        release_date,
+        track_id,
+        track_name,
+        mix_name,
+        genre,
+    })
 }
 
 fn parse_bp_track_from_releases(item: &serde_json::Value) -> Option<BPTrack> {
@@ -105,16 +119,35 @@ fn parse_bp_track_from_releases(item: &serde_json::Value) -> Option<BPTrack> {
     let mix_name = item["mix_name"].as_str()?.trim().to_string();
     let release_date = parse_release_date(item["new_release_date"].as_str().unwrap_or(""))?;
     let track_id = item["id"].as_i64()?;
-    let label = item["release"]["label"]["name"].as_str().unwrap_or("").trim().to_string();
+    let label = item["release"]["label"]["name"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let bpm = item["bpm"].as_i64();
     let key = item["key"]["name"].as_str().map(|s| s.trim().to_string());
     let isrc = item["isrc"]
         .as_str()
         .filter(|s| !s.is_empty())
         .map(|s| s.trim().to_string());
-    let genre = item["genre"]["name"].as_str().unwrap_or("").trim().to_string();
+    let genre = item["genre"]["name"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
 
-    Some(BPTrack { artists, bpm, key, isrc, label, release_date, track_id, track_name, mix_name, genre: vec![genre] })
+    Some(BPTrack {
+        artists,
+        bpm,
+        key,
+        isrc,
+        label,
+        release_date,
+        track_id,
+        track_name,
+        mix_name,
+        genre: vec![genre],
+    })
 }
 
 pub async fn bp_search_labels(
@@ -140,7 +173,11 @@ pub async fn bp_search_labels(
                 for item in items {
                     let name = item["label_name"].as_str().unwrap_or("").trim().to_string();
                     let id = item["label_id"].as_i64().unwrap_or(0);
-                    labels.push(BPLabel { display_name: name.clone(), name, id });
+                    labels.push(BPLabel {
+                        display_name: name.clone(),
+                        name,
+                        id,
+                    });
                     if labels.len() >= limit {
                         return Ok(labels);
                     }
@@ -172,10 +209,19 @@ pub async fn bp_search_artist(
         for query in queries {
             if let Some(items) = query["state"]["data"]["data"].as_array() {
                 for item in items {
-                    let name = item["artist_name"].as_str().unwrap_or("").trim().to_string();
+                    let name = item["artist_name"]
+                        .as_str()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     let id = item["artist_id"].as_i64().unwrap_or(0);
                     let image_uri = item["artist_image_uri"].as_str().unwrap_or("").to_string();
-                    artists.push(BPArtist { display_name: name.clone(), name, id, image_uri });
+                    artists.push(BPArtist {
+                        display_name: name.clone(),
+                        name,
+                        id,
+                        image_uri,
+                    });
                     if artists.len() >= limit {
                         return Ok(artists);
                     }
@@ -230,7 +276,10 @@ pub async fn bp_get_label_releases(
         let end = chrono::Local::now().date_naive();
         params.push(("publish_date", format!("{}:{}", start, end)));
     }
-    let url = format!("https://www.beatport.com/label/{}/{}/tracks", label.name, label.id);
+    let url = format!(
+        "https://www.beatport.com/label/{}/{}/tracks",
+        label.name, label.id
+    );
     bp_get_releases(client, &url, &params).await
 }
 
@@ -244,7 +293,10 @@ pub async fn bp_get_artist_releases(
         let end = chrono::Local::now().date_naive();
         params.push(("publish_date", format!("{}:{}", start, end)));
     }
-    let url = format!("https://www.beatport.com/artist/{}/{}/tracks", artist.name, artist.id);
+    let url = format!(
+        "https://www.beatport.com/artist/{}/{}/tracks",
+        artist.name, artist.id
+    );
     bp_get_releases(client, &url, &params).await
 }
 
@@ -307,7 +359,11 @@ pub async fn yt_search_simple(
                             let title = get_text_runs(&video["title"]["runs"]);
                             let channel = {
                                 let o = get_text_runs(&video["ownerText"]["runs"]);
-                                if o.is_empty() { get_text_runs(&video["longBylineText"]["runs"]) } else { o }
+                                if o.is_empty() {
+                                    get_text_runs(&video["longBylineText"]["runs"])
+                                } else {
+                                    o
+                                }
                             };
                             results.push(YTVideo { title, id, channel });
                             if results.len() >= limit {
@@ -326,7 +382,10 @@ pub async fn yt_search_simple(
     Ok(vec![])
 }
 
-pub async fn yt_create_anon_playlist(client: &Client, video_ids: &[String]) -> anyhow::Result<String> {
+pub async fn yt_create_anon_playlist(
+    client: &Client,
+    video_ids: &[String],
+) -> anyhow::Result<String> {
     let ids = video_ids.join(",");
     let url = format!("http://www.youtube.com/watch_videos?video_ids={ids}");
     let resp = client.get(&url).send().await?;
@@ -367,21 +426,19 @@ fn best_match_idx(query: &str, choices: &[String], cutoff: f64) -> Option<usize>
 
 // ── Search entry points (stream results via channel) ─────────────────────────
 
-async fn run_search<F, Fut>(
-    tx: &mpsc::Sender<MsgServer>,
-    query_id: i64,
-    label: &str,
-    f: F,
-) where
+async fn run_search<F, Fut>(tx: &mpsc::Sender<MsgServer>, query_id: i64, label: &str, f: F)
+where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
     if let Err(e) = f().await {
         tracing::error!("{label} error: {e}");
-        let _ = tx.send(MsgServer::Notification {
-            message: format!("Search failed: {e}"),
-            kind: "error".into(),
-        }).await;
+        let _ = tx
+            .send(MsgServer::Notification {
+                message: format!("Search failed: {e}"),
+                kind: "error".into(),
+            })
+            .await;
     }
     let _ = tx.send(MsgServer::SearchComplete { query_id }).await;
 }
@@ -397,17 +454,31 @@ pub async fn search_fuzzy(
         let bp_tracks = bp_search_tracks(&client, &query).await?;
         let mut count = 0;
         for bp_track in bp_tracks {
-            let q = format!("{} {} {}", bp_track.track_name, bp_track.artists.join(", "), bp_track.label);
+            let q = format!(
+                "{} {} {}",
+                bp_track.track_name,
+                bp_track.artists.join(", "),
+                bp_track.label
+            );
             let vids = yt_search_simple(&client, &q, 1).await.unwrap_or_default();
             if let Some(vid) = vids.into_iter().next() {
                 let track = bp_track.into_track(vid.id);
-                if tx.send(MsgServer::SearchResult { query_id, track }).await.is_err() { break; }
+                if tx
+                    .send(MsgServer::SearchResult { query_id, track })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
                 count += 1;
-                if count >= limit { break; }
+                if count >= limit {
+                    break;
+                }
             }
         }
         Ok(())
-    }).await;
+    })
+    .await;
 }
 
 pub async fn search_by_label(
@@ -423,18 +494,32 @@ pub async fn search_by_label(
             let bp_tracks = bp_get_label_releases(&client, &label, None).await?;
             let mut count = 0;
             for bp_track in bp_tracks {
-                let q = format!("{} {} {}", bp_track.track_name, bp_track.artists.join(", "), bp_track.label);
+                let q = format!(
+                    "{} {} {}",
+                    bp_track.track_name,
+                    bp_track.artists.join(", "),
+                    bp_track.label
+                );
                 let vids = yt_search_simple(&client, &q, 1).await.unwrap_or_default();
                 if let Some(vid) = vids.into_iter().next() {
                     let track = bp_track.into_track(vid.id);
-                    if tx.send(MsgServer::SearchResult { query_id, track }).await.is_err() { break; }
+                    if tx
+                        .send(MsgServer::SearchResult { query_id, track })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
                     count += 1;
-                    if count >= limit { break; }
+                    if count >= limit {
+                        break;
+                    }
                 }
             }
         }
         Ok(())
-    }).await;
+    })
+    .await;
 }
 
 pub async fn search_by_artist(
@@ -450,16 +535,30 @@ pub async fn search_by_artist(
             let bp_tracks = bp_get_artist_releases(&client, &artist, None).await?;
             let mut count = 0;
             for bp_track in bp_tracks {
-                let q = format!("{} {} {}", bp_track.track_name, bp_track.artists.join(", "), bp_track.label);
+                let q = format!(
+                    "{} {} {}",
+                    bp_track.track_name,
+                    bp_track.artists.join(", "),
+                    bp_track.label
+                );
                 let vids = yt_search_simple(&client, &q, 1).await.unwrap_or_default();
                 if let Some(vid) = vids.into_iter().next() {
                     let track = bp_track.into_track(vid.id);
-                    if tx.send(MsgServer::SearchResult { query_id, track }).await.is_err() { break; }
+                    if tx
+                        .send(MsgServer::SearchResult { query_id, track })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
                     count += 1;
-                    if count >= limit { break; }
+                    if count >= limit {
+                        break;
+                    }
                 }
             }
         }
         Ok(())
-    }).await;
+    })
+    .await;
 }
