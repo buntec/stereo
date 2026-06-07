@@ -11,13 +11,17 @@ path = "src/main.rs"
 # Web framework
 axum = { version = "0.7", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.5", features = ["fs"] }
+tower-http = "0.5"
 tower = "0.4"
 futures = "0.3"
 
 # HTTP client with Chrome TLS fingerprint impersonation to bypass Beatport bot-detection.
 wreq = { version = "6.0.0-rc.29", features = ["json", "gzip", "brotli", "stream", "query"] }
 wreq-util = "3.0.0-rc.12"
+
+# Embed frontend assets into the binary at compile time
+rust-embed = "8"
+axum-embed = "0.1"
 
 # HTML parsing (replaces BeautifulSoup4)
 scraper = "0.19"

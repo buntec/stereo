@@ -21,6 +21,14 @@ run-frontend-dev *args:
 run-backend-dev *args:
     cargo run --manifest-path backend/Cargo.toml -- --dev -vv {{ args }}
 
+dev:
+    #!/usr/bin/env sh
+    cargo run --manifest-path backend/Cargo.toml -- --dev -vv &
+    BACKEND_PID=$!
+    trap "kill $BACKEND_PID" EXIT INT TERM
+    bun run dev --host
+    kill $BACKEND_PID 2>/dev/null || true
+
 run-backend *args:
     cargo run --release --manifest-path backend/Cargo.toml -- {{ args }}
 

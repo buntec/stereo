@@ -1,10 +1,15 @@
 use std::sync::Arc;
 
 use axum::{Router, routing::get};
+use axum_embed::{FallbackBehavior, ServeEmbed};
 use clap::Parser;
+use rust_embed::RustEmbed;
 use stereo_backend::{server, settings::Settings};
-use tower_http::services::ServeDir;
 use tracing::info;
+
+#[derive(RustEmbed, Clone)]
+#[folder = "../src/stereo/statics"]
+struct Assets;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -34,18 +39,13 @@ async fn main() -> anyhow::Result<()> {
         .with_state(settings.clone());
 
     if !settings.dev {
-        let static_dir = settings.static_dir.clone();
-        if static_dir.is_dir() {
-            router = router.fallback_service(
-                ServeDir::new(&static_dir).append_index_html_on_directories(true),
-            );
-            info!("Serving static files from {}", static_dir.display());
-        } else {
-            tracing::warn!(
-                "Static directory '{}' not found — run 'bun run build' first",
-                static_dir.display()
-            );
-        }
+        let serve_assets = ServeEmbed::<Assets>::with_parameters(
+            Some("index.html".to_string()),
+            FallbackBehavior::Ok,
+            Some("index.html".to_string()),
+        );
+        router = router.fallback_service(serve_assets);
+        info!("Serving embedded frontend assets");
     }
 
     let addr = format!("{}:{}", settings.host, settings.port);

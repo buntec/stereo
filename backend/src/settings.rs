@@ -21,13 +21,9 @@ pub struct Settings {
     #[arg(long = "verbose", short = 'v', action = clap::ArgAction::Count)]
     pub verbosity: u8,
 
-    /// Run in dev mode (no static file serving)
+    /// Run in dev mode (frontend served by Vite, not the backend)
     #[arg(long, env = "STEREO_DEV")]
     pub dev: bool,
-
-    /// Path to the built frontend (served in non-dev mode)
-    #[arg(long, default_value = "src/stereo/statics", env = "STEREO_STATIC_DIR")]
-    pub static_dir: PathBuf,
 }
 
 impl Settings {
