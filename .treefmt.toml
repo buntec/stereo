@@ -1,9 +1,3 @@
-[formatter.python]
-command = "ruff"
-options = ["format"]
-includes = ["*.py"]
-
-
 [formatter.prettier]
 command = "prettierd"
 options = ["--write"]
@@ -19,4 +13,3 @@ includes = [
   "*.ts",
   "*.tsx",
 ]
-excludes = ["src/stereo/statics/*"]

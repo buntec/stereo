@@ -7,9 +7,6 @@ init:
 build-frontend:
     bun run build
 
-build-backend-py:
-    uv build
-
 build-backend:
     cargo build --release --manifest-path backend/Cargo.toml
 
@@ -33,7 +30,7 @@ run-backend *args:
     cargo run --release --manifest-path backend/Cargo.toml -- {{ args }}
 
 test *args:
-    uv run pytest tests/ {{ args }}
+    cargo test --manifest-path backend/Cargo.toml {{ args }}
 
 format:
     treefmt

@@ -5,7 +5,6 @@ use axum_embed::{FallbackBehavior, ServeEmbed};
 use clap::Parser;
 use rust_embed::RustEmbed;
 use stereo_backend::{server, settings::Settings};
-use tracing::info;
 
 #[derive(RustEmbed, Clone)]
 #[folder = "../src/stereo/statics"]
@@ -30,7 +29,6 @@ async fn main() -> anyhow::Result<()> {
 
     let home = settings.home_dir();
     std::fs::create_dir_all(&home)?;
-    info!("Data directory: {}", home.display());
 
     let settings = Arc::new(settings);
 
@@ -45,12 +43,13 @@ async fn main() -> anyhow::Result<()> {
             Some("index.html".to_string()),
         );
         router = router.fallback_service(serve_assets);
-        info!("Serving embedded frontend assets");
     }
 
     let addr = format!("{}:{}", settings.host, settings.port);
-    info!("Listening on http://{addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let mode = if settings.dev { "dev" } else { "release" };
+    eprintln!("stereo listening on http://{addr}  [{mode}]");
+    eprintln!("data dir: {}", settings.home_dir().display());
     axum::serve(listener, router).await?;
 
     Ok(())
