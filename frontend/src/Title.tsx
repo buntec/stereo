@@ -1,14 +1,30 @@
 import { Box, Text } from "@radix-ui/themes";
 
-function Title({ title, artists }: { title: string; artists?: string[] }) {
+function Title({
+  title,
+  artists,
+  trackName,
+  label,
+}: {
+  title: string;
+  artists?: string[];
+  trackName?: string;
+  label?: string;
+}) {
+  const infoParts = [
+    artists && artists.length > 0 ? artists.join(", ") : undefined,
+    trackName,
+    label,
+  ].filter(Boolean);
+
   return (
     <Box className="title">
       <Text size="5" weight="light">
         {title}
       </Text>
-      {artists && artists.length > 0 && (
+      {infoParts.length > 0 && (
         <Text size="2" color="gray" as="div">
-          {artists.join(", ")}
+          {infoParts.join(" - ")}
         </Text>
       )}
     </Box>

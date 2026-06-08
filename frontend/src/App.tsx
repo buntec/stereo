@@ -1096,7 +1096,12 @@ function App() {
             <div ref={player2Ref} />
           </div>
           {state.title && (
-            <Title title={state.title} artists={state.track_info?.artists} />
+            <Title
+              title={state.title}
+              artists={state.track_info?.artists}
+              trackName={state.track_info?.title}
+              label={state.track_info?.label}
+            />
           )}
 
           <Flex direction="column" align="center" gap="2" className="controls">
