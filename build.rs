@@ -10,7 +10,7 @@ fn main() {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=GIT_VERSION={git_version}");
 
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();

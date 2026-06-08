@@ -14,7 +14,6 @@ import { type GridState } from "ag-grid-community";
 import logger from "./logger.tsx";
 
 import {
-  ReloadIcon,
   PlusIcon,
   Cross2Icon,
   VideoIcon,
@@ -793,9 +792,6 @@ function App() {
     gridRef.current?.api.setFilterModel(null);
   }, []);
 
-  const refreshGrid = useCallback(() => {
-    gridRef.current?.api.purgeInfiniteCache();
-  }, []);
 
   const deselectAll = useCallback(() => {
     gridRef.current?.api.deselectAll();
