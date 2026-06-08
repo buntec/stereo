@@ -8,12 +8,11 @@ Tested with Firefox and Chrome.
 
 # Getting started
 
-All you need is [uv](https://github.com/astral-sh/uv).
-
-Launch Stereo from the command-line:
+All you need is [Rust](https://rustup.rs) and [Bun](https://bun.sh).
 
 ```
-uvx git+https://github.com/buntec/stereo
+cargo install --git https://github.com/buntec/stereo
+stereo
 ```
 
 Navigate to `localhost:8005` in your browser.
@@ -32,4 +31,9 @@ Work in progress! 🚧
 
 # Development
 
-Don't forget to rebuild the frontend (`just build-frontend`) before committing frontend changes!
+Prerequisites: [Rust](https://rustup.rs), [Bun](https://bun.sh), [just](https://github.com/casey/just).
+
+```
+bun install        # install frontend dependencies
+just dev           # run backend + frontend dev server concurrently
+```
