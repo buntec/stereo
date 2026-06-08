@@ -148,6 +148,7 @@ pub struct GetRowsContent {
 #[serde(rename_all = "camelCase")]
 pub struct GetRowIndexContent {
     pub id: i64,
+    #[serde(rename = "yt_id")]
     pub yt_id: String,
     #[serde(default)]
     pub sort_model: Vec<SortModelItem>,
