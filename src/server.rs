@@ -602,7 +602,12 @@ async fn handle_msg(
             }
             let path = repo.join(format!("{name}.db"));
             if path.exists() {
-                notify(tx, "Cannot create collection — file already exists", "error").await;
+                notify(
+                    tx,
+                    "Cannot create collection — file already exists",
+                    "error",
+                )
+                .await;
                 return Ok(());
             }
             let pool = db::open_pool(&path).await?;

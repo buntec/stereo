@@ -195,7 +195,11 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, show_player2: action.visible };
 
     case "backend-info":
-      return { ...state, backend_version: action.version, home_dir: action.home_dir };
+      return {
+        ...state,
+        backend_version: action.version,
+        home_dir: action.home_dir,
+      };
 
     case "set-title":
       return { ...state, title: action.title };
@@ -591,7 +595,7 @@ function App() {
       setSettings({ ...settings, repoPath: target });
     }
     sendMsg({ type: "set-repo", path: target });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.repos]);
 
   // Auto-select collection when list changes after a repo switch
@@ -604,7 +608,7 @@ function App() {
     if (target !== settings.collectionPath) {
       setSettings({ ...settings, collectionPath: target });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.collections]);
 
   // Keep settings.collectionPath in sync when backend switches collection (e.g. after CreateCollection)
@@ -616,7 +620,7 @@ function App() {
     ) {
       setSettings({ ...settings, collectionPath: state.collection.path });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.collection, state.collection_is_valid]);
 
   // Only send set-collection after a repo has been selected (state.collections defined)
@@ -791,7 +795,6 @@ function App() {
     gridRef.current?.api.resetColumnState();
     gridRef.current?.api.setFilterModel(null);
   }, []);
-
 
   const deselectAll = useCallback(() => {
     gridRef.current?.api.deselectAll();
@@ -1032,11 +1035,12 @@ function App() {
               onClone={(url) => {
                 // Optimistically derive the local path so auto-select picks the right repo
                 if (state.home_dir) {
-                  const name = url
-                    .replace(/\/$/, "")
-                    .replace(/\.git$/, "")
-                    .split("/")
-                    .pop() ?? "repo";
+                  const name =
+                    url
+                      .replace(/\/$/, "")
+                      .replace(/\.git$/, "")
+                      .split("/")
+                      .pop() ?? "repo";
                   const path = `${state.home_dir}/${name}`;
                   setSettings({ ...settings, repoPath: path });
                 }
@@ -1050,9 +1054,7 @@ function App() {
               setValue={(path) =>
                 setSettings({ ...settings, collectionPath: path })
               }
-              onCreate={(name) =>
-                sendMsg({ type: "create-collection", name })
-              }
+              onCreate={(name) => sendMsg({ type: "create-collection", name })}
               size={state.collection?.size}
             />
             <SearchBox

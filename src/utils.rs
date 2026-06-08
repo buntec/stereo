@@ -6,8 +6,7 @@ pub async fn ensure_default_repo(home: &Path) -> anyhow::Result<()> {
     let has_repos = std::fs::read_dir(home)
         .map(|entries| {
             entries.flatten().any(|e| {
-                e.file_type().map(|t| t.is_dir()).unwrap_or(false)
-                    && e.path().join(".git").exists()
+                e.file_type().map(|t| t.is_dir()).unwrap_or(false) && e.path().join(".git").exists()
             })
         })
         .unwrap_or(false);
@@ -58,8 +57,7 @@ pub async fn list_repos(home: &Path) -> Vec<crate::models::Repo> {
     let mut dirs: Vec<PathBuf> = entries
         .flatten()
         .filter(|e| {
-            e.file_type().map(|t| t.is_dir()).unwrap_or(false)
-                && e.path().join(".git").exists()
+            e.file_type().map(|t| t.is_dir()).unwrap_or(false) && e.path().join(".git").exists()
         })
         .map(|e| e.path())
         .collect();

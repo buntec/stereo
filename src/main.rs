@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use axum::{routing::get, Router};
 use axum_embed::{FallbackBehavior, ServeEmbed};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use rust_embed::RustEmbed;
 use stereo_backend::{server, settings::Settings};
 
@@ -10,9 +10,130 @@ use stereo_backend::{server, settings::Settings};
 #[folder = "dist"]
 struct Assets;
 
+#[derive(Parser)]
+#[command(name = "stereo", about = "A browser-based music curation app")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    #[command(flatten)]
+    settings: Settings,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Install stereo as a macOS launchd service (starts on login)
+    Install,
+    /// Uninstall the stereo macOS launchd service
+    Uninstall,
+}
+
+const SERVICE_LABEL: &str = "com.stereo";
+
+fn plist_path() -> anyhow::Result<PathBuf> {
+    let home = std::env::var("HOME").map(PathBuf::from)?;
+    Ok(home
+        .join("Library/LaunchAgents")
+        .join(format!("{SERVICE_LABEL}.plist")))
+}
+
+fn uid() -> anyhow::Result<String> {
+    let out = std::process::Command::new("id").arg("-u").output()?;
+    Ok(String::from_utf8(out.stdout)?.trim().to_string())
+}
+
+fn install(settings: &Settings) -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let home_env = std::env::var("HOME").map(PathBuf::from)?;
+    let log_path = home_env.join("Library/Logs/stereo.log");
+    let plist = plist_path()?;
+
+    let mut args = format!(
+        "        <string>{}</string>\n        <string>--port</string>\n        <string>{}</string>\n        <string>--host</string>\n        <string>{}</string>",
+        exe.display(),
+        settings.port,
+        settings.host,
+    );
+    if let Some(ref h) = settings.home {
+        args.push_str(&format!(
+            "\n        <string>--home</string>\n        <string>{}</string>",
+            h.display()
+        ));
+    }
+
+    let plist_content = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{SERVICE_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+{args}
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{log}</string>
+    <key>StandardErrorPath</key>
+    <string>{log}</string>
+</dict>
+</plist>
+"#,
+        log = log_path.display(),
+    );
+
+    std::fs::create_dir_all(plist.parent().unwrap())?;
+    std::fs::write(&plist, &plist_content)?;
+    eprintln!("wrote {}", plist.display());
+
+    let uid = uid()?;
+    let status = std::process::Command::new("launchctl")
+        .args(["bootstrap", &format!("gui/{uid}"), plist.to_str().unwrap()])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("launchctl bootstrap failed (service may already be loaded)");
+    }
+    eprintln!("stereo service installed and started");
+    eprintln!("logs: {}", log_path.display());
+    Ok(())
+}
+
+fn uninstall() -> anyhow::Result<()> {
+    let plist = plist_path()?;
+    let uid = uid()?;
+
+    let status = std::process::Command::new("launchctl")
+        .args(["bootout", &format!("gui/{uid}"), plist.to_str().unwrap()])
+        .status()?;
+    if !status.success() {
+        eprintln!("launchctl bootout failed (service may not be loaded)");
+    }
+
+    if plist.exists() {
+        std::fs::remove_file(&plist)?;
+        eprintln!("removed {}", plist.display());
+    } else {
+        eprintln!("plist not found: {}", plist.display());
+    }
+    eprintln!("stereo service uninstalled");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let settings = Settings::parse();
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Command::Install) => return install(&cli.settings),
+        Some(Command::Uninstall) => return uninstall(),
+        None => {}
+    }
+
+    let settings = cli.settings;
 
     let level = match settings.verbosity {
         0 => "warn",

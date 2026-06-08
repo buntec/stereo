@@ -17,7 +17,11 @@ type GitRemoteDialogProps = {
   onSave: (url: string | null) => void;
 };
 
-function GitRemoteDialog({ currentRemote, onOpen, onSave }: GitRemoteDialogProps) {
+function GitRemoteDialog({
+  currentRemote,
+  onOpen,
+  onSave,
+}: GitRemoteDialogProps) {
   const [value, setValue] = useState("");
 
   useEffect(() => {
@@ -25,10 +29,17 @@ function GitRemoteDialog({ currentRemote, onOpen, onSave }: GitRemoteDialogProps
   }, [currentRemote]);
 
   return (
-    <Dialog.Root onOpenChange={(open) => { if (open) onOpen(); }}>
+    <Dialog.Root
+      onOpenChange={(open) => {
+        if (open) onOpen();
+      }}
+    >
       <Tooltip content="Configure git remote for collection backups">
         <Dialog.Trigger>
-          <IconButton variant={currentRemote ? "solid" : "soft"} color={currentRemote ? "green" : "gray"}>
+          <IconButton
+            variant={currentRemote ? "solid" : "soft"}
+            color={currentRemote ? "green" : "gray"}
+          >
             <GitHubLogoIcon />
           </IconButton>
         </Dialog.Trigger>
@@ -59,11 +70,7 @@ function GitRemoteDialog({ currentRemote, onOpen, onSave }: GitRemoteDialogProps
         <Flex gap="3" mt="4" justify="end">
           {currentRemote && (
             <Dialog.Close>
-              <Button
-                variant="soft"
-                color="red"
-                onClick={() => onSave(null)}
-              >
+              <Button variant="soft" color="red" onClick={() => onSave(null)}>
                 Remove
               </Button>
             </Dialog.Close>

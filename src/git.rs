@@ -98,11 +98,7 @@ pub async fn init_if_needed(home: &Path) -> anyhow::Result<()> {
     if !git(&["init"], home).await? {
         anyhow::bail!("git init failed");
     }
-    tokio::fs::write(
-        home.join(".gitignore"),
-        "*\n!.gitignore\n!*.db\n",
-    )
-    .await?;
+    tokio::fs::write(home.join(".gitignore"), "*\n!.gitignore\n!*.db\n").await?;
     tracing::info!("Initialized git repo in {}", home.display());
     Ok(())
 }

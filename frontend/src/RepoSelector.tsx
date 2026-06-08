@@ -34,7 +34,9 @@ function RepoSelector({ repos, value, setValue, onClone }: RepoSelectorProps) {
       <Select.Root value={selectedValue} onValueChange={setValue}>
         <Select.Trigger
           variant="soft"
-          placeholder={repos.length === 0 ? "No repos — clone one →" : "Select repo…"}
+          placeholder={
+            repos.length === 0 ? "No repos — clone one →" : "Select repo…"
+          }
         />
         <Select.Content>
           {repos.map((r) => (

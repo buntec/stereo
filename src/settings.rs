@@ -1,9 +1,8 @@
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::Args;
 
-#[derive(Debug, Clone, Parser)]
-#[command(name = "stereo", about = "A browser-based music curation app")]
+#[derive(Debug, Clone, Args)]
 pub struct Settings {
     /// Directory for app data (default: ~/.local/share/stereo)
     #[arg(long, env = "STEREO_HOME")]
