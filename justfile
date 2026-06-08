@@ -12,18 +12,20 @@ build-backend:
 
 build: build-frontend build-backend
 
+dev-port := "8055"
+
 run-frontend-dev *args:
-    bun run dev --host {{ args }}
+    STEREO_PORT={{ dev-port }} bun run dev --host {{ args }}
 
 run-backend-dev *args:
-    cargo run -- --dev -vv {{ args }}
+    cargo run -- --dev -vv --port {{ dev-port }} {{ args }}
 
 dev:
     #!/usr/bin/env sh
-    cargo run -- --dev -vv &
+    cargo run -- --dev -vv --port {{ dev-port }} &
     BACKEND_PID=$!
     trap "kill $BACKEND_PID" EXIT INT TERM
-    bun run dev --host
+    STEREO_PORT={{ dev-port }} bun run dev --host
     kill $BACKEND_PID 2>/dev/null || true
 
 run-backend *args:

@@ -23,7 +23,6 @@ export type CollectionSelectorProps = {
   setValue: (path: string) => void;
   onCreate: (name: string) => void;
   isValid: boolean;
-  size?: number;
 };
 
 function CollectionSelector({
@@ -32,7 +31,6 @@ function CollectionSelector({
   setValue,
   onCreate,
   isValid,
-  size,
 }: CollectionSelectorProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -55,12 +53,6 @@ function CollectionSelector({
           ))}
         </Select.Content>
       </Select.Root>
-
-      {isValid && size !== undefined && (
-        <Tooltip content={`Collection contains ${size} tracks`}>
-          <Code>{size}</Code>
-        </Tooltip>
-      )}
 
       <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
         <Tooltip content="Create new collection">

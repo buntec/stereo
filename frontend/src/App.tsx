@@ -1055,7 +1055,6 @@ function App() {
                 setSettings({ ...settings, collectionPath: path })
               }
               onCreate={(name) => sendMsg({ type: "create-collection", name })}
-              size={state.collection?.size}
             />
             <SearchBox
               value={state.search_box_input ?? ""}
@@ -1096,7 +1095,9 @@ function App() {
           >
             <div ref={player2Ref} />
           </div>
-          <Title title={state.title ?? ""} />
+          {state.title && (
+            <Title title={state.title} artists={state.track_info?.artists} />
+          )}
 
           <Flex direction="column" align="center" gap="2" className="controls">
             <Rating

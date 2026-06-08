@@ -98,13 +98,19 @@ function SearchBox({
           </TextField.Slot>
         </Tooltip>
 
-        <Tooltip content="Cancel search">
-          <TextField.Slot side="right">
-            <IconButton variant="ghost">
-              <Cross1Icon onClick={() => setValue("")} height="16" width="16" />
-            </IconButton>
-          </TextField.Slot>
-        </Tooltip>
+        {value.length > 0 && (
+          <Tooltip content="Cancel search">
+            <TextField.Slot side="right">
+              <IconButton variant="ghost">
+                <Cross1Icon
+                  onClick={() => setValue("")}
+                  height="16"
+                  width="16"
+                />
+              </IconButton>
+            </TextField.Slot>
+          </Tooltip>
+        )}
       </TextField.Root>
       {errorMessage ? <Text color="red">{errorMessage}</Text> : null}
     </Flex>

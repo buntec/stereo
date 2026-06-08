@@ -10,7 +10,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/ws": {
-        target: "ws://localhost:8005",
+        target: `ws://localhost:${process.env.STEREO_PORT ?? "8005"}`,
         ws: true,
         rewriteWsOrigin: true,
       },
