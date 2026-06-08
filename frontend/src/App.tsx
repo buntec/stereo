@@ -32,6 +32,7 @@ import {
   StopIcon,
   PauseIcon,
   TrackPreviousIcon,
+  OpenInNewWindowIcon,
 } from "@radix-ui/react-icons";
 
 import { Toast } from "radix-ui";
@@ -825,9 +826,30 @@ function App() {
       const yt_ids = selectedRows.map((t) => t.yt_id);
       requestReply({ type: "create-yt-anon-playlist", yt_ids }, (r) => {
         if ("url" in r) {
-          window.open(r.url, "_blank");
+          window.open(r.url ?? undefined, "_blank");
         }
       });
+    }
+  }, [requestReply]);
+
+  const openTopTracksAsYTMPlaylist = useCallback(() => {
+    if (gridRef.current) {
+      const api = gridRef.current.api;
+      const filterModel = api.getState().filter?.filterModel;
+      const sortModel = api.getState().sort?.sortModel;
+      requestReply(
+        { type: "get-rows", startRow: 0, endRow: 50, filterModel, sortModel },
+        (r) => {
+          if ("rows" in r) {
+            const yt_ids = r.rows.map((t: ITrack) => t.yt_id);
+            requestReply({ type: "create-yt-anon-playlist", yt_ids }, (r2) => {
+              if ("url" in r2) {
+                window.open(r2.url ?? undefined, "_blank");
+              }
+            });
+          }
+        },
+      );
     }
   }, [requestReply]);
 
@@ -1356,6 +1378,12 @@ function App() {
                 exportToYTM={openSelectedTracksAsYTMPlaylist}
               />
 
+              <Tooltip content="Export top 50 tracks to YouTube Music playlist">
+                <IconButton variant="soft" onClick={openTopTracksAsYTMPlaylist}>
+                  <OpenInNewWindowIcon />
+                </IconButton>
+              </Tooltip>
+
               <ImportDialog
                 setImportFrom={(path: string) =>
                   dispatch({ type: "set-import-from", path })
@@ -1380,12 +1408,6 @@ function App() {
               <Tooltip content="Reset columns">
                 <IconButton variant="soft" onClick={resetColumnState}>
                   <ResetIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip content="Force refresh">
-                <IconButton variant="soft" onClick={refreshGrid}>
-                  <ReloadIcon />
                 </IconButton>
               </Tooltip>
 
