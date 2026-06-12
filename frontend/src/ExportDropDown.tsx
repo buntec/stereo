@@ -7,6 +7,7 @@ type ExportDropDownProps = {
   collections: ICollection[];
   exportToCollection: (coll: string) => void;
   exportToYTM: () => void;
+  exportToYTSavedPlaylist: () => void;
   disabled: boolean;
 };
 
@@ -14,6 +15,7 @@ function ExportDropDown({
   collections,
   exportToCollection,
   exportToYTM,
+  exportToYTSavedPlaylist,
   disabled,
 }: ExportDropDownProps) {
   return (
@@ -46,6 +48,9 @@ function ExportDropDown({
         <DropdownMenu.Separator />
         <DropdownMenu.Item onSelect={exportToYTM}>
           Export selection to YouTube Music playlist (50 tracks max)
+        </DropdownMenu.Item>
+        <DropdownMenu.Item onSelect={exportToYTSavedPlaylist}>
+          Export selection to YouTube playlist
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>

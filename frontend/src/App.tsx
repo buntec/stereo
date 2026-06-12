@@ -69,6 +69,10 @@ import CollectionSelector from "./CollectionSelector.tsx";
 import RepoSelector from "./RepoSelector.tsx";
 import ImportDialog from "./ImportDialog.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
+import {
+  YouTubePlaylistDialog,
+  useYouTubeOAuthCallback,
+} from "./YouTubePlaylistDialog.tsx";
 import AppearanceSwitch from "./AppearanceSwitch.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
@@ -852,6 +856,31 @@ function App() {
     }
   }, [requestReply]);
 
+  const [ytPlaylistOpen, setYtPlaylistOpen] = useState(false);
+  const [ytPlaylistYtIds, setYtPlaylistYtIds] = useState<string[]>([]);
+
+  const openSelectedTracksAsYTSavedPlaylist = useCallback(() => {
+    const selectedRows = gridRef.current?.api.getSelectedRows();
+    if (selectedRows && selectedRows.length > 0) {
+      setYtPlaylistYtIds(selectedRows.map((t) => t.yt_id));
+      setYtPlaylistOpen(true);
+    }
+  }, []);
+
+  useYouTubeOAuthCallback(
+    (url, count) => {
+      window.open(url, "_blank");
+      dispatch({
+        type: "notification",
+        message: `YouTube playlist created with ${count} track${count !== 1 ? "s" : ""}`,
+        kind: "info",
+      });
+    },
+    (msg) => {
+      dispatch({ type: "notification", message: msg, kind: "error" });
+    },
+  );
+
   const addSelectedTracks = useCallback(
     (overwrite: boolean) => {
       if (
@@ -1380,6 +1409,7 @@ function App() {
                 collections={state.collections ?? []}
                 exportToCollection={exportSelectedTracksToCollection}
                 exportToYTM={openSelectedTracksAsYTMPlaylist}
+                exportToYTSavedPlaylist={openSelectedTracksAsYTSavedPlaylist}
               />
 
               <Tooltip content="Export top 50 tracks to YouTube Music playlist">
@@ -1485,6 +1515,11 @@ function App() {
           }
           message={state.notification_msg}
           kind={state.notification_kind}
+        />
+        <YouTubePlaylistDialog
+          open={ytPlaylistOpen}
+          ytIds={ytPlaylistYtIds}
+          onOpenChange={setYtPlaylistOpen}
         />
       </Toast.Provider>
     </Theme>
