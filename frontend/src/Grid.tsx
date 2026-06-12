@@ -175,6 +175,7 @@ const SearchPlayControlRenderer: React.FC<
 
   const handlePlay = useCallback(() => {
     if (data) {
+      context.dispatch({ type: "track-info", track: data });
       context.playId(data.yt_id);
     }
   }, [data, context]);
@@ -243,10 +244,12 @@ type SearchResultsGridContext = {
   playId: (id: string) => void;
   requestReply: RequestReply;
   lastCollectionUpdate?: number;
+  dispatch: Dispatch<Action>;
 };
 
 export const SearchResultsGrid = ({
   gridRef,
+  currentId,
   playId,
   requestReply,
   dispatch,
@@ -331,9 +334,21 @@ export const SearchResultsGrid = ({
     [dispatch],
   );
 
+  const rowClassRules = useMemo(() => {
+    return {
+      "progress-bar": (params: RowClassParams<ITrack>) => {
+        return params.data?.yt_id === currentId;
+      },
+    };
+  }, [currentId]);
+
+  useEffect(() => {
+    gridRef.current?.api?.redrawRows();
+  }, [currentId, gridRef]);
+
   const context: SearchResultsGridContext = useMemo(() => {
-    return { requestReply, playId, lastCollectionUpdate };
-  }, [requestReply, playId, lastCollectionUpdate]);
+    return { requestReply, playId, lastCollectionUpdate, dispatch };
+  }, [requestReply, playId, lastCollectionUpdate, dispatch]);
 
   const getRowId = useCallback(
     (params: GetRowIdParams<ITrack>) =>
@@ -357,6 +372,7 @@ export const SearchResultsGrid = ({
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}
+        rowClassRules={rowClassRules}
         autoSizeStrategy={autoSizeStrategy}
         rowHeight={32}
         context={context}
