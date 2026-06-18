@@ -26,6 +26,8 @@ enum Command {
     Install,
     /// Uninstall the stereo macOS launchd service
     Uninstall,
+    /// Restart the running stereo launchd service
+    Restart,
 }
 
 const SERVICE_LABEL: &str = "com.stereo";
@@ -102,6 +104,18 @@ fn install(settings: &Settings) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn restart() -> anyhow::Result<()> {
+    let uid = uid()?;
+    let status = std::process::Command::new("launchctl")
+        .args(["kickstart", "-k", &format!("gui/{uid}/{SERVICE_LABEL}")])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("launchctl kickstart failed (is the service installed?)");
+    }
+    eprintln!("stereo service restarted");
+    Ok(())
+}
+
 fn uninstall() -> anyhow::Result<()> {
     let plist = plist_path()?;
     let uid = uid()?;
@@ -130,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Install) => return install(&cli.settings),
         Some(Command::Uninstall) => return uninstall(),
+        Some(Command::Restart) => return restart(),
         None => {}
     }
 

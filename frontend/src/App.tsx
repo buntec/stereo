@@ -1156,6 +1156,7 @@ function App() {
               artists={state.track_info?.artists}
               trackName={state.track_info?.title}
               label={state.track_info?.label}
+              releaseDate={state.track_info?.release_date}
             />
           )}
 
