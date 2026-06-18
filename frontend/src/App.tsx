@@ -31,7 +31,6 @@ import {
   StopIcon,
   PauseIcon,
   TrackPreviousIcon,
-  OpenInNewWindowIcon,
 } from "@radix-ui/react-icons";
 
 import { Toast } from "radix-ui";
@@ -71,6 +70,7 @@ import ImportDialog from "./ImportDialog.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
 import {
   YouTubePlaylistDialog,
+  OAuthProgressDialog,
   useYouTubeOAuthCallback,
 } from "./YouTubePlaylistDialog.tsx";
 import AppearanceSwitch from "./AppearanceSwitch.tsx";
@@ -867,7 +867,33 @@ function App() {
     }
   }, []);
 
-  useYouTubeOAuthCallback(
+  const openAllTracksAsYTSavedPlaylist = useCallback(() => {
+    if (gridRef.current) {
+      const api = gridRef.current.api;
+      const filterModel = api.getState().filter?.filterModel;
+      const sortModel = api.getState().sort?.sortModel;
+      requestReply(
+        {
+          type: "get-rows",
+          startRow: 0,
+          endRow: 10000,
+          filterModel,
+          sortModel,
+        },
+        (r) => {
+          if ("rows" in r) {
+            const yt_ids = (r.rows as ITrack[]).map((t) => t.yt_id);
+            if (yt_ids.length > 0) {
+              setYtPlaylistYtIds(yt_ids);
+              setYtPlaylistOpen(true);
+            }
+          }
+        },
+      );
+    }
+  }, [requestReply]);
+
+  const oauthPhase = useYouTubeOAuthCallback(
     (url, count) => {
       window.open(url, "_blank");
       dispatch({
@@ -1405,18 +1431,16 @@ function App() {
               </Tooltip>
 
               <ExportDropDown
-                disabled={state.track_selection.length === 0}
+                selectionCount={state.track_selection.length}
                 collections={state.collections ?? []}
                 exportToCollection={exportSelectedTracksToCollection}
-                exportToYTM={openSelectedTracksAsYTMPlaylist}
-                exportToYTSavedPlaylist={openSelectedTracksAsYTSavedPlaylist}
+                exportSelectionToYTM={openSelectedTracksAsYTMPlaylist}
+                exportSelectionToYTSavedPlaylist={
+                  openSelectedTracksAsYTSavedPlaylist
+                }
+                exportTop50ToYTM={openTopTracksAsYTMPlaylist}
+                exportAllToYTSavedPlaylist={openAllTracksAsYTSavedPlaylist}
               />
-
-              <Tooltip content="Export top 50 tracks to YouTube Music playlist">
-                <IconButton variant="soft" onClick={openTopTracksAsYTMPlaylist}>
-                  <OpenInNewWindowIcon />
-                </IconButton>
-              </Tooltip>
 
               <ImportDialog
                 setImportFrom={(path: string) =>
@@ -1521,6 +1545,7 @@ function App() {
           ytIds={ytPlaylistYtIds}
           onOpenChange={setYtPlaylistOpen}
         />
+        <OAuthProgressDialog phase={oauthPhase} />
       </Toast.Provider>
     </Theme>
   );

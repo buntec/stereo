@@ -6,8 +6,18 @@ import {
   TextField,
   Flex,
   Code,
+  Progress,
+  Spinner,
 } from "@radix-ui/themes";
 import { useLocalStorage } from "./Utils.tsx";
+
+// ─── OAuth progress state ─────────────────────────────────────────────────────
+
+export type OAuthPhase =
+  | { kind: "idle" }
+  | { kind: "exchanging-token" }
+  | { kind: "creating-playlist" }
+  | { kind: "adding-tracks"; current: number; total: number };
 
 // ─── PKCE helpers ─────────────────────────────────────────────────────────────
 
@@ -120,7 +130,8 @@ const OAUTH_STATE = "stereo-yt-export";
 export function useYouTubeOAuthCallback(
   onSuccess: (url: string, count: number) => void,
   onError: (msg: string) => void,
-): void {
+): OAuthPhase {
+  const [phase, setPhase] = useState<OAuthPhase>({ kind: "idle" });
   const onSuccessRef = useRef(onSuccess);
   const onErrorRef = useRef(onError);
   onSuccessRef.current = onSuccess;
@@ -156,22 +167,72 @@ export function useYouTubeOAuthCallback(
 
     (async () => {
       try {
+        setPhase({ kind: "exchanging-token" });
         const accessToken = await exchangeToken(
           code,
           verifier,
           clientId,
           clientSecret,
         );
+
+        setPhase({ kind: "creating-playlist" });
         const playlist = await createYouTubePlaylist(accessToken, playlistName);
-        for (const id of ytIds) {
-          await addVideoToPlaylist(accessToken, playlist.id, id);
+
+        for (let i = 0; i < ytIds.length; i++) {
+          setPhase({ kind: "adding-tracks", current: i, total: ytIds.length });
+          await addVideoToPlaylist(accessToken, playlist.id, ytIds[i]);
         }
+
+        setPhase({ kind: "idle" });
         onSuccessRef.current(playlist.url, ytIds.length);
       } catch (e) {
+        setPhase({ kind: "idle" });
         onErrorRef.current(String(e));
       }
     })();
   }, []);
+
+  return phase;
+}
+
+// ─── Progress dialog shown after OAuth redirect ───────────────────────────────
+
+export function OAuthProgressDialog({ phase }: { phase: OAuthPhase }) {
+  const isOpen = phase.kind !== "idle";
+
+  const label =
+    phase.kind === "exchanging-token"
+      ? "Connecting to Google…"
+      : phase.kind === "creating-playlist"
+        ? "Creating playlist…"
+        : phase.kind === "adding-tracks"
+          ? `Adding tracks… (${phase.current} / ${phase.total})`
+          : "";
+
+  const progressValue =
+    phase.kind === "adding-tracks" && phase.total > 0
+      ? Math.round((phase.current / phase.total) * 100)
+      : undefined;
+
+  return (
+    <Dialog.Root open={isOpen}>
+      <Dialog.Content maxWidth="400px">
+        <Dialog.Title>Exporting to YouTube playlist</Dialog.Title>
+        <Flex direction="column" gap="3" mt="2">
+          <Flex align="center" gap="2">
+            {phase.kind !== "adding-tracks" && <Spinner />}
+            <Text size="2">{label}</Text>
+          </Flex>
+          <Progress value={progressValue} size="2" />
+          {phase.kind === "adding-tracks" && (
+            <Text size="1" color="gray">
+              {phase.current} of {phase.total} tracks added
+            </Text>
+          )}
+        </Flex>
+      </Dialog.Content>
+    </Dialog.Root>
+  );
 }
 
 // ─── Dialog component ─────────────────────────────────────────────────────────
@@ -227,9 +288,9 @@ export function YouTubePlaylistDialog({
       <Dialog.Content maxWidth="440px">
         <Dialog.Title>Export to YouTube playlist</Dialog.Title>
         <Dialog.Description size="2" mb="4">
-          Creates a private playlist on your YouTube account with{" "}
-          {ytIds.length} track{ytIds.length !== 1 ? "s" : ""}. You'll be
-          redirected to Google to authorize.
+          Creates a private playlist on your YouTube account with {ytIds.length}{" "}
+          track{ytIds.length !== 1 ? "s" : ""}. You'll be redirected to Google
+          to authorize.
         </Dialog.Description>
 
         <Flex direction="column" gap="3">

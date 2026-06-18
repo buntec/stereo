@@ -5,23 +5,29 @@ import type { ICollection } from "./Types.tsx";
 
 type ExportDropDownProps = {
   collections: ICollection[];
+  selectionCount: number;
   exportToCollection: (coll: string) => void;
-  exportToYTM: () => void;
-  exportToYTSavedPlaylist: () => void;
-  disabled: boolean;
+  exportSelectionToYTM: () => void;
+  exportSelectionToYTSavedPlaylist: () => void;
+  exportTop50ToYTM: () => void;
+  exportAllToYTSavedPlaylist: () => void;
 };
 
 function ExportDropDown({
   collections,
+  selectionCount,
   exportToCollection,
-  exportToYTM,
-  exportToYTSavedPlaylist,
-  disabled,
+  exportSelectionToYTM,
+  exportSelectionToYTSavedPlaylist,
+  exportTop50ToYTM,
+  exportAllToYTSavedPlaylist,
 }: ExportDropDownProps) {
+  const hasSelection = selectionCount > 0;
+
   return (
     <DropdownMenu.Root>
-      <Tooltip content="Export selected tracks">
-        <DropdownMenu.Trigger disabled={disabled}>
+      <Tooltip content="Export tracks">
+        <DropdownMenu.Trigger>
           <IconButton variant="soft">
             <Share2Icon />
           </IconButton>
@@ -29,7 +35,7 @@ function ExportDropDown({
       </Tooltip>
       <DropdownMenu.Content>
         <DropdownMenu.Sub>
-          <DropdownMenu.SubTrigger>
+          <DropdownMenu.SubTrigger disabled={!hasSelection}>
             Export selection to collection
           </DropdownMenu.SubTrigger>
           <DropdownMenu.SubContent>
@@ -45,12 +51,26 @@ function ExportDropDown({
             ))}
           </DropdownMenu.SubContent>
         </DropdownMenu.Sub>
-        <DropdownMenu.Separator />
-        <DropdownMenu.Item onSelect={exportToYTM}>
+        <DropdownMenu.Item
+          disabled={!hasSelection}
+          onSelect={exportSelectionToYTM}
+        >
           Export selection to YouTube Music playlist (50 tracks max)
         </DropdownMenu.Item>
-        <DropdownMenu.Item onSelect={exportToYTSavedPlaylist}>
-          Export selection to YouTube playlist
+        <DropdownMenu.Item
+          disabled={!hasSelection}
+          onSelect={exportSelectionToYTSavedPlaylist}
+        >
+          Export selection to YouTube playlist (login required)
+        </DropdownMenu.Item>
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item onSelect={exportTop50ToYTM}>
+          Export first 50 tracks to temporary YouTube Music playlist (no login
+          required)
+        </DropdownMenu.Item>
+        <DropdownMenu.Item onSelect={exportAllToYTSavedPlaylist}>
+          Export current view (filtered and sorted) to YouTube playlist (login
+          required)
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>
