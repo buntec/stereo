@@ -77,6 +77,7 @@ import AppearanceSwitch from "./AppearanceSwitch.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
+import NowPlayingMenu from "./NowPlayingMenu.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
@@ -1151,13 +1152,50 @@ function App() {
             <div ref={player2Ref} />
           </div>
           {state.title && (
-            <Title
-              title={state.title}
-              artists={state.track_info?.artists}
-              trackName={state.track_info?.title}
-              label={state.track_info?.label}
-              releaseDate={state.track_info?.release_date}
-            />
+            <Flex align="center" gap="2">
+              <Title
+                title={state.title}
+                artists={state.track_info?.artists}
+                trackName={state.track_info?.title}
+                label={state.track_info?.label}
+                releaseDate={state.track_info?.release_date}
+              />
+              {state.track_info && (
+                <NowPlayingMenu
+                  track={state.track_info}
+                  collections={state.collections ?? []}
+                  currentCollectionPath={settings.collectionPath}
+                  onCopyToCollection={(path) => {
+                    if (state.track_info) {
+                      sendMsg({
+                        type: "export-tracks-to-collection",
+                        tracks: [state.track_info],
+                        collection: path,
+                      });
+                    }
+                  }}
+                  onMoveToCollection={(path) => {
+                    if (state.track_info && state.current_id) {
+                      const idToDelete = state.current_id;
+                      sendMsg({
+                        type: "export-tracks-to-collection",
+                        tracks: [state.track_info],
+                        collection: path,
+                      });
+                      dispatch({ type: "play-next-track" });
+                      sendMsg({ type: "delete-tracks", ids: [idToDelete] });
+                    }
+                  }}
+                  onDeleteFromCollection={() => {
+                    if (state.current_id) {
+                      const idToDelete = state.current_id;
+                      dispatch({ type: "play-next-track" });
+                      sendMsg({ type: "delete-tracks", ids: [idToDelete] });
+                    }
+                  }}
+                />
+              )}
+            </Flex>
           )}
 
           <Flex direction="column" align="center" gap="2" className="controls">
