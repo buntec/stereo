@@ -1042,16 +1042,24 @@ function App() {
     (name: string) => {
       dispatch({ type: "set-search-kind", kind: "by-artist" });
       dispatch({ type: "search-box-input", input: name });
+      dispatch({ type: "clear-search-results" });
+      dispatch({ type: "set-search-busy" });
+      const query_id = ++queryId.current;
+      sendMsg({ type: "search", query: name, query_id, kind: "by-artist", limit: state.search_limit });
     },
-    [dispatch],
+    [dispatch, sendMsg, state.search_limit],
   );
 
   const handleLabelClick = useCallback(
     (name: string) => {
       dispatch({ type: "set-search-kind", kind: "by-label" });
       dispatch({ type: "search-box-input", input: name });
+      dispatch({ type: "clear-search-results" });
+      dispatch({ type: "set-search-busy" });
+      const query_id = ++queryId.current;
+      sendMsg({ type: "search", query: name, query_id, kind: "by-label", limit: state.search_limit });
     },
-    [dispatch],
+    [dispatch, sendMsg, state.search_limit],
   );
 
   useKeyboardActions({
