@@ -182,6 +182,14 @@
   font-family: var(--code-font-family);
 }
 
+.artist-link {
+  cursor: pointer;
+}
+
+.artist-link:hover {
+  text-decoration: underline;
+}
+
 .rating-stars {
   display: flex;
   align-items: center;

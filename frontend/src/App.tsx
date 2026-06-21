@@ -1046,6 +1046,22 @@ function App() {
     setSettings({ ...settings, fullScreen: !settings.fullScreen });
   }, [settings, setSettings]);
 
+  const handleArtistClick = useCallback(
+    (name: string) => {
+      dispatch({ type: "set-search-kind", kind: "by-artist" });
+      dispatch({ type: "search-box-input", input: name });
+    },
+    [dispatch],
+  );
+
+  const handleLabelClick = useCallback(
+    (name: string) => {
+      dispatch({ type: "set-search-kind", kind: "by-label" });
+      dispatch({ type: "search-box-input", input: name });
+    },
+    [dispatch],
+  );
+
   useKeyboardActions({
     "0": () => updateCurrentRating(null),
     "1": () => updateCurrentRating(1),
@@ -1552,6 +1568,8 @@ function App() {
                 dispatch={dispatch}
                 tracks={state.search_results}
                 lastCollectionUpdate={state.collection_last_update}
+                onArtistClick={handleArtistClick}
+                onLabelClick={handleLabelClick}
               />
             ) : (
               <TracksGrid
@@ -1566,6 +1584,8 @@ function App() {
                 initialState={gridState}
                 onStateUpdate={onTrackGridStateUpdate}
                 onRowCountChange={setFilteredRowCount}
+                onArtistClick={handleArtistClick}
+                onLabelClick={handleLabelClick}
               />
             )}
           </Box>

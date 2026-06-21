@@ -45,6 +45,51 @@ import logger from "./logger.tsx";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
+const ArtistCellRenderer = (params: ICellRendererParams<ITrack, string[]>) => {
+  const artists: string[] = params.value ?? [];
+  const onArtistClick: ((name: string) => void) | undefined =
+    params.context?.onArtistClick;
+
+  return (
+    <span>
+      {artists.map((artist, i) => (
+        <span key={artist}>
+          {i > 0 && ", "}
+          <span
+            className="artist-link"
+            onClick={(e) => {
+              e.stopPropagation();
+              onArtistClick?.(artist);
+            }}
+          >
+            {artist}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+};
+
+const LabelCellRenderer = (params: ICellRendererParams<ITrack, string>) => {
+  const label = params.value;
+  const onLabelClick: ((name: string) => void) | undefined =
+    params.context?.onLabelClick;
+
+  if (!label) return null;
+
+  return (
+    <span
+      className="artist-link"
+      onClick={(e) => {
+        e.stopPropagation();
+        onLabelClick?.(label);
+      }}
+    >
+      {label}
+    </span>
+  );
+};
+
 const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
   const [rating, setRating] = useState<number | null>(null);
 
@@ -238,6 +283,8 @@ interface SearchResultsGridProps {
   dispatch: Dispatch<Action>;
   tracks?: ITrack[];
   lastCollectionUpdate?: number;
+  onArtistClick: (name: string) => void;
+  onLabelClick: (name: string) => void;
 }
 
 type SearchResultsGridContext = {
@@ -245,6 +292,8 @@ type SearchResultsGridContext = {
   requestReply: RequestReply;
   lastCollectionUpdate?: number;
   dispatch: Dispatch<Action>;
+  onArtistClick: (name: string) => void;
+  onLabelClick: (name: string) => void;
 };
 
 export const SearchResultsGrid = ({
@@ -255,6 +304,8 @@ export const SearchResultsGrid = ({
   dispatch,
   tracks,
   lastCollectionUpdate,
+  onArtistClick,
+  onLabelClick,
 }: SearchResultsGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -265,8 +316,19 @@ export const SearchResultsGrid = ({
     },
     { field: "title", headerName: "Title", filter: true },
     { field: "mix_name", headerName: "Mix", filter: true },
-    { field: "artists", headerName: "Artist", filter: true, type: "artists" },
-    { field: "label", headerName: "Label", filter: true },
+    {
+      field: "artists",
+      headerName: "Artist",
+      filter: true,
+      type: "artists",
+      cellRenderer: ArtistCellRenderer,
+    },
+    {
+      field: "label",
+      headerName: "Label",
+      filter: true,
+      cellRenderer: LabelCellRenderer,
+    },
     {
       field: "release_date",
       headerName: "Release",
@@ -347,8 +409,22 @@ export const SearchResultsGrid = ({
   }, [currentId, gridRef]);
 
   const context: SearchResultsGridContext = useMemo(() => {
-    return { requestReply, playId, lastCollectionUpdate, dispatch };
-  }, [requestReply, playId, lastCollectionUpdate, dispatch]);
+    return {
+      requestReply,
+      playId,
+      lastCollectionUpdate,
+      dispatch,
+      onArtistClick,
+      onLabelClick,
+    };
+  }, [
+    requestReply,
+    playId,
+    lastCollectionUpdate,
+    dispatch,
+    onArtistClick,
+    onLabelClick,
+  ]);
 
   const getRowId = useCallback(
     (params: GetRowIdParams<ITrack>) =>
@@ -394,6 +470,8 @@ interface TracksGridProps {
   initialState?: GridState;
   onStateUpdate: (state: GridState) => void;
   onRowCountChange?: (count: number) => void;
+  onArtistClick: (name: string) => void;
+  onLabelClick: (name: string) => void;
 }
 
 type TracksGridContext = {
@@ -401,6 +479,8 @@ type TracksGridContext = {
   requestReply: RequestReply;
   updateRating: (yt_id: string, rating: number) => void;
   sendMsg: (msg: ClientMsg) => void;
+  onArtistClick: (name: string) => void;
+  onLabelClick: (name: string) => void;
 };
 
 export const TracksGrid = ({
@@ -415,6 +495,8 @@ export const TracksGrid = ({
   initialState,
   onStateUpdate,
   onRowCountChange,
+  onArtistClick,
+  onLabelClick,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -424,8 +506,19 @@ export const TracksGrid = ({
       width: 140,
     },
     { field: "title", headerName: "Title", filter: true },
-    { field: "artists", headerName: "Artist", filter: true, type: "artists" },
-    { field: "label", headerName: "Label", filter: true },
+    {
+      field: "artists",
+      headerName: "Artist",
+      filter: true,
+      type: "artists",
+      cellRenderer: ArtistCellRenderer,
+    },
+    {
+      field: "label",
+      headerName: "Label",
+      filter: true,
+      cellRenderer: LabelCellRenderer,
+    },
     {
       field: "release_date",
       headerName: "Release",
@@ -544,8 +637,17 @@ export const TracksGrid = ({
       requestReply,
       playId,
       sendMsg,
+      onArtistClick,
+      onLabelClick,
     };
-  }, [updateRatingAndRefresh, requestReply, playId, sendMsg]);
+  }, [
+    updateRatingAndRefresh,
+    requestReply,
+    playId,
+    sendMsg,
+    onArtistClick,
+    onLabelClick,
+  ]);
 
   const onSelectionChanged = useCallback(
     (ev: SelectionChangedEvent<ITrack>) => {
