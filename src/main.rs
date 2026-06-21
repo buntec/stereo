@@ -22,6 +22,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print the version and exit
+    Version,
     /// Install stereo as a macOS launchd service (starts on login)
     Install,
     /// Uninstall the stereo macOS launchd service
@@ -142,6 +144,10 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Command::Version) => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
         Some(Command::Install) => return install(&cli.settings),
         Some(Command::Uninstall) => return uninstall(),
         Some(Command::Restart) => return restart(),
