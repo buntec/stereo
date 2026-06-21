@@ -100,7 +100,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
     // Send initial messages
     let _ = server_tx
         .send(MsgServer::BackendInfo {
-            version: env!("GIT_VERSION").to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             home_dir: home.to_string_lossy().to_string(),
         })
         .await;
