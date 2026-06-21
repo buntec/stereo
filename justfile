@@ -37,3 +37,6 @@ test *args:
 format:
     cargo fmt
     bun run prettier --write "frontend/src/**/*.{ts,tsx,css}"
+
+bump part="patch":
+    cargo set-version --bump {{ part }}
