@@ -36,7 +36,9 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - uses: dtolnay/rust-toolchain@master
+      - name: Install Rust toolchain
+        shell: bash
+        run: rustup show
 
       - uses: Swatinem/rust-cache@v2
 
