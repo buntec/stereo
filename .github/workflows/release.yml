@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build (${{ matrix.artifact_name }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            binary: stereo
+            artifact_name: stereo-linux-x86_64
+          - os: ubuntu-24.04-arm
+            binary: stereo
+            artifact_name: stereo-linux-aarch64
+          - os: macos-13
+            binary: stereo
+            artifact_name: stereo-macos-x86_64
+          - os: macos-latest
+            binary: stereo
+            artifact_name: stereo-macos-aarch64
+          - os: windows-latest
+            binary: stereo.exe
+            artifact_name: stereo-windows-x86_64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: dtolnay/rust-toolchain@master
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build frontend
+        run: bun install && bun run build
+
+      - name: Build binary
+        run: cargo build --release
+
+      - name: Strip binary
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: strip target/release/${{ matrix.binary }}
+
+      - name: Package binary
+        shell: bash
+        run: cp target/release/${{ matrix.binary }} ${{ matrix.artifact_name }}
+
+      - name: Upload to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_name }}
+          generate_release_notes: true
