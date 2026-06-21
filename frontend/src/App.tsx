@@ -270,7 +270,7 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, should_purge_grid: false };
 
     case "search-box-input":
-      return { ...state, search_box_input: action.input };
+      return { ...state, search_box_input: action.input, search_busy: false };
 
     case "selection-changed":
       return { ...state, track_selection: action.selected };
@@ -722,36 +722,28 @@ function App() {
   }, [player, playerIsReady, player2, player2IsReady, dispatch]);
 
   useEffect(() => {
-    dispatch({ type: "clear-search-results" });
-
-    let t = null;
-
     const query = state.search_box_input?.trim() ?? "";
+    if (query.length === 0) {
+      dispatch({ type: "clear-search-results" });
+      sendMsg({ type: "search-cancel-all" });
+    }
+  }, [sendMsg, state.search_box_input]);
 
+  const handleSearch = useCallback(() => {
+    const query = state.search_box_input?.trim() ?? "";
     if (query.length > 0) {
       const query_id = ++queryId.current;
-      t = setTimeout(() => {
-        dispatch({ type: "set-search-busy" });
-        sendMsg({
-          type: "search",
-          query,
-          query_id,
-          kind: state.search_kind,
-          limit: state.search_limit,
-        });
-      }, 1000); // debounce - search is expensive!
-    } else {
+      dispatch({ type: "clear-search-results" });
+      dispatch({ type: "set-search-busy" });
       sendMsg({
-        type: "search-cancel-all",
+        type: "search",
+        query,
+        query_id,
+        kind: state.search_kind,
+        limit: state.search_limit,
       });
     }
-
-    return () => {
-      if (t !== null) {
-        clearTimeout(t);
-      }
-    };
-  }, [sendMsg, state.search_box_input, state.search_limit, state.search_kind]);
+  }, [sendMsg, state.search_box_input, state.search_kind, state.search_limit]);
 
   useEffect(() => {
     let t = null;
@@ -1133,6 +1125,7 @@ function App() {
               setValue={(value: string) =>
                 dispatch({ type: "search-box-input", input: value })
               }
+              onSearch={handleSearch}
               searchLimit={state.search_limit}
               setSearchLimit={(limit: number) =>
                 dispatch({ type: "set-search-limit", limit })

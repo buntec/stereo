@@ -14,6 +14,7 @@ import { type SearchKind } from "./Types.tsx";
 export interface ISearchBoxProps {
   value: string;
   setValue: (value: string) => void;
+  onSearch: () => void;
   searchKind: SearchKind;
   setSearchKind: (value: SearchKind) => void;
   searchLimit: number;
@@ -38,6 +39,7 @@ function toSearchKind(s: string): SearchKind {
 function SearchBox({
   value,
   setValue,
+  onSearch,
   searchKind,
   setSearchKind,
   searchLimit,
@@ -53,6 +55,9 @@ function SearchBox({
         variant="soft"
         value={value}
         onChange={(ev) => setValue(ev.target.value)}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter") onSearch();
+        }}
       >
         <TextField.Slot>
           <MagnifyingGlassIcon height="16" width="16" />
@@ -112,6 +117,15 @@ function SearchBox({
           </Tooltip>
         )}
       </TextField.Root>
+      <Tooltip content="Search">
+        <IconButton
+          variant="soft"
+          disabled={value.trim().length === 0}
+          onClick={onSearch}
+        >
+          <MagnifyingGlassIcon height="16" width="16" />
+        </IconButton>
+      </Tooltip>
       {errorMessage ? <Text color="red">{errorMessage}</Text> : null}
     </Flex>
   );
