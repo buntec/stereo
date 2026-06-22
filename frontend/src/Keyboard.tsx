@@ -20,6 +20,7 @@ export const useKeyboardActions = (actionMap: KeyActionMap) => {
         target.isContentEditable;
 
       if (isTyping) return;
+      if (event.metaKey) return;
 
       let keyCombination = "";
       if (event.ctrlKey) keyCombination += "Ctrl+";
