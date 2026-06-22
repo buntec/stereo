@@ -1045,7 +1045,13 @@ function App() {
       dispatch({ type: "clear-search-results" });
       dispatch({ type: "set-search-busy" });
       const query_id = ++queryId.current;
-      sendMsg({ type: "search", query: name, query_id, kind: "by-artist", limit: state.search_limit });
+      sendMsg({
+        type: "search",
+        query: name,
+        query_id,
+        kind: "by-artist",
+        limit: state.search_limit,
+      });
     },
     [dispatch, sendMsg, state.search_limit],
   );
@@ -1057,7 +1063,13 @@ function App() {
       dispatch({ type: "clear-search-results" });
       dispatch({ type: "set-search-busy" });
       const query_id = ++queryId.current;
-      sendMsg({ type: "search", query: name, query_id, kind: "by-label", limit: state.search_limit });
+      sendMsg({
+        type: "search",
+        query: name,
+        query_id,
+        kind: "by-label",
+        limit: state.search_limit,
+      });
     },
     [dispatch, sendMsg, state.search_limit],
   );

@@ -19,11 +19,15 @@ use crate::{
     utils::{self, PathKind},
 };
 
+const GIT_PUSH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
 struct SessionState {
     pool: Option<sqlx::SqlitePool>,
     collection: Option<Collection>,
     repo: Option<std::path::PathBuf>,
     search_task: Option<tokio::task::JoinHandle<()>>,
+    git_push_handle: Option<tokio::task::JoinHandle<()>>,
+    last_git_push: Option<std::time::Instant>,
 }
 
 impl Default for SessionState {
@@ -33,6 +37,8 @@ impl Default for SessionState {
             collection: None,
             repo: None,
             search_task: None,
+            git_push_handle: None,
+            last_git_push: None,
         }
     }
 }
@@ -225,11 +231,36 @@ async fn update_collection_info(state: &mut SessionState, tx: &mpsc::Sender<MsgS
     }
 }
 
-fn git_spawn(state: &SessionState, _home: &std::path::Path) {
+fn git_spawn(state: &mut SessionState, _home: &std::path::Path) {
     if let (Some(col), Some(repo)) = (&state.collection, &state.repo) {
+        // If a push is already pending it will capture any changes made since it was scheduled.
+        if let Some(h) = &state.git_push_handle {
+            if !h.is_finished() {
+                return;
+            }
+        }
+
         let repo = repo.clone();
         let db_path = col.path.clone();
-        tokio::spawn(git::commit_and_push(repo, db_path));
+        let delay = state
+            .last_git_push
+            .map(|last| {
+                let elapsed = last.elapsed();
+                if elapsed >= GIT_PUSH_INTERVAL {
+                    Duration::ZERO
+                } else {
+                    GIT_PUSH_INTERVAL - elapsed
+                }
+            })
+            .unwrap_or(Duration::ZERO);
+
+        state.last_git_push = Some(std::time::Instant::now());
+        state.git_push_handle = Some(tokio::spawn(async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            git::commit_and_push(repo, db_path).await;
+        }));
     }
 }
 
