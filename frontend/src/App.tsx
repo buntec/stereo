@@ -1444,7 +1444,7 @@ function App() {
           >
             <div ref={playerRef} />
           </div>
-          {state.search_results && !!state.search_box_input ? (
+          {(state.search_results !== undefined || state.search_busy) && !!state.search_box_input ? (
             <Flex width="100%" gap="2" p="2">
               <Tooltip content="Add selected tracks (don't overwrite existing)">
                 <IconButton
@@ -1572,7 +1572,7 @@ function App() {
             </Flex>
           )}
           <Box className="grid-container">
-            {state.search_results && !!state.search_box_input ? (
+            {(state.search_results !== undefined || state.search_busy) && !!state.search_box_input ? (
               <SearchResultsGrid
                 gridRef={searchGridRef}
                 currentId={state.current_id}

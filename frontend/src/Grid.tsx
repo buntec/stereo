@@ -221,6 +221,9 @@ const SearchPlayControlRenderer: React.FC<
   const handlePlay = useCallback(() => {
     if (data) {
       context.dispatch({ type: "track-info", track: data });
+      const idx = context.tracks.findIndex((t) => t.yt_id === data.yt_id);
+      const ids = context.tracks.slice(idx >= 0 ? idx : 0).map((t) => t.yt_id);
+      context.dispatch({ type: "set-playlist", ids });
       context.playId(data.yt_id);
     }
   }, [data, context]);
@@ -294,6 +297,7 @@ type SearchResultsGridContext = {
   dispatch: Dispatch<Action>;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
+  tracks: ITrack[];
 };
 
 export const SearchResultsGrid = ({
@@ -416,6 +420,7 @@ export const SearchResultsGrid = ({
       dispatch,
       onArtistClick,
       onLabelClick,
+      tracks: tracks ?? [],
     };
   }, [
     requestReply,
@@ -424,6 +429,7 @@ export const SearchResultsGrid = ({
     dispatch,
     onArtistClick,
     onLabelClick,
+    tracks,
   ]);
 
   const getRowId = useCallback(
