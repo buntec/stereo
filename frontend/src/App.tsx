@@ -50,6 +50,7 @@ import {
 import type {
   ITrack,
   ICollection,
+  ICollectionStats,
   IRepo,
   SearchKind,
   Action,
@@ -78,6 +79,7 @@ import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
 import NowPlayingMenu from "./NowPlayingMenu.tsx";
+import CollectionSummary from "./CollectionSummary.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
@@ -144,6 +146,7 @@ type State = {
   import_from_is_valid?: boolean;
 
   git_remote?: string | null;
+  collection_stats?: ICollectionStats;
 };
 
 const reducer = (state: State, action: Action): State => {
@@ -358,6 +361,15 @@ const reducer = (state: State, action: Action): State => {
     case "collections":
       return { ...state, collections: action.collections };
 
+    case "collection-stats":
+      return {
+        ...state,
+        collection_stats: {
+          top_artists: action.top_artists,
+          top_labels: action.top_labels,
+        },
+      };
+
     case "default-collection":
     case "rows":
     case "yt-anon-playlist":
@@ -383,7 +395,7 @@ function App() {
     should_refresh_grid: false,
     should_purge_grid: false,
     search_busy: false,
-    search_limit: 25,
+    search_limit: 50,
     search_kind: "fuzzy",
     notification_show: false,
   });
@@ -396,6 +408,8 @@ function App() {
   const [filteredRowCount, setFilteredRowCount] = useState<number | undefined>(
     undefined,
   );
+
+  const [repoVisible, setRepoVisible] = useState(false);
 
   const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
     "stereo_app_grid_state",
@@ -644,9 +658,16 @@ function App() {
 
   useEffect(() => {
     if (state.current_id && state.current_id !== state.track_info?.yt_id) {
-      sendMsg({ type: "get-track-info", yt_id: state.current_id });
+      const searchTrack = state.search_results?.find(
+        (t) => t.yt_id === state.current_id,
+      );
+      if (searchTrack) {
+        dispatch({ type: "track-info", track: searchTrack });
+      } else {
+        sendMsg({ type: "get-track-info", yt_id: state.current_id });
+      }
     }
-  }, [state.current_id, state.track_info, sendMsg]);
+  }, [state.current_id, state.track_info, state.search_results, sendMsg]);
 
   useEffect(() => {
     let t = null;
@@ -1103,43 +1124,46 @@ function App() {
           direction="column"
           align="center"
         >
-          <Flex
-            gapX="2"
-            justify="between"
-            wrap="wrap-reverse"
-            className="toolbar"
-          >
-            <RepoSelector
-              repos={state.repos ?? []}
-              value={settings.repoPath}
-              setValue={(path) => {
-                setSettings({ ...settings, repoPath: path });
-                sendMsg({ type: "set-repo", path });
-              }}
-              onClone={(url) => {
-                // Optimistically derive the local path so auto-select picks the right repo
-                if (state.home_dir) {
-                  const name =
-                    url
-                      .replace(/\/$/, "")
-                      .replace(/\.git$/, "")
-                      .split("/")
-                      .pop() ?? "repo";
-                  const path = `${state.home_dir}/${name}`;
-                  setSettings({ ...settings, repoPath: path });
+          <Flex align="center" className="toolbar">
+            <Flex align="center" gap="2" className="toolbar-left">
+              <CollectionSelector
+                isValid={state.collection_is_valid ?? true}
+                collections={state.collections ?? []}
+                value={settings.collectionPath}
+                setValue={(path) =>
+                  setSettings({ ...settings, collectionPath: path })
                 }
-                sendMsg({ type: "clone-repo", url });
-              }}
-            />
-            <CollectionSelector
-              isValid={state.collection_is_valid ?? true}
-              collections={state.collections ?? []}
-              value={settings.collectionPath}
-              setValue={(path) =>
-                setSettings({ ...settings, collectionPath: path })
-              }
-              onCreate={(name) => sendMsg({ type: "create-collection", name })}
-            />
+                onCreate={(name) =>
+                  sendMsg({ type: "create-collection", name })
+                }
+                repoVisible={repoVisible}
+                onToggleRepo={() => setRepoVisible((v) => !v)}
+              />
+              {repoVisible && (
+                <RepoSelector
+                  repos={state.repos ?? []}
+                  value={settings.repoPath}
+                  setValue={(path) => {
+                    setSettings({ ...settings, repoPath: path });
+                    sendMsg({ type: "set-repo", path });
+                  }}
+                  onClone={(url) => {
+                    if (state.home_dir) {
+                      const name =
+                        url
+                          .replace(/\/$/, "")
+                          .replace(/\.git$/, "")
+                          .split("/")
+                          .pop() ?? "repo";
+                      const path = `${state.home_dir}/${name}`;
+                      setSettings({ ...settings, repoPath: path });
+                    }
+                    sendMsg({ type: "clone-repo", url });
+                  }}
+                />
+              )}
+            </Flex>
+
             <SearchBox
               value={state.search_box_input ?? ""}
               setValue={(value: string) =>
@@ -1158,7 +1182,12 @@ function App() {
               errorMessage={state.search_error_message}
             />
 
-            <Flex align="center" m="2" gap="2">
+            <Flex
+              align="center"
+              gap="2"
+              justify="end"
+              className="toolbar-right"
+            >
               {state.backend_version ? (
                 <Text size="2" className="version-string">
                   Stereo - {state.backend_version}
@@ -1166,15 +1195,21 @@ function App() {
               ) : (
                 <Skeleton>Stereo</Skeleton>
               )}
+              <AppearanceSwitch
+                appearance={settings.appearance}
+                setAppearance={(appearance) =>
+                  setSettings({ ...settings, appearance })
+                }
+              />
             </Flex>
-
-            <AppearanceSwitch
-              appearance={settings.appearance}
-              setAppearance={(appearance) =>
-                setSettings({ ...settings, appearance })
-              }
-            />
           </Flex>
+          {state.collection_stats && !state.search_box_input && (
+            <CollectionSummary
+              stats={state.collection_stats}
+              onArtistClick={handleArtistClick}
+              onLabelClick={handleLabelClick}
+            />
+          )}
           <div
             className={`background-player ${state.show_player2 && settings.backgroundVideo ? "" : "hidden"}`}
           >
@@ -1444,7 +1479,8 @@ function App() {
           >
             <div ref={playerRef} />
           </div>
-          {(state.search_results !== undefined || state.search_busy) && !!state.search_box_input ? (
+          {(state.search_results !== undefined || state.search_busy) &&
+          !!state.search_box_input ? (
             <Flex width="100%" gap="2" p="2">
               <Tooltip content="Add selected tracks (don't overwrite existing)">
                 <IconButton
@@ -1572,7 +1608,8 @@ function App() {
             </Flex>
           )}
           <Box className="grid-container">
-            {(state.search_results !== undefined || state.search_busy) && !!state.search_box_input ? (
+            {(state.search_results !== undefined || state.search_busy) &&
+            !!state.search_box_input ? (
               <SearchResultsGrid
                 gridRef={searchGridRef}
                 currentId={state.current_id}

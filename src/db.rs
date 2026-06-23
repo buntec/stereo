@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
+
+use chrono::Datelike;
 
 use anyhow::Context;
 use sqlx::{
@@ -8,7 +10,7 @@ use sqlx::{
 
 use crate::{
     message::{FilterModel, FilterModelMap, SortModelItem},
-    models::Track,
+    models::{ScoredName, Track},
 };
 
 const VALID_COLUMNS: &[&str] = &[
@@ -535,6 +537,83 @@ pub async fn validate_db_schema(path: &Path) -> bool {
 
     pool.close().await;
     result.unwrap_or(false)
+}
+
+pub async fn get_collection_stats(
+    pool: &SqlitePool,
+) -> anyhow::Result<(Vec<ScoredName>, Vec<ScoredName>)> {
+    let rows =
+        sqlx::query("SELECT artists, label, rating, release_date FROM tracks WHERE rating > 0")
+            .fetch_all(pool)
+            .await?;
+
+    let current_year = chrono::Local::now().date_naive().year() as f64;
+    const HALF_LIFE: f64 = 5.0;
+
+    let mut artist_acc: HashMap<String, (f64, usize)> = HashMap::new();
+    let mut label_acc: HashMap<String, (f64, usize)> = HashMap::new();
+
+    for row in &rows {
+        let artists_str: String = row.try_get("artists").unwrap_or_default();
+        let artists: Vec<String> = serde_json::from_str(&artists_str).unwrap_or_default();
+        let label: Option<String> = row.try_get("label").unwrap_or(None);
+        let rating: f64 = row.try_get::<i64, _>("rating").unwrap_or(0) as f64;
+        let release_date_str: Option<String> = row.try_get("release_date").unwrap_or(None);
+
+        let track_year = release_date_str
+            .as_deref()
+            .and_then(|s| s.split('-').next())
+            .and_then(|y| y.parse::<f64>().ok());
+
+        let weight = match track_year {
+            Some(y) => (0.5_f64).powf((current_year - y).max(0.0) / HALF_LIFE),
+            None => 1.0,
+        };
+        let score = rating * weight;
+
+        for artist in &artists {
+            let e = artist_acc.entry(artist.clone()).or_insert((0.0, 0));
+            e.0 += score;
+            e.1 += 1;
+        }
+        if let Some(label) = label.filter(|l| !l.is_empty()) {
+            let e = label_acc.entry(label).or_insert((0.0, 0));
+            e.0 += score;
+            e.1 += 1;
+        }
+    }
+
+    let mut top_artists: Vec<ScoredName> = artist_acc
+        .into_iter()
+        .map(|(name, (score, track_count))| ScoredName {
+            name,
+            score,
+            track_count,
+        })
+        .collect();
+    top_artists.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    top_artists.truncate(5);
+
+    let mut top_labels: Vec<ScoredName> = label_acc
+        .into_iter()
+        .map(|(name, (score, track_count))| ScoredName {
+            name,
+            score,
+            track_count,
+        })
+        .collect();
+    top_labels.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    top_labels.truncate(5);
+
+    Ok((top_artists, top_labels))
 }
 
 pub async fn import_from_db(

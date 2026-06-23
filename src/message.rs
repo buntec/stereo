@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::{Collection, Repo, Track};
+use crate::models::{Collection, Repo, ScoredName, Track};
 
 // ── Server → Client ──────────────────────────────────────────────────────────
 
@@ -80,6 +80,10 @@ pub enum MsgServer {
     Notification {
         message: String,
         kind: String,
+    },
+    CollectionStats {
+        top_artists: Vec<ScoredName>,
+        top_labels: Vec<ScoredName>,
     },
 }
 

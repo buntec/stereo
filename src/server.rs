@@ -229,6 +229,23 @@ async fn update_collection_info(state: &mut SessionState, tx: &mpsc::Sender<MsgS
             })
             .await;
     }
+    send_collection_stats(state, tx).await;
+}
+
+async fn send_collection_stats(state: &SessionState, tx: &mpsc::Sender<MsgServer>) {
+    if let Some(pool) = state.pool() {
+        match db::get_collection_stats(pool).await {
+            Ok((top_artists, top_labels)) => {
+                let _ = tx
+                    .send(MsgServer::CollectionStats {
+                        top_artists,
+                        top_labels,
+                    })
+                    .await;
+            }
+            Err(e) => tracing::warn!("Failed to compute collection stats: {e}"),
+        }
+    }
 }
 
 fn git_spawn(state: &mut SessionState, _home: &std::path::Path) {
@@ -676,6 +693,7 @@ async fn handle_msg(
                         path_completions: None,
                     })
                     .await;
+                send_collection_stats(state, tx).await;
             } else {
                 let completions = utils::get_path_completions(&path);
                 let _ = tx

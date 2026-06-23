@@ -25,6 +25,17 @@ export interface ICollection {
   size: number;
 }
 
+export interface IScoredName {
+  name: string;
+  score: number;
+  track_count: number;
+}
+
+export interface ICollectionStats {
+  top_artists: IScoredName[];
+  top_labels: IScoredName[];
+}
+
 export interface IRepo {
   path: string;
   remote: string | null;
@@ -125,7 +136,12 @@ export type ServerMsg =
     }
   | { type: "git-remote"; url: string | null }
   | { type: "repos"; repos: IRepo[] }
-  | { type: "collections"; collections: ICollection[] };
+  | { type: "collections"; collections: ICollection[] }
+  | {
+      type: "collection-stats";
+      top_artists: IScoredName[];
+      top_labels: IScoredName[];
+    };
 
 export type Action =
   | ServerMsg

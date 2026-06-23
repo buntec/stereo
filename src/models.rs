@@ -158,3 +158,10 @@ pub struct MBRecording {
     pub artists: Vec<String>,
     pub release_date: Option<NaiveDate>,
 }
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScoredName {
+    pub name: String,
+    pub score: f64,
+    pub track_count: usize,
+}
