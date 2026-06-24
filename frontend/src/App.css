@@ -220,6 +220,15 @@
   text-decoration: underline;
 }
 
+.title-clickable {
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.title-clickable:hover {
+  color: var(--gray-12);
+}
+
 .rating-stars {
   display: flex;
   align-items: center;

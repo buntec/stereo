@@ -1223,6 +1223,8 @@ function App() {
                 trackName={state.track_info?.title}
                 label={state.track_info?.label}
                 releaseDate={state.track_info?.release_date}
+                onArtistClick={handleArtistClick}
+                onLabelClick={handleLabelClick}
               />
               {state.track_info && (
                 <NowPlayingMenu

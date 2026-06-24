@@ -459,6 +459,7 @@ export const SearchResultsGrid = ({
         rowHeight={32}
         context={context}
         onSelectionChanged={onSelectionChanged}
+        overlayComponentParams={{ loading: { overlayText: "Searching..." } }}
       />
     </div>
   );
