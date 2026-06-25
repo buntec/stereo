@@ -5,15 +5,21 @@ use clap::Args;
 #[derive(Debug, Clone, Args)]
 pub struct Settings {
     /// Directory for app data (default: ~/.local/share/stereo)
-    #[arg(long, env = "STEREO_HOME")]
+    #[arg(long, env = "STEREO_HOME", global = true)]
     pub home: Option<PathBuf>,
 
     /// Bind host
-    #[arg(long, default_value = "localhost", env = "STEREO_HOST")]
+    #[arg(long, default_value = "localhost", env = "STEREO_HOST", global = true)]
     pub host: String,
 
     /// Bind port
-    #[arg(long, short = 'p', default_value_t = 8005, env = "STEREO_PORT")]
+    #[arg(
+        long,
+        short = 'p',
+        default_value_t = 8005,
+        env = "STEREO_PORT",
+        global = true
+    )]
     pub port: u16,
 
     /// Increase verbosity (repeat for more detail)

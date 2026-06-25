@@ -12,6 +12,9 @@ build-backend:
 
 build: build-frontend build-backend
 
+install: build
+  cargo install --path .
+
 dev-port := "8055"
 
 run-frontend-dev *args:
