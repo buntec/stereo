@@ -37,6 +37,9 @@ run-backend *args:
 test *args:
     cargo test {{ args }}
 
+lint:
+    cargo clippy
+
 format:
     cargo fmt
     bun run prettier --write "frontend/src/**/*.{ts,tsx,css}"
