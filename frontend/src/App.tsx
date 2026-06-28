@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { AgGridReact } from "ag-grid-react";
-import { type GridState } from "ag-grid-community";
+import { type GridState, type StateUpdatedEvent } from "ag-grid-community";
 import logger from "./logger.tsx";
 
 import {
@@ -500,6 +500,16 @@ function App() {
       updatePlaylist(settings.shufflePlay);
     }
   }, [state.playlist, updatePlaylist, settings.shufflePlay, gridReady]);
+
+  // Used by the main tracks grid: sets current track and ensures the playlist
+  // reflects the current filter+sort order before the next track auto-advances.
+  const playIdForGrid = useCallback(
+    (id: string) => {
+      dispatch({ type: "play-id", id });
+      updatePlaylist(settings.shufflePlay);
+    },
+    [dispatch, updatePlaylist, settings.shufflePlay],
+  );
 
   const searchGridRef = useRef<AgGridReact<ITrack>>(null);
 
@@ -1048,9 +1058,11 @@ function App() {
   );
 
   const onTrackGridStateUpdate = useCallback(
-    (state: GridState) => {
-      updatePlaylist(settings.shufflePlay); // update playlist according to sort/filter models
-      setGridState(state); // save to local storage
+    (ev: StateUpdatedEvent<ITrack>) => {
+      if (ev.sources.some((s) => s === "filter" || s === "sort")) {
+        updatePlaylist(settings.shufflePlay);
+      }
+      setGridState(ev.state);
     },
     [setGridState, updatePlaylist, settings.shufflePlay],
   );
@@ -1627,7 +1639,7 @@ function App() {
               <TracksGrid
                 gridRef={gridRef}
                 currentId={state.current_id}
-                playId={playId}
+                playId={playIdForGrid}
                 updateRating={updateRating}
                 requestReply={requestReply}
                 dispatch={dispatch}

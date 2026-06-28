@@ -475,7 +475,7 @@ interface TracksGridProps {
   sendMsg: (msg: ClientMsg) => void;
   setGridReady: (ready: boolean) => void;
   initialState?: GridState;
-  onStateUpdate: (state: GridState) => void;
+  onStateUpdate: (event: StateUpdatedEvent<ITrack>) => void;
   onRowCountChange?: (count: number) => void;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
@@ -678,7 +678,7 @@ export const TracksGrid = ({
   const onGridReady = useCallback(() => setGridReady(true), [setGridReady]);
 
   const onStateUpdate0 = useCallback(
-    (ev: StateUpdatedEvent<ITrack>) => onStateUpdate(ev.state),
+    (ev: StateUpdatedEvent<ITrack>) => onStateUpdate(ev),
     [onStateUpdate],
   );
 
