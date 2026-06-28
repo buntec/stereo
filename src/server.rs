@@ -21,6 +21,7 @@ use crate::{
 
 const GIT_PUSH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+#[derive(Default)]
 struct SessionState {
     pool: Option<sqlx::SqlitePool>,
     collection: Option<Collection>,
@@ -28,19 +29,6 @@ struct SessionState {
     search_task: Option<tokio::task::JoinHandle<()>>,
     git_push_handle: Option<tokio::task::JoinHandle<()>>,
     last_git_push: Option<std::time::Instant>,
-}
-
-impl Default for SessionState {
-    fn default() -> Self {
-        Self {
-            pool: None,
-            collection: None,
-            repo: None,
-            search_task: None,
-            git_push_handle: None,
-            last_git_push: None,
-        }
-    }
 }
 
 impl SessionState {

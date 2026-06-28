@@ -239,7 +239,7 @@ pub enum MsgClient {
     ListCollections,
     UpdateTrack {
         old: Track,
-        new: Track,
+        new: Box<Track>,
     },
     ValidateTrack {
         id: i64,
