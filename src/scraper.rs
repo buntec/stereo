@@ -31,6 +31,42 @@ fn parse_release_date(s: &str) -> Option<NaiveDate> {
         .ok()
 }
 
+fn to_url_slug(s: &str) -> String {
+    let ascii: String = s
+        .chars()
+        .map(|c| match c {
+            'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+            'È' | 'É' | 'Ê' | 'Ë' | 'è' | 'é' | 'ê' | 'ë' => 'e',
+            'Ì' | 'Í' | 'Î' | 'Ï' | 'ì' | 'í' | 'î' | 'ï' => 'i',
+            'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'ò' | 'ó' | 'ô' | 'õ' | 'ö' => 'o',
+            'Ù' | 'Ú' | 'Û' | 'Ü' | 'ù' | 'ú' | 'û' | 'ü' => 'u',
+            'Ñ' | 'ñ' => 'n',
+            'Ç' | 'ç' => 'c',
+            'Ý' | 'ý' | 'ÿ' => 'y',
+            'Ð' | 'ð' => 'd',
+            'Þ' | 'þ' => 't',
+            'ß' => 's',
+            'Æ' | 'æ' => 'a',
+            'Œ' | 'œ' => 'o',
+            _ => c,
+        })
+        .collect();
+    let slug: String = ascii
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    slug.split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 fn get_next_data(html: &str) -> Option<serde_json::Value> {
     let doc = Html::parse_document(html);
     let sel = Selector::parse("script#__NEXT_DATA__").ok()?;
@@ -171,11 +207,18 @@ pub async fn bp_search_labels(
         for query in queries {
             if let Some(items) = query["state"]["data"]["data"].as_array() {
                 for item in items {
-                    let name = item["label_name"].as_str().unwrap_or("").trim().to_string();
+                    let display_name =
+                        item["label_name"].as_str().unwrap_or("").trim().to_string();
+                    let slug = item["slug"]
+                        .as_str()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| to_url_slug(&display_name));
                     let id = item["label_id"].as_i64().unwrap_or(0);
+                    tracing::debug!("Label result: display={display_name:?} slug={slug:?} id={id}");
                     labels.push(BPLabel {
-                        display_name: name.clone(),
-                        name,
+                        display_name,
+                        name: slug,
                         id,
                     });
                     if labels.len() >= limit {
@@ -209,16 +252,22 @@ pub async fn bp_search_artist(
         for query in queries {
             if let Some(items) = query["state"]["data"]["data"].as_array() {
                 for item in items {
-                    let name = item["artist_name"]
+                    let display_name = item["artist_name"]
                         .as_str()
                         .unwrap_or("")
                         .trim()
                         .to_string();
+                    let slug = item["slug"]
+                        .as_str()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| to_url_slug(&display_name));
                     let id = item["artist_id"].as_i64().unwrap_or(0);
                     let image_uri = item["artist_image_uri"].as_str().unwrap_or("").to_string();
+                    tracing::debug!("Artist result: display={display_name:?} slug={slug:?} id={id}");
                     artists.push(BPArtist {
-                        display_name: name.clone(),
-                        name,
+                        display_name,
+                        name: slug,
                         id,
                         image_uri,
                     });
@@ -297,6 +346,7 @@ pub async fn bp_get_artist_releases(
         "https://www.beatport.com/artist/{}/{}/tracks",
         artist.name, artist.id
     );
+    tracing::info!("Fetching artist releases: {url}");
     bp_get_releases(client, &url, &params).await
 }
 
