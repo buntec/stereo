@@ -1,15 +1,16 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use anyhow::Context;
 use chrono::NaiveDate;
+use futures::future::join_all;
 use scraper::{Html, Selector};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use wreq::Client;
 use wreq_util::Emulation;
 
 use crate::{
     message::MsgServer,
-    models::{BPArtist, BPLabel, BPTrack, YTVideo},
+    models::{BPArtist, BPLabel, BPTrack, SCTrack, SCUser, YTVideo},
 };
 
 pub fn create_client() -> anyhow::Result<Client> {
@@ -350,6 +351,206 @@ pub async fn bp_get_artist_releases(
     bp_get_releases(client, &url, &params).await
 }
 
+// ── SoundCloud ───────────────────────────────────────────────────────────────
+
+// SoundCloud's public API requires an unofficial `client_id` that's embedded in one of
+// its web app's JS bundles and rotates periodically — cache it and refetch on 401.
+static SC_CLIENT_ID: LazyLock<RwLock<Option<String>>> = LazyLock::new(|| RwLock::new(None));
+
+fn extract_client_id(js: &str) -> Option<String> {
+    let idx = js.find("client_id:\"")?;
+    let rest = &js[idx + "client_id:\"".len()..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+async fn fetch_sc_client_id(client: &Client) -> anyhow::Result<String> {
+    let html = client
+        .get("https://soundcloud.com/")
+        .send()
+        .await?
+        .text()
+        .await?;
+    let script_urls: Vec<String> = {
+        let doc = Html::parse_document(&html);
+        let sel = Selector::parse("script[src]").unwrap();
+        doc.select(&sel)
+            .filter_map(|el| el.value().attr("src"))
+            .filter(|src| src.contains("sndcdn.com/assets"))
+            .map(String::from)
+            .collect()
+    };
+
+    let results = join_all(script_urls.iter().map(|url| async move {
+        let js = client.get(url).send().await.ok()?.text().await.ok()?;
+        extract_client_id(&js)
+    }))
+    .await;
+
+    results
+        .into_iter()
+        .flatten()
+        .next()
+        .context("could not locate SoundCloud client_id")
+}
+
+async fn get_sc_client_id(client: &Client) -> anyhow::Result<String> {
+    if let Some(id) = SC_CLIENT_ID.read().await.clone() {
+        return Ok(id);
+    }
+    let id = fetch_sc_client_id(client).await?;
+    *SC_CLIENT_ID.write().await = Some(id.clone());
+    Ok(id)
+}
+
+async fn sc_get(
+    client: &Client,
+    path: &str,
+    params: &[(&str, String)],
+) -> anyhow::Result<serde_json::Value> {
+    for attempt in 0..2 {
+        let client_id = get_sc_client_id(client).await?;
+        let mut pairs: Vec<(String, String)> =
+            params.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        pairs.push(("client_id".to_string(), client_id));
+
+        let resp = client
+            .get(format!("https://api-v2.soundcloud.com{path}"))
+            .query(&pairs)
+            .send()
+            .await?;
+        if resp.status().as_u16() == 401 && attempt == 0 {
+            *SC_CLIENT_ID.write().await = None;
+            continue;
+        }
+        return Ok(resp.json::<serde_json::Value>().await?);
+    }
+    anyhow::bail!("SoundCloud request failed after client_id refresh")
+}
+
+fn parse_sc_track(item: &serde_json::Value) -> Option<SCTrack> {
+    let track_name = item["title"].as_str()?.trim().to_string();
+    let username = item["user"]["username"].as_str().unwrap_or("").to_string();
+    let artists = item["publisher_metadata"]["artist"]
+        .as_str()
+        .map(|s| {
+            s.split(',')
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| vec![username]);
+    let release_date = item["release_date"]
+        .as_str()
+        .or_else(|| item["display_date"].as_str())
+        .or_else(|| item["created_at"].as_str())
+        .and_then(parse_release_date)?;
+    let label = item["label_name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    let genre = item["genre"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| vec![s.to_string()])
+        .unwrap_or_default();
+
+    Some(SCTrack {
+        artists,
+        label,
+        release_date,
+        track_name,
+        genre,
+    })
+}
+
+pub async fn sc_search_tracks(
+    client: &Client,
+    q: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<SCTrack>> {
+    tracing::info!("SoundCloud track search: {q}");
+    let json = sc_get(
+        client,
+        "/search/tracks",
+        &[("q", q.to_string()), ("limit", limit.to_string())],
+    )
+    .await?;
+    Ok(json["collection"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(parse_sc_track)
+        .collect())
+}
+
+pub async fn sc_search_users(
+    client: &Client,
+    q: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<SCUser>> {
+    let json = sc_get(
+        client,
+        "/search/users",
+        &[("q", q.to_string()), ("limit", limit.to_string())],
+    )
+    .await?;
+    Ok(json["collection"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let id = item["id"].as_i64()?;
+            let username = item["username"].as_str()?.to_string();
+            Some(SCUser { id, username })
+        })
+        .collect())
+}
+
+pub async fn sc_get_user_tracks(
+    client: &Client,
+    user_id: i64,
+    limit: usize,
+) -> anyhow::Result<Vec<SCTrack>> {
+    let json = sc_get(
+        client,
+        &format!("/users/{user_id}/tracks"),
+        &[("limit", limit.to_string())],
+    )
+    .await?;
+    Ok(json["collection"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(parse_sc_track)
+        .collect())
+}
+
+/// Finds the SoundCloud account matching `name` (an artist or label both being SoundCloud
+/// "people") and returns their tracks. When `set_label` is true, every returned track's
+/// `label` is overwritten with the account's username, since this is used for label lookups
+/// where the account *is* the label regardless of what a track's own `label_name` says.
+async fn sc_tracks_by_person(
+    client: &Client,
+    name: &str,
+    limit: usize,
+    set_label: bool,
+) -> anyhow::Result<Vec<SCTrack>> {
+    let Some(user) = sc_search_users(client, name, 1).await?.into_iter().next() else {
+        return Ok(vec![]);
+    };
+    let mut tracks = sc_get_user_tracks(client, user.id, limit).await?;
+    if set_label {
+        for track in &mut tracks {
+            track.label = Some(user.username.clone());
+        }
+    }
+    Ok(tracks)
+}
+
 // ── YouTube ───────────────────────────────────────────────────────────────────
 
 const YT_CLIENTS: &[(&str, &str)] = &[
@@ -453,6 +654,49 @@ pub async fn yt_create_anon_playlist(
 
 // ── Search entry points (stream results via channel) ─────────────────────────
 
+/// A track from one of the search backends, before a YouTube match has been resolved.
+enum RawTrack {
+    Bp(BPTrack),
+    Sc(SCTrack),
+}
+
+impl RawTrack {
+    fn yt_query(&self) -> String {
+        match self {
+            RawTrack::Bp(t) => format!("{} {} {}", t.track_name, t.artists.join(", "), t.label),
+            RawTrack::Sc(t) => format!(
+                "{} {} {}",
+                t.track_name,
+                t.artists.join(", "),
+                t.label.as_deref().unwrap_or("")
+            ),
+        }
+    }
+
+    fn into_track(self, yt_id: String) -> crate::models::Track {
+        match self {
+            RawTrack::Bp(t) => t.into_track(yt_id),
+            RawTrack::Sc(t) => t.into_track(yt_id),
+        }
+    }
+}
+
+/// Round-robins two result lists together so neither source hogs the front of the queue.
+fn interleave(a: Vec<BPTrack>, b: Vec<SCTrack>) -> Vec<RawTrack> {
+    let mut a = a.into_iter();
+    let mut b = b.into_iter();
+    let mut out = Vec::new();
+    loop {
+        let (x, y) = (a.next(), b.next());
+        if x.is_none() && y.is_none() {
+            break;
+        }
+        out.extend(x.map(RawTrack::Bp));
+        out.extend(y.map(RawTrack::Sc));
+    }
+    out
+}
+
 async fn run_search<F, Fut>(tx: &mpsc::Sender<MsgServer>, query_id: i64, label: &str, f: F)
 where
     F: FnOnce() -> Fut,
@@ -470,6 +714,35 @@ where
     let _ = tx.send(MsgServer::SearchComplete { query_id }).await;
 }
 
+/// Resolves a YouTube match for each raw track and streams it, stopping at `limit` results.
+async fn stream_raw_tracks(
+    client: &Client,
+    tx: &mpsc::Sender<MsgServer>,
+    query_id: i64,
+    limit: usize,
+    raw_tracks: Vec<RawTrack>,
+) {
+    let mut count = 0;
+    for raw in raw_tracks {
+        let q = raw.yt_query();
+        let vids = yt_search_simple(client, &q, 1).await.unwrap_or_default();
+        if let Some(vid) = vids.into_iter().next() {
+            let track = raw.into_track(vid.id);
+            if tx
+                .send(MsgServer::SearchResult { query_id, track })
+                .await
+                .is_err()
+            {
+                break;
+            }
+            count += 1;
+            if count >= limit {
+                break;
+            }
+        }
+    }
+}
+
 pub async fn search_fuzzy(
     client: Arc<Client>,
     tx: mpsc::Sender<MsgServer>,
@@ -478,31 +751,19 @@ pub async fn search_fuzzy(
     limit: usize,
 ) {
     run_search(&tx, query_id, "search_fuzzy", || async {
-        let bp_tracks = bp_search_tracks(&client, &query).await?;
-        let mut count = 0;
-        for bp_track in bp_tracks {
-            let q = format!(
-                "{} {} {}",
-                bp_track.track_name,
-                bp_track.artists.join(", "),
-                bp_track.label
-            );
-            let vids = yt_search_simple(&client, &q, 1).await.unwrap_or_default();
-            if let Some(vid) = vids.into_iter().next() {
-                let track = bp_track.into_track(vid.id);
-                if tx
-                    .send(MsgServer::SearchResult { query_id, track })
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-                count += 1;
-                if count >= limit {
-                    break;
-                }
-            }
-        }
+        let (bp_res, sc_res) = tokio::join!(
+            bp_search_tracks(&client, &query),
+            sc_search_tracks(&client, &query, limit),
+        );
+        let bp_tracks = bp_res.unwrap_or_else(|e| {
+            tracing::warn!("Beatport track search failed: {e}");
+            vec![]
+        });
+        let sc_tracks = sc_res.unwrap_or_else(|e| {
+            tracing::warn!("SoundCloud track search failed: {e}");
+            vec![]
+        });
+        stream_raw_tracks(&client, &tx, query_id, limit, interleave(bp_tracks, sc_tracks)).await;
         Ok(())
     })
     .await;
@@ -516,34 +777,25 @@ pub async fn search_by_label(
     limit: usize,
 ) {
     run_search(&tx, query_id, "search_by_label", || async {
-        let labels = bp_search_labels(&client, &label_name, 1).await?;
-        if let Some(label) = labels.into_iter().next() {
-            let bp_tracks = bp_get_label_releases(&client, &label, None).await?;
-            let mut count = 0;
-            for bp_track in bp_tracks {
-                let q = format!(
-                    "{} {} {}",
-                    bp_track.track_name,
-                    bp_track.artists.join(", "),
-                    bp_track.label
-                );
-                let vids = yt_search_simple(&client, &q, 1).await.unwrap_or_default();
-                if let Some(vid) = vids.into_iter().next() {
-                    let track = bp_track.into_track(vid.id);
-                    if tx
-                        .send(MsgServer::SearchResult { query_id, track })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                    count += 1;
-                    if count >= limit {
-                        break;
-                    }
+        let (bp_res, sc_res) = tokio::join!(
+            async {
+                let labels = bp_search_labels(&client, &label_name, 1).await?;
+                match labels.into_iter().next() {
+                    Some(label) => bp_get_label_releases(&client, &label, None).await,
+                    None => Ok(vec![]),
                 }
-            }
-        }
+            },
+            sc_tracks_by_person(&client, &label_name, limit, true),
+        );
+        let bp_tracks = bp_res.unwrap_or_else(|e| {
+            tracing::warn!("Beatport label search failed: {e}");
+            vec![]
+        });
+        let sc_tracks = sc_res.unwrap_or_else(|e| {
+            tracing::warn!("SoundCloud label search failed: {e}");
+            vec![]
+        });
+        stream_raw_tracks(&client, &tx, query_id, limit, interleave(bp_tracks, sc_tracks)).await;
         Ok(())
     })
     .await;
@@ -557,34 +809,25 @@ pub async fn search_by_artist(
     limit: usize,
 ) {
     run_search(&tx, query_id, "search_by_artist", || async {
-        let artists = bp_search_artist(&client, &artist_name, 1).await?;
-        if let Some(artist) = artists.into_iter().next() {
-            let bp_tracks = bp_get_artist_releases(&client, &artist, None).await?;
-            let mut count = 0;
-            for bp_track in bp_tracks {
-                let q = format!(
-                    "{} {} {}",
-                    bp_track.track_name,
-                    bp_track.artists.join(", "),
-                    bp_track.label
-                );
-                let vids = yt_search_simple(&client, &q, 1).await.unwrap_or_default();
-                if let Some(vid) = vids.into_iter().next() {
-                    let track = bp_track.into_track(vid.id);
-                    if tx
-                        .send(MsgServer::SearchResult { query_id, track })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                    count += 1;
-                    if count >= limit {
-                        break;
-                    }
+        let (bp_res, sc_res) = tokio::join!(
+            async {
+                let artists = bp_search_artist(&client, &artist_name, 1).await?;
+                match artists.into_iter().next() {
+                    Some(artist) => bp_get_artist_releases(&client, &artist, None).await,
+                    None => Ok(vec![]),
                 }
-            }
-        }
+            },
+            sc_tracks_by_person(&client, &artist_name, limit, false),
+        );
+        let bp_tracks = bp_res.unwrap_or_else(|e| {
+            tracing::warn!("Beatport artist search failed: {e}");
+            vec![]
+        });
+        let sc_tracks = sc_res.unwrap_or_else(|e| {
+            tracing::warn!("SoundCloud artist search failed: {e}");
+            vec![]
+        });
+        stream_raw_tracks(&client, &tx, query_id, limit, interleave(bp_tracks, sc_tracks)).await;
         Ok(())
     })
     .await;

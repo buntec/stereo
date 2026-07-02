@@ -146,6 +146,33 @@ impl BPTrack {
     }
 }
 
+pub struct SCUser {
+    pub id: i64,
+    pub username: String,
+}
+
+pub struct SCTrack {
+    pub artists: Vec<String>,
+    pub label: Option<String>,
+    pub release_date: chrono::NaiveDate,
+    pub track_name: String,
+    pub genre: Vec<String>,
+}
+
+impl SCTrack {
+    pub fn into_track(self, yt_id: String) -> Track {
+        Track {
+            yt_id,
+            title: self.track_name,
+            artists: self.artists,
+            release_date: Some(self.release_date),
+            label: self.label,
+            genre: (!self.genre.is_empty()).then(|| self.genre.join(", ")),
+            ..Default::default()
+        }
+    }
+}
+
 pub struct YTVideo {
     pub title: String,
     pub id: String,
