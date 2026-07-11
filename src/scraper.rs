@@ -559,12 +559,25 @@ const YT_CLIENTS: &[(&str, &str)] = &[
     ("ANDROID", "19.09.37"),
 ];
 
+/// Videos longer than this are excluded from search results — likely DJ sets/mixes
+/// rather than the single track being matched.
+const MAX_VIDEO_LENGTH_SECS: u32 = 15 * 60;
+
 fn get_text_runs(v: &serde_json::Value) -> String {
     v.as_array()
         .and_then(|a| a.first())
         .and_then(|f| f["text"].as_str())
         .map(String::from)
         .unwrap_or_default()
+}
+
+/// Parses a YouTube duration string like "3:45" or "1:02:34" into seconds.
+fn parse_duration_secs(text: &str) -> Option<u32> {
+    let mut secs = 0u32;
+    for part in text.split(':') {
+        secs = secs * 60 + part.parse::<u32>().ok()?;
+    }
+    Some(secs)
 }
 
 pub async fn yt_search_simple(
@@ -603,6 +616,12 @@ pub async fn yt_search_simple(
                 if let Some(items) = section["itemSectionRenderer"]["contents"].as_array() {
                     for item in items {
                         if let Some(video) = item.get("videoRenderer") {
+                            let length_secs = video["lengthText"]["simpleText"]
+                                .as_str()
+                                .and_then(parse_duration_secs);
+                            if !matches!(length_secs, Some(secs) if secs <= MAX_VIDEO_LENGTH_SECS) {
+                                continue;
+                            }
                             let id = match video["videoId"].as_str() {
                                 Some(id) => id.to_string(),
                                 None => continue,
@@ -683,8 +702,9 @@ impl RawTrack {
 
 /// Round-robins two result lists together so neither source hogs the front of the queue.
 fn interleave(a: Vec<BPTrack>, b: Vec<SCTrack>) -> Vec<RawTrack> {
-    let mut a = a.into_iter();
-    let mut b = b.into_iter();
+    let cutoff = chrono::Local::now().date_naive() + chrono::Duration::days(1);
+    let mut a = a.into_iter().filter(|t| t.release_date <= cutoff);
+    let mut b = b.into_iter().filter(|t| t.release_date <= cutoff);
     let mut out = Vec::new();
     loop {
         let (x, y) = (a.next(), b.next());
