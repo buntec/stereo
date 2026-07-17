@@ -679,10 +679,53 @@ enum RawTrack {
     Sc(SCTrack),
 }
 
+/// Words that mark a bracketed segment of a title as a mix/edit identifier, as opposed to
+/// e.g. a label tag or "Official Video" annotation.
+const MIX_KEYWORDS: &[&str] = &[
+    "remix", "mix", "edit", "bootleg", "flip", "rework", "vip", "dub", "version", "rmx",
+];
+
+/// True if a Beatport `mix_name` denotes the plain original (no remix identity to match on).
+fn is_original_mix(mix_name: &str) -> bool {
+    matches!(mix_name.trim().to_lowercase().as_str(), "" | "original mix" | "original")
+}
+
+/// Extracts a mix/remix tag from a title, e.g. "Artist - Track (Someone Remix)" -> `Some("someone remix")`.
+/// Looks inside bracketed groups for one containing a mix keyword; later groups win, since
+/// remix credits typically follow other tags like the label name.
+fn extract_mix_tag(title: &str) -> Option<String> {
+    let lower = title.to_lowercase();
+    let mut result = None;
+    for (open, close) in [('(', ')'), ('[', ']')] {
+        let mut rest = lower.as_str();
+        while let Some(start) = rest.find(open) {
+            let Some(end) = rest[start..].find(close) else {
+                break;
+            };
+            let inner = rest[start + 1..start + end].trim();
+            if MIX_KEYWORDS.iter().any(|k| inner.contains(k)) {
+                result = Some(inner.to_string());
+            }
+            rest = &rest[start + end + 1..];
+        }
+    }
+    result
+}
+
 impl RawTrack {
     fn yt_query(&self) -> String {
         match self {
-            RawTrack::Bp(t) => format!("{} {} {}", t.track_name, t.artists.join(", "), t.label),
+            RawTrack::Bp(t) => {
+                let mut q = format!("{} ", t.track_name);
+                if !is_original_mix(&t.mix_name) {
+                    q += &t.mix_name;
+                    q.push(' ');
+                }
+                q += &t.artists.join(", ");
+                q.push(' ');
+                q += &t.label;
+                q
+            }
             RawTrack::Sc(t) => format!(
                 "{} {} {}",
                 t.track_name,
@@ -692,12 +735,86 @@ impl RawTrack {
         }
     }
 
+    fn expected_title(&self) -> &str {
+        match self {
+            RawTrack::Bp(t) => &t.track_name,
+            RawTrack::Sc(t) => &t.track_name,
+        }
+    }
+
+    fn expected_artists(&self) -> &[String] {
+        match self {
+            RawTrack::Bp(t) => &t.artists,
+            RawTrack::Sc(t) => &t.artists,
+        }
+    }
+
+    /// The remix/mix identity this track is expected to match on YouTube, if any.
+    /// Beatport exposes it as a separate field; SoundCloud embeds it in the track name.
+    fn expected_mix(&self) -> Option<String> {
+        match self {
+            RawTrack::Bp(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
+            RawTrack::Sc(t) => extract_mix_tag(&t.track_name),
+        }
+    }
+
     fn into_track(self, yt_id: String) -> crate::models::Track {
         match self {
             RawTrack::Bp(t) => t.into_track(yt_id),
             RawTrack::Sc(t) => t.into_track(yt_id),
         }
     }
+}
+
+/// Scores how well a YouTube video matches a raw track, higher is better. Combines overall
+/// title similarity with an explicit bonus/penalty for whether the video's remix identity
+/// (if any) lines up with the track's expected one — this is what stops e.g. an "Extended
+/// Mix" search from silently matching the original, or vice versa.
+fn score_match(raw: &RawTrack, candidate: &YTVideo) -> f64 {
+    let expected = format!(
+        "{} {}",
+        raw.expected_artists().join(" "),
+        raw.expected_title()
+    )
+    .to_lowercase();
+    let mut score = strsim::normalized_levenshtein(&expected, &candidate.title.to_lowercase());
+
+    let candidate_tag = extract_mix_tag(&candidate.title);
+    match raw.expected_mix() {
+        Some(mix) => {
+            let mix_lower = mix.to_lowercase();
+            let tag_similarity = candidate_tag
+                .as_deref()
+                .map(|tag| strsim::normalized_levenshtein(tag, &mix_lower))
+                .unwrap_or(0.0);
+            if tag_similarity > 0.5 {
+                score += 1.0; // video's tag matches the expected remix/mix identity
+            } else if candidate_tag.is_some() {
+                score -= 0.5; // video has a *different* remix/mix tag
+            } else {
+                score -= 0.3; // we wanted a specific mix, but this looks like the plain original
+            }
+        }
+        None => {
+            if candidate_tag.is_some() {
+                score -= 0.5; // we wanted the original, but this looks like a remix/edit
+            } else {
+                score += 0.2;
+            }
+        }
+    }
+    score
+}
+
+/// Fetches YouTube candidates for a raw track and returns the best remix-aware match.
+async fn find_best_match(client: &Client, raw: &RawTrack) -> Option<YTVideo> {
+    let q = raw.yt_query();
+    let candidates = yt_search_simple(client, &q, 5).await.unwrap_or_default();
+    candidates
+        .into_iter()
+        .map(|v| (score_match(raw, &v), v))
+        .max_by(|(a, _), (b, _)| a.total_cmp(b))
+        .map(|(_, v)| v)
 }
 
 /// Round-robins two result lists together so neither source hogs the front of the queue.
@@ -744,9 +861,8 @@ async fn stream_raw_tracks(
 ) {
     let mut count = 0;
     for raw in raw_tracks {
-        let q = raw.yt_query();
-        let vids = yt_search_simple(client, &q, 1).await.unwrap_or_default();
-        if let Some(vid) = vids.into_iter().next() {
+        let best = find_best_match(client, &raw).await;
+        if let Some(vid) = best {
             let track = raw.into_track(vid.id);
             if tx
                 .send(MsgServer::SearchResult { query_id, track })
@@ -851,4 +967,117 @@ pub async fn search_by_artist(
         Ok(())
     })
     .await;
+}
+
+#[cfg(test)]
+mod remix_match_tests {
+    use super::*;
+    use crate::models::BPTrack;
+
+    fn bp_track(track_name: &str, mix_name: &str) -> BPTrack {
+        BPTrack {
+            artists: vec!["Aquarius Heaven".to_string()],
+            bpm: None,
+            key: None,
+            isrc: None,
+            label: "Some Label".to_string(),
+            release_date: chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            track_id: 1,
+            track_name: track_name.to_string(),
+            mix_name: mix_name.to_string(),
+            genre: vec![],
+        }
+    }
+
+    fn video(title: &str) -> YTVideo {
+        YTVideo {
+            title: title.to_string(),
+            id: "id".to_string(),
+            channel: "Channel".to_string(),
+        }
+    }
+
+    #[test]
+    fn extracts_remix_tag_from_parens() {
+        assert_eq!(
+            extract_mix_tag("Aquarius Heaven - Just Like Magic (Someone Remix)"),
+            Some("someone remix".to_string())
+        );
+        assert_eq!(
+            extract_mix_tag("Aquarius Heaven - Just Like Magic (Extended Mix)"),
+            Some("extended mix".to_string())
+        );
+        assert_eq!(
+            extract_mix_tag("Aquarius Heaven - Just Like Magic [Official Video]"),
+            None
+        );
+        assert_eq!(
+            extract_mix_tag("Aquarius Heaven - Just Like Magic"),
+            None
+        );
+    }
+
+    #[test]
+    fn original_mix_prefers_video_without_remix_tag() {
+        let raw = RawTrack::Bp(bp_track("Just Like Magic", "Original Mix"));
+        let original = video("Aquarius Heaven - Just Like Magic (Original Mix)");
+        let remix = video("Aquarius Heaven - Just Like Magic (Someone Remix)");
+        assert!(score_match(&raw, &original) > score_match(&raw, &remix));
+    }
+
+    #[test]
+    fn remix_prefers_video_with_matching_remix_tag() {
+        let raw = RawTrack::Bp(bp_track("Just Like Magic", "Someone Remix"));
+        let original = video("Aquarius Heaven - Just Like Magic (Original Mix)");
+        let matching_remix = video("Aquarius Heaven - Just Like Magic (Someone Remix)");
+        let other_remix = video("Aquarius Heaven - Just Like Magic (Other Artist Remix)");
+        assert!(score_match(&raw, &matching_remix) > score_match(&raw, &original));
+        assert!(score_match(&raw, &matching_remix) > score_match(&raw, &other_remix));
+    }
+
+    /// Regression test for the "Just Like Magic" case that motivated this change: Beatport
+    /// lists the original plus multiple remixes, and picking YouTube's #1 hit for each
+    /// query used to return the original video every time regardless of which mix was
+    /// being searched for.
+    #[tokio::test]
+    #[ignore = "hits real YouTube API"]
+    async fn real_youtube_disambiguates_remixes() {
+        let client = create_client().unwrap();
+
+        let original = RawTrack::Bp(bp_track("Just Like Magic", "Original Mix"));
+        let original_match = find_best_match(&client, &original).await.unwrap();
+        assert!(
+            extract_mix_tag(&original_match.title).is_none(),
+            "expected the plain original, got {:?}",
+            original_match.title
+        );
+
+        let luciano = RawTrack::Bp(bp_track("Just Like Magic", "Luciano Remix"));
+        let luciano_match = find_best_match(&client, &luciano).await.unwrap();
+        assert!(
+            luciano_match.title.to_lowercase().contains("luciano"),
+            "expected the Luciano remix, got {:?}",
+            luciano_match.title
+        );
+
+        let roman = RawTrack::Bp(bp_track(
+            "Just Like Magic",
+            "Roman Flügel Extended Remix",
+        ));
+        let roman_match = find_best_match(&client, &roman).await.unwrap();
+        assert!(
+            roman_match.title.to_lowercase().contains("flügel"),
+            "expected a Roman Flügel remix, got {:?}",
+            roman_match.title
+        );
+    }
+
+    #[test]
+    fn yt_query_includes_mix_name_for_remixes_but_not_originals() {
+        let original = RawTrack::Bp(bp_track("Just Like Magic", "Original Mix"));
+        assert!(!original.yt_query().contains("Original Mix"));
+
+        let remix = RawTrack::Bp(bp_track("Just Like Magic", "Someone Remix"));
+        assert!(remix.yt_query().contains("Someone Remix"));
+    }
 }
