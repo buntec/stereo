@@ -1259,6 +1259,7 @@ function App() {
                         type: "export-tracks-to-collection",
                         tracks: [state.track_info],
                         collection: path,
+                        source_collection: settings.collectionPath,
                       });
                       dispatch({ type: "play-next-track" });
                       sendMsg({ type: "delete-tracks", ids: [idToDelete] });

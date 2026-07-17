@@ -1,5 +1,12 @@
 use std::path::{Path, PathBuf};
 
+pub fn collection_label(path: &str) -> &str {
+    Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+}
+
 pub async fn ensure_default_repo(home: &Path) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(home).await?;
 

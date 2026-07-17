@@ -433,28 +433,69 @@ async fn handle_msg(
             }
         }
 
-        MsgClient::ExportTracksToCollection { tracks, collection } => {
+        MsgClient::ExportTracksToCollection {
+            tracks,
+            collection,
+            source_collection,
+        } => {
             if !tracks.is_empty() {
                 let path = std::path::PathBuf::from(&collection);
                 if db::validate_db_schema(&path).await {
                     let export_pool = db::open_pool(&path).await?;
-                    match db::insert_tracks(&export_pool, &tracks, false).await {
-                        Ok(()) => {
-                            notify(
-                                tx,
-                                &format!(
-                                    "Successfully exported {} track(s) to {collection}",
-                                    tracks.len()
-                                ),
-                                "info",
-                            )
-                            .await;
+
+                    let mut new_tracks = Vec::new();
+                    let mut already_present = Vec::new();
+                    for track in &tracks {
+                        match db::track_exists(&export_pool, &track.yt_id).await {
+                            Ok(true) => already_present.push(track.display_name()),
+                            Ok(false) => new_tracks.push(track.clone()),
+                            Err(e) => {
+                                notify(tx, &format!("Export failed: {e}"), "error").await;
+                                export_pool.close().await;
+                                return Ok(());
+                            }
                         }
-                        Err(e) => {
+                    }
+
+                    if !new_tracks.is_empty() {
+                        if let Err(e) = db::insert_tracks(&export_pool, &new_tracks, true).await {
                             notify(tx, &format!("Export failed: {e}"), "error").await;
+                            export_pool.close().await;
+                            return Ok(());
                         }
                     }
                     export_pool.close().await;
+
+                    let target_label = utils::collection_label(&collection);
+                    let source_label = source_collection.as_deref().map(utils::collection_label);
+                    let verb = if source_label.is_some() {
+                        "Moved"
+                    } else {
+                        "Copied"
+                    };
+
+                    let mut parts = Vec::new();
+                    if !new_tracks.is_empty() {
+                        let names = new_tracks
+                            .iter()
+                            .map(Track::display_name)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        parts.push(match source_label {
+                            Some(src) => format!("{verb} {names} from {src} to {target_label}"),
+                            None => format!("{verb} {names} to {target_label}"),
+                        });
+                    }
+                    if !already_present.is_empty() {
+                        let names = already_present.join(", ");
+                        parts.push(match source_label {
+                            Some(src) => format!(
+                                "{names} already in {target_label}, kept existing copy there and removed from {src}"
+                            ),
+                            None => format!("{names} already in {target_label}, skipped"),
+                        });
+                    }
+                    notify(tx, &parts.join(". "), "info").await;
                 } else {
                     notify(
                         tx,

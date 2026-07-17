@@ -63,6 +63,14 @@ impl Track {
         self.last_played.map(|d| d.format("%Y-%m-%d").to_string())
     }
 
+    pub fn display_name(&self) -> String {
+        if self.artists.is_empty() {
+            self.title.clone()
+        } else {
+            format!("{} - {}", self.artists.join(", "), self.title)
+        }
+    }
+
     pub fn from_db_row(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<Self> {
         use sqlx::Row;
         let artists_str: String = row.try_get("artists").unwrap_or_default();

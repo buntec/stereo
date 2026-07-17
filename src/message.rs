@@ -248,5 +248,7 @@ pub enum MsgClient {
     ExportTracksToCollection {
         tracks: Vec<Track>,
         collection: String,
+        #[serde(default)]
+        source_collection: Option<String>,
     },
 }

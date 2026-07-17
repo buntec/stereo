@@ -61,6 +61,7 @@ export type ClientMsg =
       type: "export-tracks-to-collection";
       tracks: ITrack[];
       collection: string;
+      source_collection?: string;
     }
   | {
       type: "get-rows";
