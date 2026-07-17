@@ -550,8 +550,10 @@ pub async fn get_collection_stats(
     let current_year = chrono::Local::now().date_naive().year() as f64;
     const HALF_LIFE: f64 = 5.0;
 
-    let mut artist_acc: HashMap<String, (f64, usize)> = HashMap::new();
-    let mut label_acc: HashMap<String, (f64, usize)> = HashMap::new();
+    const MIN_RATINGS: usize = 3;
+
+    let mut artist_acc: HashMap<String, (f64, f64, usize)> = HashMap::new();
+    let mut label_acc: HashMap<String, (f64, f64, usize)> = HashMap::new();
 
     for row in &rows {
         let artists_str: String = row.try_get("artists").unwrap_or_default();
@@ -569,25 +571,27 @@ pub async fn get_collection_stats(
             Some(y) => (0.5_f64).powf((current_year - y).max(0.0) / HALF_LIFE),
             None => 1.0,
         };
-        let score = rating * weight;
 
         for artist in &artists {
-            let e = artist_acc.entry(artist.clone()).or_insert((0.0, 0));
-            e.0 += score;
-            e.1 += 1;
+            let e = artist_acc.entry(artist.clone()).or_insert((0.0, 0.0, 0));
+            e.0 += rating * weight;
+            e.1 += weight;
+            e.2 += 1;
         }
         if let Some(label) = label.filter(|l| !l.is_empty()) {
-            let e = label_acc.entry(label).or_insert((0.0, 0));
-            e.0 += score;
-            e.1 += 1;
+            let e = label_acc.entry(label).or_insert((0.0, 0.0, 0));
+            e.0 += rating * weight;
+            e.1 += weight;
+            e.2 += 1;
         }
     }
 
     let mut top_artists: Vec<ScoredName> = artist_acc
         .into_iter()
-        .map(|(name, (score, track_count))| ScoredName {
+        .filter(|(_, (_, _, track_count))| *track_count >= MIN_RATINGS)
+        .map(|(name, (weighted_sum, weight_sum, track_count))| ScoredName {
             name,
-            score,
+            score: weighted_sum / weight_sum,
             track_count,
         })
         .collect();
@@ -600,9 +604,10 @@ pub async fn get_collection_stats(
 
     let mut top_labels: Vec<ScoredName> = label_acc
         .into_iter()
-        .map(|(name, (score, track_count))| ScoredName {
+        .filter(|(_, (_, _, track_count))| *track_count >= MIN_RATINGS)
+        .map(|(name, (weighted_sum, weight_sum, track_count))| ScoredName {
             name,
-            score,
+            score: weighted_sum / weight_sum,
             track_count,
         })
         .collect();
