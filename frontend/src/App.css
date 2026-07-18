@@ -220,36 +220,6 @@
   font-family: var(--code-font-family);
 }
 
-.collection-summary {
-  padding: var(--space-2) 0;
-}
-
-.stats-toggle-button {
-  cursor: pointer;
-}
-
-.stats-toggle-button svg {
-  transition: transform 0.15s ease;
-}
-
-.stats-toggle-button svg.chevron-open {
-  transform: rotate(180deg);
-}
-
-.ranking-method-box {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  cursor: default;
-}
-
-.ranking-method-box .rt-SelectTrigger {
-  min-width: 140px;
-  background: transparent;
-  box-shadow: none;
-  height: 100%;
-}
-
 .artist-link {
   cursor: pointer;
 }

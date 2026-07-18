@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import {
   Select,
   Dialog,
@@ -26,6 +27,7 @@ export type CollectionSelectorProps = {
   isValid: boolean;
   repoVisible: boolean;
   onToggleRepo: () => void;
+  children?: ReactNode;
 };
 
 function CollectionSelector({
@@ -36,6 +38,7 @@ function CollectionSelector({
   isValid,
   repoVisible,
   onToggleRepo,
+  children,
 }: CollectionSelectorProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -129,6 +132,8 @@ function CollectionSelector({
             <Link2Icon />
           </IconButton>
         </Tooltip>
+
+        {children}
       </TextField.Slot>
     </div>
   );

@@ -198,5 +198,5 @@ pub struct MBRecording {
 pub struct ScoredName {
     pub name: String,
     pub count: usize,
-    pub avg_days_since_release: f64,
+    pub weighted_avg_days_since_release: f64,
 }

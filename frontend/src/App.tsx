@@ -27,7 +27,6 @@ import {
   TrackNextIcon,
   PauseIcon,
   TrackPreviousIcon,
-  ChevronDownIcon,
 } from "@radix-ui/react-icons";
 
 import { Toast } from "radix-ui";
@@ -39,7 +38,6 @@ import {
   Skeleton,
   Kbd,
   IconButton,
-  Button,
   Box,
   Flex,
   Text,
@@ -411,7 +409,6 @@ function App() {
   );
 
   const [repoVisible, setRepoVisible] = useState(false);
-  const [statsOpen, setStatsOpen] = useState(false);
 
   const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
     "stereo_app_grid_state",
@@ -1181,7 +1178,16 @@ function App() {
                 }
                 repoVisible={repoVisible}
                 onToggleRepo={() => setRepoVisible((v) => !v)}
-              />
+              >
+                {state.collection_stats && (
+                  <CollectionSummary
+                    stats={state.collection_stats}
+                    totalTracks={state.collection?.size}
+                    onArtistClick={handleArtistClick}
+                    onLabelClick={handleLabelClick}
+                  />
+                )}
+              </CollectionSelector>
               {repoVisible && (
                 <RepoSelector
                   repos={state.repos ?? []}
@@ -1204,19 +1210,6 @@ function App() {
                     sendMsg({ type: "clone-repo", url });
                   }}
                 />
-              )}
-              {state.collection_stats && (
-                <Button
-                  variant="ghost"
-                  color="gray"
-                  className="stats-toggle-button"
-                  onClick={() => setStatsOpen((v) => !v)}
-                >
-                  Library stats
-                  <ChevronDownIcon
-                    className={statsOpen ? "chevron-open" : ""}
-                  />
-                </Button>
               )}
             </Flex>
 
@@ -1264,13 +1257,6 @@ function App() {
           >
             <div ref={player2Ref} />
           </div>
-          {statsOpen && state.collection_stats && !state.search_box_input && (
-            <CollectionSummary
-              stats={state.collection_stats}
-              onArtistClick={handleArtistClick}
-              onLabelClick={handleLabelClick}
-            />
-          )}
           <Flex width="100%" justify="center" align="start" gap="6">
             <Flex direction="column" align="center" gap="2">
               {state.title && (

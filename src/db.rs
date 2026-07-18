@@ -547,16 +547,24 @@ pub struct CollectionStats {
 #[derive(Default)]
 struct NameAcc {
     count: usize,
-    days_since_release_sum: i64,
-    days_since_release_count: usize,
+    weighted_days_since_release_sum: f64,
+    weight_sum: f64,
 }
 
-fn accumulate(map: &mut HashMap<String, NameAcc>, name: &str, days_since_release: Option<i64>) {
+// Ratings act as weights so that, within the 4+-star bucket, 5-star tracks pull
+// the average days-since-release harder toward their own recency than 4-star ones.
+fn accumulate(
+    map: &mut HashMap<String, NameAcc>,
+    name: &str,
+    days_since_release: Option<i64>,
+    rating: i64,
+) {
     let acc = map.entry(name.to_string()).or_default();
     acc.count += 1;
     if let Some(days) = days_since_release {
-        acc.days_since_release_sum += days;
-        acc.days_since_release_count += 1;
+        let weight = rating as f64;
+        acc.weighted_days_since_release_sum += days as f64 * weight;
+        acc.weight_sum += weight;
     }
 }
 
@@ -564,28 +572,29 @@ fn top_by_count(counts: HashMap<String, NameAcc>) -> Vec<ScoredName> {
     let mut top: Vec<ScoredName> = counts
         .into_iter()
         .map(|(name, acc)| {
-            let avg_days_since_release = if acc.days_since_release_count > 0 {
-                acc.days_since_release_sum as f64 / acc.days_since_release_count as f64
+            let weighted_avg_days_since_release = if acc.weight_sum > 0.0 {
+                acc.weighted_days_since_release_sum / acc.weight_sum
             } else {
                 0.0
             };
             ScoredName {
                 name,
                 count: acc.count,
-                avg_days_since_release,
+                weighted_avg_days_since_release,
             }
         })
         .collect();
-    // Ties in count are broken by recency (lower average days since release first)
-    // so a single ranking can serve both the plain and recency-weighted views.
+    // Ties in count are broken by recency (lower weighted average days since
+    // release first) so a single ranking can serve both the plain and
+    // recency-weighted views.
     top.sort_by(|a, b| {
         b.count.cmp(&a.count).then(
-            a.avg_days_since_release
-                .partial_cmp(&b.avg_days_since_release)
+            a.weighted_avg_days_since_release
+                .partial_cmp(&b.weighted_avg_days_since_release)
                 .unwrap_or(std::cmp::Ordering::Equal),
         )
     });
-    top.truncate(5);
+    top.truncate(10);
     top
 }
 
@@ -615,18 +624,18 @@ pub async fn get_collection_stats(pool: &SqlitePool) -> anyhow::Result<Collectio
 
         for artist in &artists {
             if rating >= 4 {
-                accumulate(&mut artist_four_plus, artist, days_since_release);
+                accumulate(&mut artist_four_plus, artist, days_since_release, rating);
             }
             if rating == 5 {
-                accumulate(&mut artist_five_star, artist, days_since_release);
+                accumulate(&mut artist_five_star, artist, days_since_release, rating);
             }
         }
         if let Some(label) = label.filter(|l| !l.is_empty()) {
             if rating >= 4 {
-                accumulate(&mut label_four_plus, &label, days_since_release);
+                accumulate(&mut label_four_plus, &label, days_since_release, rating);
             }
             if rating == 5 {
-                accumulate(&mut label_five_star, &label, days_since_release);
+                accumulate(&mut label_five_star, &label, days_since_release, rating);
             }
         }
     }

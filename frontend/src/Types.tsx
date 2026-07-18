@@ -28,7 +28,7 @@ export interface ICollection {
 export interface IScoredName {
   name: string;
   count: number;
-  avg_days_since_release: number;
+  weighted_avg_days_since_release: number;
 }
 
 export interface ICollectionStats {
