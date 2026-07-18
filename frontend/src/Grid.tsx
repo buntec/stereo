@@ -442,7 +442,7 @@ export const SearchResultsGrid = ({
     <div
       key="search-results-grid"
       className="grid search-results"
-      style={{ height: "100%", width: "100%" }}
+      style={{ flex: "1 1 auto", minHeight: 0, width: "100%" }}
     >
       <AgGridReact<ITrack>
         rowData={tracks}
@@ -686,7 +686,7 @@ export const TracksGrid = ({
     <div
       key="tracks-grid"
       className="grid"
-      style={{ height: "100%", width: "100%" }}
+      style={{ flex: "1 1 auto", minHeight: 0, width: "100%" }}
     >
       <AgGridReact<ITrack>
         theme={theme}

@@ -13,19 +13,17 @@
 .app-main {
   width: 100%;
   height: 100vh;
+  overflow-y: auto;
 }
 
 .app-main.fullscreen {
-  justify-content: space-between;
+  justify-content: center;
+  overflow: hidden;
 }
 
 .controls {
   width: 100%;
   padding: var(--space-2);
-}
-
-.fullscreen .controls {
-  order: 1;
 }
 
 .toolbar {
@@ -37,8 +35,11 @@
 }
 
 .grid-container {
+  display: flex;
+  flex-direction: column;
   flex-grow: 1;
   width: 100%;
+  min-height: 55vh;
 }
 
 .fullscreen .grid-container {
@@ -76,6 +77,11 @@
 
 .progress-slider {
   font-family: var(--code-font-family);
+}
+
+.progress-slider .rt-SliderRoot {
+  --slider-track-size: 3px;
+  --slider-thumb-size: 13px;
 }
 
 @property --stop {
@@ -147,7 +153,16 @@
 
 .player {
   position: relative;
+  flex-shrink: 0;
   margin: var(--space-2);
+  border-radius: var(--radius-4);
+  overflow: hidden;
+  border: 1px solid var(--gray-a5);
+}
+
+.fullscreen .player {
+  border: none;
+  border-radius: 0;
 }
 
 .background-player {
@@ -206,10 +221,33 @@
 }
 
 .collection-summary {
-  position: fixed;
-  left: var(--space-3);
-  top: 52px;
-  z-index: 10;
+  padding: var(--space-2) 0;
+}
+
+.stats-toggle-button {
+  cursor: pointer;
+}
+
+.stats-toggle-button svg {
+  transition: transform 0.15s ease;
+}
+
+.stats-toggle-button svg.chevron-open {
+  transform: rotate(180deg);
+}
+
+.ranking-method-box {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  cursor: default;
+}
+
+.ranking-method-box .rt-SelectTrigger {
+  min-width: 140px;
+  background: transparent;
+  box-shadow: none;
+  height: 100%;
 }
 
 .artist-link {
@@ -247,10 +285,6 @@
 }
 
 .fullscreen .toggle-video-button {
-  display: none;
-}
-
-.fullscreen .center-grid-around-current-track-button {
   display: none;
 }
 

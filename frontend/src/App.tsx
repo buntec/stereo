@@ -23,14 +23,11 @@ import {
   ExitFullScreenIcon,
   TrashIcon,
   ShuffleIcon,
-  DoubleArrowLeftIcon,
-  DoubleArrowRightIcon,
-  Crosshair2Icon,
   PlayIcon,
   TrackNextIcon,
-  StopIcon,
   PauseIcon,
   TrackPreviousIcon,
+  ChevronDownIcon,
 } from "@radix-ui/react-icons";
 
 import { Toast } from "radix-ui";
@@ -42,9 +39,11 @@ import {
   Skeleton,
   Kbd,
   IconButton,
+  Button,
   Box,
   Flex,
   Text,
+  Separator,
 } from "@radix-ui/themes";
 
 import type {
@@ -365,8 +364,10 @@ const reducer = (state: State, action: Action): State => {
       return {
         ...state,
         collection_stats: {
-          top_artists: action.top_artists,
-          top_labels: action.top_labels,
+          top_artists_five_star: action.top_artists_five_star,
+          top_artists_four_plus: action.top_artists_four_plus,
+          top_labels_five_star: action.top_labels_five_star,
+          top_labels_four_plus: action.top_labels_four_plus,
         },
       };
 
@@ -410,6 +411,7 @@ function App() {
   );
 
   const [repoVisible, setRepoVisible] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
     "stereo_app_grid_state",
@@ -559,6 +561,14 @@ function App() {
           dispatch({
             type: "player-state-change",
             state: YTPlayerState.PLAYING,
+            id,
+          });
+        }
+        if (event.data === window.YT.PlayerState.PAUSED) {
+          const id = event.target.getVideoData().video_id;
+          dispatch({
+            type: "player-state-change",
+            state: YTPlayerState.PAUSED,
             id,
           });
         }
@@ -1067,9 +1077,29 @@ function App() {
     [setGridState, updatePlaylist, settings.shufflePlay],
   );
 
+  const appShellRef = useRef<HTMLDivElement>(null);
+
   const toggleFullscreen = useCallback(() => {
-    setSettings({ ...settings, fullScreen: !settings.fullScreen });
+    const entering = !settings.fullScreen;
+    setSettings({ ...settings, fullScreen: entering });
+    if (entering) {
+      appShellRef.current?.requestFullscreen?.().catch(() => {});
+    } else if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
   }, [settings, setSettings]);
+
+  // Keep settings in sync when the user exits fullscreen via Esc or browser UI
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        setSettings((s) => ({ ...s, fullScreen: false }));
+      }
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () =>
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, [setSettings]);
 
   const handleArtistClick = useCallback(
     (name: string) => {
@@ -1132,6 +1162,7 @@ function App() {
     <Theme appearance={settings.appearance} accentColor="gray" grayColor="gray">
       <Toast.Provider>
         <Flex
+          ref={appShellRef}
           className={`app-main ${settings.fullScreen ? "fullscreen" : ""}`}
           direction="column"
           align="center"
@@ -1174,6 +1205,19 @@ function App() {
                   }}
                 />
               )}
+              {state.collection_stats && (
+                <Button
+                  variant="ghost"
+                  color="gray"
+                  className="stats-toggle-button"
+                  onClick={() => setStatsOpen((v) => !v)}
+                >
+                  Library stats
+                  <ChevronDownIcon
+                    className={statsOpen ? "chevron-open" : ""}
+                  />
+                </Button>
+              )}
             </Flex>
 
             <SearchBox
@@ -1215,277 +1259,226 @@ function App() {
               />
             </Flex>
           </Flex>
-          {state.collection_stats && !state.search_box_input && (
+          <div
+            className={`background-player ${state.show_player2 && settings.backgroundVideo ? "" : "hidden"}`}
+          >
+            <div ref={player2Ref} />
+          </div>
+          {statsOpen && state.collection_stats && !state.search_box_input && (
             <CollectionSummary
               stats={state.collection_stats}
               onArtistClick={handleArtistClick}
               onLabelClick={handleLabelClick}
             />
           )}
-          <div
-            className={`background-player ${state.show_player2 && settings.backgroundVideo ? "" : "hidden"}`}
-          >
-            <div ref={player2Ref} />
-          </div>
-          {state.title && (
-            <Flex align="center" gap="2">
-              <Title
-                title={state.title}
-                artists={state.track_info?.artists}
-                trackName={state.track_info?.title}
-                label={state.track_info?.label}
-                releaseDate={state.track_info?.release_date}
-                onArtistClick={handleArtistClick}
-                onLabelClick={handleLabelClick}
-              />
-              {state.track_info && (
-                <NowPlayingMenu
-                  track={state.track_info}
-                  collections={state.collections ?? []}
-                  currentCollectionPath={settings.collectionPath}
-                  onCopyToCollection={(path) => {
-                    if (state.track_info) {
-                      sendMsg({
-                        type: "export-tracks-to-collection",
-                        tracks: [state.track_info],
-                        collection: path,
-                      });
-                    }
-                  }}
-                  onMoveToCollection={(path) => {
-                    if (state.track_info && state.current_id) {
-                      const idToDelete = state.current_id;
-                      sendMsg({
-                        type: "export-tracks-to-collection",
-                        tracks: [state.track_info],
-                        collection: path,
-                        source_collection: settings.collectionPath,
-                      });
-                      dispatch({ type: "play-next-track" });
-                      sendMsg({ type: "delete-tracks", ids: [idToDelete] });
-                    }
-                  }}
-                  onDeleteFromCollection={() => {
-                    if (state.current_id) {
-                      const idToDelete = state.current_id;
-                      dispatch({ type: "play-next-track" });
-                      sendMsg({ type: "delete-tracks", ids: [idToDelete] });
-                    }
-                  }}
-                />
-              )}
-            </Flex>
-          )}
-
-          <Flex direction="column" align="center" gap="2" className="controls">
-            <Rating
-              enabled={state.current_id === state.track_info?.yt_id}
-              currentRating={
-                state.current_id === state.track_info?.yt_id
-                  ? state.track_info?.rating
-                  : undefined
-              }
-              updateRating={updateCurrentRating}
-            />
-            <Flex
-              className="progress-slider"
-              width="30%"
-              align="center"
-              gap="2"
-            >
-              <Text>{formatDuration(state.current_time ?? 0)}</Text>
-              <Slider
-                color="pink"
-                size="2"
-                variant="soft"
-                value={[state.playback_progress_pct ?? 0]}
-                onValueChange={onSliderValueChange}
-              />
-              <Text>
-                {state.duration ? formatDuration(state.duration) : "--:--"}
-              </Text>
-            </Flex>
-            <Flex direction="row" gap="2" m="2">
-              <Tooltip
-                content={
-                  <>
-                    Rewind 10 seconds <Kbd>←</Kbd>
-                  </>
-                }
-              >
-                <IconButton
-                  variant="soft"
-                  size="4"
-                  onClick={() => fastForward(-10)}
-                >
-                  <DoubleArrowLeftIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Skip to previous track <Kbd>↑</Kbd>
-                  </>
-                }
-              >
-                <IconButton variant="soft" size="4" onClick={prevTrack}>
-                  <TrackPreviousIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Start playback <Kbd>Space</Kbd> / <Kbd>p</Kbd>
-                  </>
-                }
-              >
-                <IconButton variant="soft" size="4" onClick={startPlayback}>
-                  <PlayIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Pause playback <Kbd>Space</Kbd> / <Kbd>p</Kbd>
-                  </>
-                }
-              >
-                <IconButton
-                  variant="soft"
-                  size="4"
-                  onClick={() => pausePlayback()}
-                >
-                  <PauseIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Stop playback <Kbd>Backspace</Kbd>
-                  </>
-                }
-              >
-                <IconButton variant="soft" size="4" onClick={stopPlayback}>
-                  <StopIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Skip to next track <Kbd>↓</Kbd>
-                  </>
-                }
-              >
-                <IconButton variant="soft" size="4" onClick={nextTrack}>
-                  <TrackNextIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Fast-forward 10 seconds <Kbd>→</Kbd>
-                  </>
-                }
-              >
-                <IconButton
-                  variant="soft"
-                  size="4"
-                  onClick={() => fastForward(10)}
-                >
-                  <DoubleArrowRightIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Toggle shuffle play <Kbd>s</Kbd>
-                  </>
-                }
-              >
-                <IconButton
-                  color={settings.shufflePlay ? "cyan" : "gray"}
-                  variant="soft"
-                  size="4"
-                  onClick={toggleShuffle}
-                >
-                  <ShuffleIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Center grid around current track <Kbd>c</Kbd>
-                  </>
-                }
-              >
-                <IconButton
-                  className="center-grid-around-current-track-button"
-                  variant="soft"
-                  size="4"
-                  onClick={centerGridAroundCurrentTrack}
-                >
-                  <Crosshair2Icon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Toggle video <Kbd>v</Kbd>
-                  </>
-                }
-              >
-                <IconButton
-                  className="toggle-video-button"
-                  color={settings.video ? "cyan" : "gray"}
-                  variant="soft"
-                  size="4"
-                  onClick={toggleVideo}
-                >
-                  <VideoIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Toggle background video <Kbd>b</Kbd>
-                  </>
-                }
-              >
-                <IconButton
-                  color={settings.backgroundVideo ? "cyan" : "gray"}
-                  variant="soft"
-                  size="4"
-                  onClick={toggleBackgroundVideo}
-                >
-                  <MagicWandIcon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip
-                content={
-                  <>
-                    Toggle fullscreen mode <Kbd>f</Kbd>
-                  </>
-                }
-              >
-                <IconButton variant="soft" size="4" onClick={toggleFullscreen}>
-                  {settings.fullScreen ? (
-                    <ExitFullScreenIcon />
-                  ) : (
-                    <EnterFullScreenIcon />
+          <Flex width="100%" justify="center" align="start" gap="6">
+            <Flex direction="column" align="center" gap="2">
+              {state.title && (
+                <Flex align="center" gap="2">
+                  <Title
+                    title={state.title}
+                    artists={state.track_info?.artists}
+                    trackName={state.track_info?.title}
+                    label={state.track_info?.label}
+                    releaseDate={state.track_info?.release_date}
+                    onArtistClick={handleArtistClick}
+                    onLabelClick={handleLabelClick}
+                  />
+                  {state.track_info && (
+                    <NowPlayingMenu
+                      track={state.track_info}
+                      collections={state.collections ?? []}
+                      currentCollectionPath={settings.collectionPath}
+                      onCopyToCollection={(path) => {
+                        if (state.track_info) {
+                          sendMsg({
+                            type: "export-tracks-to-collection",
+                            tracks: [state.track_info],
+                            collection: path,
+                          });
+                        }
+                      }}
+                      onMoveToCollection={(path) => {
+                        if (state.track_info && state.current_id) {
+                          const idToDelete = state.current_id;
+                          sendMsg({
+                            type: "export-tracks-to-collection",
+                            tracks: [state.track_info],
+                            collection: path,
+                            source_collection: settings.collectionPath,
+                          });
+                          dispatch({ type: "play-next-track" });
+                          sendMsg({ type: "delete-tracks", ids: [idToDelete] });
+                        }
+                      }}
+                      onDeleteFromCollection={() => {
+                        if (state.current_id) {
+                          const idToDelete = state.current_id;
+                          dispatch({ type: "play-next-track" });
+                          sendMsg({ type: "delete-tracks", ids: [idToDelete] });
+                        }
+                      }}
+                    />
                   )}
-                </IconButton>
-              </Tooltip>
+                </Flex>
+              )}
+
+              <Flex
+                direction="column"
+                align="center"
+                gap="2"
+                className="controls"
+              >
+                <Rating
+                  enabled={state.current_id === state.track_info?.yt_id}
+                  currentRating={
+                    state.current_id === state.track_info?.yt_id
+                      ? state.track_info?.rating
+                      : undefined
+                  }
+                  updateRating={updateCurrentRating}
+                />
+                <Flex
+                  className="progress-slider"
+                  width="min(70vw, 900px)"
+                  align="center"
+                  gap="2"
+                >
+                  <Text>{formatDuration(state.current_time ?? 0)}</Text>
+                  <Slider
+                    color="pink"
+                    size="2"
+                    variant="soft"
+                    value={[state.playback_progress_pct ?? 0]}
+                    onValueChange={onSliderValueChange}
+                  />
+                  <Text>
+                    {state.duration ? formatDuration(state.duration) : "--:--"}
+                  </Text>
+                </Flex>
+                <Flex direction="row" align="center" gap="2" m="2">
+                  <Tooltip
+                    content={
+                      <>
+                        Skip to previous track <Kbd>↑</Kbd>
+                      </>
+                    }
+                  >
+                    <IconButton variant="soft" size="4" onClick={prevTrack}>
+                      <TrackPreviousIcon />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Tooltip
+                    content={
+                      <>
+                        Play / pause <Kbd>Space</Kbd> / <Kbd>p</Kbd>
+                      </>
+                    }
+                  >
+                    <IconButton
+                      variant="soft"
+                      size="4"
+                      className="play-pause-button"
+                      onClick={togglePlayback}
+                    >
+                      {state.player_state === YTPlayerState.PLAYING ? (
+                        <PauseIcon />
+                      ) : (
+                        <PlayIcon />
+                      )}
+                    </IconButton>
+                  </Tooltip>
+
+                  <Tooltip
+                    content={
+                      <>
+                        Skip to next track <Kbd>↓</Kbd>
+                      </>
+                    }
+                  >
+                    <IconButton variant="soft" size="4" onClick={nextTrack}>
+                      <TrackNextIcon />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Separator orientation="vertical" size="2" />
+
+                  <Tooltip
+                    content={
+                      <>
+                        Toggle shuffle play <Kbd>s</Kbd>
+                      </>
+                    }
+                  >
+                    <IconButton
+                      color={settings.shufflePlay ? "cyan" : "gray"}
+                      variant="soft"
+                      size="4"
+                      onClick={toggleShuffle}
+                    >
+                      <ShuffleIcon />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Tooltip
+                    content={
+                      <>
+                        Toggle background video <Kbd>b</Kbd>
+                      </>
+                    }
+                  >
+                    <IconButton
+                      color={settings.backgroundVideo ? "cyan" : "gray"}
+                      variant="soft"
+                      size="4"
+                      onClick={toggleBackgroundVideo}
+                    >
+                      <MagicWandIcon />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Separator orientation="vertical" size="2" />
+
+                  <Tooltip
+                    content={
+                      <>
+                        Toggle video <Kbd>v</Kbd>
+                      </>
+                    }
+                  >
+                    <IconButton
+                      className="toggle-video-button"
+                      color={settings.video ? "cyan" : "gray"}
+                      variant="soft"
+                      size="4"
+                      onClick={toggleVideo}
+                    >
+                      <VideoIcon />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Tooltip
+                    content={
+                      <>
+                        Toggle fullscreen mode <Kbd>f</Kbd>
+                      </>
+                    }
+                  >
+                    <IconButton
+                      variant="soft"
+                      size="4"
+                      onClick={toggleFullscreen}
+                    >
+                      {settings.fullScreen ? (
+                        <ExitFullScreenIcon />
+                      ) : (
+                        <EnterFullScreenIcon />
+                      )}
+                    </IconButton>
+                  </Tooltip>
+                </Flex>
+              </Flex>
             </Flex>
           </Flex>
 
