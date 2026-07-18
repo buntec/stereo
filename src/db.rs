@@ -1,7 +1,5 @@
 use std::{collections::HashMap, path::Path};
 
-use chrono::Datelike;
-
 use anyhow::Context;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow},
@@ -539,86 +537,106 @@ pub async fn validate_db_schema(path: &Path) -> bool {
     result.unwrap_or(false)
 }
 
-pub async fn get_collection_stats(
-    pool: &SqlitePool,
-) -> anyhow::Result<(Vec<ScoredName>, Vec<ScoredName>)> {
+pub struct CollectionStats {
+    pub top_artists_five_star: Vec<ScoredName>,
+    pub top_artists_four_plus: Vec<ScoredName>,
+    pub top_labels_five_star: Vec<ScoredName>,
+    pub top_labels_four_plus: Vec<ScoredName>,
+}
+
+#[derive(Default)]
+struct NameAcc {
+    count: usize,
+    days_since_release_sum: i64,
+    days_since_release_count: usize,
+}
+
+fn accumulate(map: &mut HashMap<String, NameAcc>, name: &str, days_since_release: Option<i64>) {
+    let acc = map.entry(name.to_string()).or_default();
+    acc.count += 1;
+    if let Some(days) = days_since_release {
+        acc.days_since_release_sum += days;
+        acc.days_since_release_count += 1;
+    }
+}
+
+fn top_by_count(counts: HashMap<String, NameAcc>) -> Vec<ScoredName> {
+    let mut top: Vec<ScoredName> = counts
+        .into_iter()
+        .map(|(name, acc)| {
+            let avg_days_since_release = if acc.days_since_release_count > 0 {
+                acc.days_since_release_sum as f64 / acc.days_since_release_count as f64
+            } else {
+                0.0
+            };
+            ScoredName {
+                name,
+                count: acc.count,
+                avg_days_since_release,
+            }
+        })
+        .collect();
+    // Ties in count are broken by recency (lower average days since release first)
+    // so a single ranking can serve both the plain and recency-weighted views.
+    top.sort_by(|a, b| {
+        b.count.cmp(&a.count).then(
+            a.avg_days_since_release
+                .partial_cmp(&b.avg_days_since_release)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+    top.truncate(5);
+    top
+}
+
+pub async fn get_collection_stats(pool: &SqlitePool) -> anyhow::Result<CollectionStats> {
     let rows =
         sqlx::query("SELECT artists, label, rating, release_date FROM tracks WHERE rating > 0")
             .fetch_all(pool)
             .await?;
 
-    let current_year = chrono::Local::now().date_naive().year() as f64;
-    const HALF_LIFE: f64 = 5.0;
+    let today = chrono::Local::now().date_naive();
 
-    const MIN_RATINGS: usize = 3;
-
-    let mut artist_acc: HashMap<String, (f64, f64, usize)> = HashMap::new();
-    let mut label_acc: HashMap<String, (f64, f64, usize)> = HashMap::new();
+    let mut artist_five_star: HashMap<String, NameAcc> = HashMap::new();
+    let mut artist_four_plus: HashMap<String, NameAcc> = HashMap::new();
+    let mut label_five_star: HashMap<String, NameAcc> = HashMap::new();
+    let mut label_four_plus: HashMap<String, NameAcc> = HashMap::new();
 
     for row in &rows {
         let artists_str: String = row.try_get("artists").unwrap_or_default();
         let artists: Vec<String> = serde_json::from_str(&artists_str).unwrap_or_default();
         let label: Option<String> = row.try_get("label").unwrap_or(None);
-        let rating: f64 = row.try_get::<i64, _>("rating").unwrap_or(0) as f64;
+        let rating: i64 = row.try_get("rating").unwrap_or(0);
         let release_date_str: Option<String> = row.try_get("release_date").unwrap_or(None);
-
-        let track_year = release_date_str
+        let days_since_release = release_date_str
             .as_deref()
-            .and_then(|s| s.split('-').next())
-            .and_then(|y| y.parse::<f64>().ok());
-
-        let weight = match track_year {
-            Some(y) => (0.5_f64).powf((current_year - y).max(0.0) / HALF_LIFE),
-            None => 1.0,
-        };
+            .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+            .map(|d| (today - d).num_days());
 
         for artist in &artists {
-            let e = artist_acc.entry(artist.clone()).or_insert((0.0, 0.0, 0));
-            e.0 += rating * weight;
-            e.1 += weight;
-            e.2 += 1;
+            if rating >= 4 {
+                accumulate(&mut artist_four_plus, artist, days_since_release);
+            }
+            if rating == 5 {
+                accumulate(&mut artist_five_star, artist, days_since_release);
+            }
         }
         if let Some(label) = label.filter(|l| !l.is_empty()) {
-            let e = label_acc.entry(label).or_insert((0.0, 0.0, 0));
-            e.0 += rating * weight;
-            e.1 += weight;
-            e.2 += 1;
+            if rating >= 4 {
+                accumulate(&mut label_four_plus, &label, days_since_release);
+            }
+            if rating == 5 {
+                accumulate(&mut label_five_star, &label, days_since_release);
+            }
         }
     }
 
-    let mut top_artists: Vec<ScoredName> = artist_acc
-        .into_iter()
-        .filter(|(_, (_, _, track_count))| *track_count >= MIN_RATINGS)
-        .map(|(name, (weighted_sum, weight_sum, track_count))| ScoredName {
-            name,
-            score: weighted_sum / weight_sum,
-            track_count,
-        })
-        .collect();
-    top_artists.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    top_artists.truncate(5);
-
-    let mut top_labels: Vec<ScoredName> = label_acc
-        .into_iter()
-        .filter(|(_, (_, _, track_count))| *track_count >= MIN_RATINGS)
-        .map(|(name, (weighted_sum, weight_sum, track_count))| ScoredName {
-            name,
-            score: weighted_sum / weight_sum,
-            track_count,
-        })
-        .collect();
-    top_labels.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    top_labels.truncate(5);
-
-    Ok((top_artists, top_labels))
+    Ok(CollectionStats {
+        top_artists_five_star: top_by_count(artist_five_star),
+        top_artists_four_plus: top_by_count(artist_four_plus),
+        top_labels_five_star: top_by_count(label_five_star),
+        top_labels_four_plus: top_by_count(label_four_plus),
+    })
 }
 
 pub async fn import_from_db(

@@ -36,7 +36,9 @@ fn to_url_slug(s: &str) -> String {
     let ascii: String = s
         .chars()
         .map(|c| match c {
-            'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
+            'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => {
+                'a'
+            }
             'È' | 'É' | 'Ê' | 'Ë' | 'è' | 'é' | 'ê' | 'ë' => 'e',
             'Ì' | 'Í' | 'Î' | 'Ï' | 'ì' | 'í' | 'î' | 'ï' => 'i',
             'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'ò' | 'ó' | 'ô' | 'õ' | 'ö' => 'o',
@@ -208,8 +210,7 @@ pub async fn bp_search_labels(
         for query in queries {
             if let Some(items) = query["state"]["data"]["data"].as_array() {
                 for item in items {
-                    let display_name =
-                        item["label_name"].as_str().unwrap_or("").trim().to_string();
+                    let display_name = item["label_name"].as_str().unwrap_or("").trim().to_string();
                     let slug = item["slug"]
                         .as_str()
                         .map(|s| s.trim().to_string())
@@ -265,7 +266,9 @@ pub async fn bp_search_artist(
                         .unwrap_or_else(|| to_url_slug(&display_name));
                     let id = item["artist_id"].as_i64().unwrap_or(0);
                     let image_uri = item["artist_image_uri"].as_str().unwrap_or("").to_string();
-                    tracing::debug!("Artist result: display={display_name:?} slug={slug:?} id={id}");
+                    tracing::debug!(
+                        "Artist result: display={display_name:?} slug={slug:?} id={id}"
+                    );
                     artists.push(BPArtist {
                         display_name,
                         name: slug,
@@ -410,8 +413,10 @@ async fn sc_get(
 ) -> anyhow::Result<serde_json::Value> {
     for attempt in 0..2 {
         let client_id = get_sc_client_id(client).await?;
-        let mut pairs: Vec<(String, String)> =
-            params.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let mut pairs: Vec<(String, String)> = params
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         pairs.push(("client_id".to_string(), client_id));
 
         let resp = client
@@ -687,7 +692,10 @@ const MIX_KEYWORDS: &[&str] = &[
 
 /// True if a Beatport `mix_name` denotes the plain original (no remix identity to match on).
 fn is_original_mix(mix_name: &str) -> bool {
-    matches!(mix_name.trim().to_lowercase().as_str(), "" | "original mix" | "original")
+    matches!(
+        mix_name.trim().to_lowercase().as_str(),
+        "" | "original mix" | "original"
+    )
 }
 
 /// Extracts a mix/remix tag from a title, e.g. "Artist - Track (Someone Remix)" -> `Some("someone remix")`.
@@ -899,7 +907,14 @@ pub async fn search_fuzzy(
             tracing::warn!("SoundCloud track search failed: {e}");
             vec![]
         });
-        stream_raw_tracks(&client, &tx, query_id, limit, interleave(bp_tracks, sc_tracks)).await;
+        stream_raw_tracks(
+            &client,
+            &tx,
+            query_id,
+            limit,
+            interleave(bp_tracks, sc_tracks),
+        )
+        .await;
         Ok(())
     })
     .await;
@@ -931,7 +946,14 @@ pub async fn search_by_label(
             tracing::warn!("SoundCloud label search failed: {e}");
             vec![]
         });
-        stream_raw_tracks(&client, &tx, query_id, limit, interleave(bp_tracks, sc_tracks)).await;
+        stream_raw_tracks(
+            &client,
+            &tx,
+            query_id,
+            limit,
+            interleave(bp_tracks, sc_tracks),
+        )
+        .await;
         Ok(())
     })
     .await;
@@ -963,7 +985,14 @@ pub async fn search_by_artist(
             tracing::warn!("SoundCloud artist search failed: {e}");
             vec![]
         });
-        stream_raw_tracks(&client, &tx, query_id, limit, interleave(bp_tracks, sc_tracks)).await;
+        stream_raw_tracks(
+            &client,
+            &tx,
+            query_id,
+            limit,
+            interleave(bp_tracks, sc_tracks),
+        )
+        .await;
         Ok(())
     })
     .await;
@@ -1011,10 +1040,7 @@ mod remix_match_tests {
             extract_mix_tag("Aquarius Heaven - Just Like Magic [Official Video]"),
             None
         );
-        assert_eq!(
-            extract_mix_tag("Aquarius Heaven - Just Like Magic"),
-            None
-        );
+        assert_eq!(extract_mix_tag("Aquarius Heaven - Just Like Magic"), None);
     }
 
     #[test]
@@ -1060,10 +1086,7 @@ mod remix_match_tests {
             luciano_match.title
         );
 
-        let roman = RawTrack::Bp(bp_track(
-            "Just Like Magic",
-            "Roman Flügel Extended Remix",
-        ));
+        let roman = RawTrack::Bp(bp_track("Just Like Magic", "Roman Flügel Extended Remix"));
         let roman_match = find_best_match(&client, &roman).await.unwrap();
         assert!(
             roman_match.title.to_lowercase().contains("flügel"),

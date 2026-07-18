@@ -82,8 +82,10 @@ pub enum MsgServer {
         kind: String,
     },
     CollectionStats {
-        top_artists: Vec<ScoredName>,
-        top_labels: Vec<ScoredName>,
+        top_artists_five_star: Vec<ScoredName>,
+        top_artists_four_plus: Vec<ScoredName>,
+        top_labels_five_star: Vec<ScoredName>,
+        top_labels_four_plus: Vec<ScoredName>,
     },
 }
 

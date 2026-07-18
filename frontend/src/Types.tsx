@@ -27,13 +27,15 @@ export interface ICollection {
 
 export interface IScoredName {
   name: string;
-  score: number;
-  track_count: number;
+  count: number;
+  avg_days_since_release: number;
 }
 
 export interface ICollectionStats {
-  top_artists: IScoredName[];
-  top_labels: IScoredName[];
+  top_artists_five_star: IScoredName[];
+  top_artists_four_plus: IScoredName[];
+  top_labels_five_star: IScoredName[];
+  top_labels_four_plus: IScoredName[];
 }
 
 export interface IRepo {
@@ -140,8 +142,10 @@ export type ServerMsg =
   | { type: "collections"; collections: ICollection[] }
   | {
       type: "collection-stats";
-      top_artists: IScoredName[];
-      top_labels: IScoredName[];
+      top_artists_five_star: IScoredName[];
+      top_artists_four_plus: IScoredName[];
+      top_labels_five_star: IScoredName[];
+      top_labels_four_plus: IScoredName[];
     };
 
 export type Action =

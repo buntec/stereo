@@ -197,6 +197,6 @@ pub struct MBRecording {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ScoredName {
     pub name: String,
-    pub score: f64,
-    pub track_count: usize,
+    pub count: usize,
+    pub avg_days_since_release: f64,
 }

@@ -223,11 +223,13 @@ async fn update_collection_info(state: &mut SessionState, tx: &mpsc::Sender<MsgS
 async fn send_collection_stats(state: &SessionState, tx: &mpsc::Sender<MsgServer>) {
     if let Some(pool) = state.pool() {
         match db::get_collection_stats(pool).await {
-            Ok((top_artists, top_labels)) => {
+            Ok(stats) => {
                 let _ = tx
                     .send(MsgServer::CollectionStats {
-                        top_artists,
-                        top_labels,
+                        top_artists_five_star: stats.top_artists_five_star,
+                        top_artists_four_plus: stats.top_artists_four_plus,
+                        top_labels_five_star: stats.top_labels_five_star,
+                        top_labels_four_plus: stats.top_labels_four_plus,
                     })
                     .await;
             }
