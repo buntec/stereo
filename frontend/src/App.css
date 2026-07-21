@@ -82,6 +82,8 @@
 .progress-slider .rt-SliderRoot {
   --slider-track-size: 3px;
   --slider-thumb-size: 13px;
+  height: 24px;
+  cursor: pointer;
 }
 
 @property --stop {
