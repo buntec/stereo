@@ -211,6 +211,35 @@ impl VLTrack {
     }
 }
 
+pub struct TXTrack {
+    pub artists: Vec<String>,
+    pub label: String,
+    pub release_date: chrono::NaiveDate,
+    pub track_id: i64,
+    pub track_name: String,
+    pub mix_name: String,
+    pub bpm: Option<i64>,
+    pub key: Option<String>,
+    pub genre: Option<String>,
+}
+
+impl TXTrack {
+    pub fn into_track(self, yt_id: String) -> Track {
+        Track {
+            yt_id,
+            title: self.track_name,
+            mix_name: Some(self.mix_name),
+            artists: self.artists,
+            release_date: Some(self.release_date),
+            label: Some(self.label),
+            bpm: self.bpm,
+            key: self.key,
+            genre: self.genre,
+            ..Default::default()
+        }
+    }
+}
+
 pub struct YTVideo {
     pub title: String,
     pub id: String,
@@ -225,6 +254,7 @@ pub enum TrackSource {
     Beatport,
     Soundcloud,
     Volumo,
+    Traxsource,
 }
 
 pub struct MBRecording {

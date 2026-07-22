@@ -1,4 +1,4 @@
-export type TrackSource = "beatport" | "soundcloud" | "volumo";
+export type TrackSource = "beatport" | "soundcloud" | "volumo" | "traxsource";
 
 export interface ITrack {
   title: string;

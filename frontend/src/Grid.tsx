@@ -365,6 +365,8 @@ export const SearchResultsGrid = ({
             return "SoundCloud";
           case "volumo":
             return "Volumo";
+          case "traxsource":
+            return "Traxsource";
           default:
             return params.value ?? "";
         }
