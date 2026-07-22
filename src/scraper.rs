@@ -563,7 +563,8 @@ async fn sc_tracks_by_person(
 
 // Volumo's genre list is small (~30 entries) and effectively static — cache it for the
 // process lifetime rather than refetching on every search.
-static VL_GENRES: LazyLock<RwLock<Option<HashMap<i64, String>>>> = LazyLock::new(|| RwLock::new(None));
+static VL_GENRES: LazyLock<RwLock<Option<HashMap<i64, String>>>> =
+    LazyLock::new(|| RwLock::new(None));
 
 async fn fetch_vl_genres(client: &Client) -> anyhow::Result<HashMap<i64, String>> {
     let json: serde_json::Value = client
@@ -612,7 +613,9 @@ fn parse_vl_track(item: &serde_json::Value, genres: &HashMap<i64, String>) -> Op
     let isrc = item["isrc"].as_str().map(String::from);
     let bpm = item["bpm"].as_i64();
     let key = item["keysign"].as_str().map(|s| s.trim().to_string());
-    let genre = item["genre_id"].as_i64().and_then(|id| genres.get(&id).cloned());
+    let genre = item["genre_id"]
+        .as_i64()
+        .and_then(|id| genres.get(&id).cloned());
 
     Some(VLTrack {
         artists,
@@ -755,7 +758,10 @@ pub async fn tx_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<TX
     let html = resp.text().await?;
     let doc = Html::parse_document(&html);
     let row_sel = Selector::parse("div.trk-row").unwrap();
-    let tracks: Vec<TXTrack> = doc.select(&row_sel).filter_map(|row| parse_tx_track(&row)).collect();
+    let tracks: Vec<TXTrack> = doc
+        .select(&row_sel)
+        .filter_map(|row| parse_tx_track(&row))
+        .collect();
     tracing::info!("Traxsource returned {} tracks", tracks.len());
     Ok(tracks)
 }
@@ -1073,12 +1079,7 @@ async fn find_best_match(client: &Client, raw: &RawTrack) -> Option<YTVideo> {
 
 /// Round-robins result lists from all backends together so no single source hogs the front
 /// of the queue.
-fn interleave(
-    a: Vec<BPTrack>,
-    b: Vec<SCTrack>,
-    c: Vec<VLTrack>,
-    d: Vec<TXTrack>,
-) -> Vec<RawTrack> {
+fn interleave(a: Vec<BPTrack>, b: Vec<SCTrack>, c: Vec<VLTrack>, d: Vec<TXTrack>) -> Vec<RawTrack> {
     let cutoff = chrono::Local::now().date_naive() + chrono::Duration::days(1);
     let mut a = a.into_iter().filter(|t| t.release_date <= cutoff);
     let mut b = b.into_iter().filter(|t| t.release_date <= cutoff);
