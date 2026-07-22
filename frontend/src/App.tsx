@@ -50,6 +50,7 @@ import type {
   ICollectionStats,
   IRepo,
   SearchKind,
+  TrackSource,
   Action,
   ClientMsg,
   ServerMsg,
@@ -130,6 +131,7 @@ type State = {
   search_box_input?: string;
   search_limit: number;
   search_kind: SearchKind;
+  search_sources: TrackSource[];
 
   track_selection: string[];
   track_info?: ITrack;
@@ -326,6 +328,9 @@ const reducer = (state: State, action: Action): State => {
     case "set-search-kind":
       return { ...state, search_kind: action.kind };
 
+    case "set-search-sources":
+      return { ...state, search_sources: action.sources };
+
     case "set-playback-progress":
       return {
         ...state,
@@ -398,6 +403,7 @@ function App() {
     search_busy: false,
     search_limit: 50,
     search_kind: "fuzzy",
+    search_sources: ["beatport", "volumo", "traxsource"],
     notification_show: false,
   });
 
@@ -781,9 +787,16 @@ function App() {
         query_id,
         kind: state.search_kind,
         limit: state.search_limit,
+        sources: state.search_sources,
       });
     }
-  }, [sendMsg, state.search_box_input, state.search_kind, state.search_limit]);
+  }, [
+    sendMsg,
+    state.search_box_input,
+    state.search_kind,
+    state.search_limit,
+    state.search_sources,
+  ]);
 
   useEffect(() => {
     let t = null;
@@ -1113,9 +1126,10 @@ function App() {
         query_id,
         kind: "by-artist",
         limit: state.search_limit,
+        sources: state.search_sources,
       });
     },
-    [dispatch, sendMsg, state.search_limit],
+    [dispatch, sendMsg, state.search_limit, state.search_sources],
   );
 
   const handleLabelClick = useCallback(
@@ -1131,9 +1145,10 @@ function App() {
         query_id,
         kind: "by-label",
         limit: state.search_limit,
+        sources: state.search_sources,
       });
     },
-    [dispatch, sendMsg, state.search_limit],
+    [dispatch, sendMsg, state.search_limit, state.search_sources],
   );
 
   useKeyboardActions({
@@ -1228,6 +1243,10 @@ function App() {
               searchKind={state.search_kind}
               setSearchKind={(kind: SearchKind) =>
                 dispatch({ type: "set-search-kind", kind })
+              }
+              searchSources={state.search_sources}
+              setSearchSources={(sources: TrackSource[]) =>
+                dispatch({ type: "set-search-sources", sources })
               }
               searchBusy={!!state.search_box_input && state.search_busy}
               errorMessage={state.search_error_message}

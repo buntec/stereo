@@ -211,6 +211,7 @@ pub enum MsgClient {
         limit: i64,
         #[serde(default)]
         kind: SearchKind,
+        sources: Vec<TrackSource>,
     },
     SearchCancelAll {},
     CollectionContainsId {

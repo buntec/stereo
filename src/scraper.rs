@@ -1154,13 +1154,38 @@ pub async fn search_fuzzy(
     query: String,
     query_id: i64,
     limit: usize,
+    sources: Vec<TrackSource>,
 ) {
     run_search(&tx, query_id, "search_fuzzy", || async {
         let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
-            bp_search_tracks(&client, &query),
-            sc_search_tracks(&client, &query, limit),
-            vl_search_tracks(&client, &query, limit),
-            tx_search_tracks(&client, &query),
+            async {
+                if sources.contains(&TrackSource::Beatport) {
+                    bp_search_tracks(&client, &query).await
+                } else {
+                    Ok(vec![])
+                }
+            },
+            async {
+                if sources.contains(&TrackSource::Soundcloud) {
+                    sc_search_tracks(&client, &query, limit).await
+                } else {
+                    Ok(vec![])
+                }
+            },
+            async {
+                if sources.contains(&TrackSource::Volumo) {
+                    vl_search_tracks(&client, &query, limit).await
+                } else {
+                    Ok(vec![])
+                }
+            },
+            async {
+                if sources.contains(&TrackSource::Traxsource) {
+                    tx_search_tracks(&client, &query).await
+                } else {
+                    Ok(vec![])
+                }
+            },
         );
         let bp_tracks = bp_res.unwrap_or_else(|e| {
             tracing::warn!("Beatport track search failed: {e}");
@@ -1197,21 +1222,43 @@ pub async fn search_by_label(
     label_name: String,
     query_id: i64,
     limit: usize,
+    sources: Vec<TrackSource>,
 ) {
     run_search(&tx, query_id, "search_by_label", || async {
         let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
             async {
+                if !sources.contains(&TrackSource::Beatport) {
+                    return Ok(vec![]);
+                }
                 let labels = bp_search_labels(&client, &label_name, 1).await?;
                 match labels.into_iter().next() {
                     Some(label) => bp_get_label_releases(&client, &label, None).await,
                     None => Ok(vec![]),
                 }
             },
-            sc_tracks_by_person(&client, &label_name, limit, true),
-            // Volumo has no dedicated label-catalog endpoint; approximate with a text search.
-            vl_search_tracks(&client, &label_name, limit),
-            // Same for Traxsource.
-            tx_search_tracks(&client, &label_name),
+            async {
+                if sources.contains(&TrackSource::Soundcloud) {
+                    sc_tracks_by_person(&client, &label_name, limit, true).await
+                } else {
+                    Ok(vec![])
+                }
+            },
+            async {
+                // Volumo has no dedicated label-catalog endpoint; approximate with a text search.
+                if sources.contains(&TrackSource::Volumo) {
+                    vl_search_tracks(&client, &label_name, limit).await
+                } else {
+                    Ok(vec![])
+                }
+            },
+            async {
+                // Same for Traxsource.
+                if sources.contains(&TrackSource::Traxsource) {
+                    tx_search_tracks(&client, &label_name).await
+                } else {
+                    Ok(vec![])
+                }
+            },
         );
         let bp_tracks = bp_res.unwrap_or_else(|e| {
             tracing::warn!("Beatport label search failed: {e}");
@@ -1248,21 +1295,43 @@ pub async fn search_by_artist(
     artist_name: String,
     query_id: i64,
     limit: usize,
+    sources: Vec<TrackSource>,
 ) {
     run_search(&tx, query_id, "search_by_artist", || async {
         let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
             async {
+                if !sources.contains(&TrackSource::Beatport) {
+                    return Ok(vec![]);
+                }
                 let artists = bp_search_artist(&client, &artist_name, 1).await?;
                 match artists.into_iter().next() {
                     Some(artist) => bp_get_artist_releases(&client, &artist, None).await,
                     None => Ok(vec![]),
                 }
             },
-            sc_tracks_by_person(&client, &artist_name, limit, false),
-            // Volumo has no dedicated artist-catalog endpoint; approximate with a text search.
-            vl_search_tracks(&client, &artist_name, limit),
-            // Same for Traxsource.
-            tx_search_tracks(&client, &artist_name),
+            async {
+                if sources.contains(&TrackSource::Soundcloud) {
+                    sc_tracks_by_person(&client, &artist_name, limit, false).await
+                } else {
+                    Ok(vec![])
+                }
+            },
+            async {
+                // Volumo has no dedicated artist-catalog endpoint; approximate with a text search.
+                if sources.contains(&TrackSource::Volumo) {
+                    vl_search_tracks(&client, &artist_name, limit).await
+                } else {
+                    Ok(vec![])
+                }
+            },
+            async {
+                // Same for Traxsource.
+                if sources.contains(&TrackSource::Traxsource) {
+                    tx_search_tracks(&client, &artist_name).await
+                } else {
+                    Ok(vec![])
+                }
+            },
         );
         let bp_tracks = bp_res.unwrap_or_else(|e| {
             tracing::warn!("Beatport artist search failed: {e}");

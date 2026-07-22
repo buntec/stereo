@@ -549,6 +549,7 @@ async fn handle_msg(
             query_id,
             limit,
             kind,
+            sources,
         } => {
             if let Some(task) = state.search_task.take() {
                 task.abort();
@@ -558,15 +559,15 @@ async fn handle_msg(
                 let c = client.clone();
                 let limit = limit as usize;
                 let handle = match kind {
-                    SearchKind::Fuzzy => {
-                        tokio::spawn(scraper::search_fuzzy(c, tx2, query, query_id, limit))
-                    }
-                    SearchKind::ByLabel => {
-                        tokio::spawn(scraper::search_by_label(c, tx2, query, query_id, limit))
-                    }
-                    SearchKind::ByArtist => {
-                        tokio::spawn(scraper::search_by_artist(c, tx2, query, query_id, limit))
-                    }
+                    SearchKind::Fuzzy => tokio::spawn(scraper::search_fuzzy(
+                        c, tx2, query, query_id, limit, sources,
+                    )),
+                    SearchKind::ByLabel => tokio::spawn(scraper::search_by_label(
+                        c, tx2, query, query_id, limit, sources,
+                    )),
+                    SearchKind::ByArtist => tokio::spawn(scraper::search_by_artist(
+                        c, tx2, query, query_id, limit, sources,
+                    )),
                 };
                 state.search_task = Some(handle);
             }

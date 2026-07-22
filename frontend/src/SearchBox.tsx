@@ -6,10 +6,15 @@ import {
   Flex,
   Tooltip,
   Text,
+  DropdownMenu,
 } from "@radix-ui/themes";
-import { Cross1Icon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
+import {
+  Cross1Icon,
+  MagnifyingGlassIcon,
+  MixerHorizontalIcon,
+} from "@radix-ui/react-icons";
 
-import { type SearchKind } from "./Types.tsx";
+import { type SearchKind, type TrackSource } from "./Types.tsx";
 
 export interface ISearchBoxProps {
   value: string;
@@ -19,9 +24,18 @@ export interface ISearchBoxProps {
   setSearchKind: (value: SearchKind) => void;
   searchLimit: number;
   setSearchLimit: (value: number) => void;
+  searchSources: TrackSource[];
+  setSearchSources: (value: TrackSource[]) => void;
   searchBusy: boolean;
   errorMessage?: string;
 }
+
+const ALL_SEARCH_SOURCES: { value: TrackSource; label: string }[] = [
+  { value: "beatport", label: "Beatport" },
+  { value: "soundcloud", label: "SoundCloud" },
+  { value: "volumo", label: "Volumo" },
+  { value: "traxsource", label: "Traxsource" },
+];
 
 function toSearchKind(s: string): SearchKind {
   switch (s) {
@@ -44,9 +58,19 @@ function SearchBox({
   setSearchKind,
   searchLimit,
   setSearchLimit,
+  searchSources,
+  setSearchSources,
   searchBusy,
   errorMessage,
 }: ISearchBoxProps) {
+  const toggleSource = (source: TrackSource) => {
+    if (searchSources.includes(source)) {
+      setSearchSources(searchSources.filter((s) => s !== source));
+    } else {
+      setSearchSources([...searchSources, source]);
+    }
+  };
+
   return (
     <Flex className="search-box" align="center" gap="2" m="2">
       <TextField.Root
@@ -100,6 +124,30 @@ function SearchBox({
                 <Select.Item value="100">100</Select.Item>
               </Select.Content>
             </Select.Root>
+          </TextField.Slot>
+        </Tooltip>
+
+        <Tooltip content="Search sources">
+          <TextField.Slot side="right">
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger>
+                <IconButton variant="ghost">
+                  <MixerHorizontalIcon height="16" width="16" />
+                </IconButton>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content>
+                {ALL_SEARCH_SOURCES.map(({ value: source, label }) => (
+                  <DropdownMenu.CheckboxItem
+                    key={source}
+                    checked={searchSources.includes(source)}
+                    onSelect={(ev) => ev.preventDefault()}
+                    onCheckedChange={() => toggleSource(source)}
+                  >
+                    {label}
+                  </DropdownMenu.CheckboxItem>
+                ))}
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
           </TextField.Slot>
         </Tooltip>
 

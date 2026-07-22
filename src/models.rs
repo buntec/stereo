@@ -247,8 +247,9 @@ pub struct YTVideo {
 }
 
 /// Which search backend a `SearchResult` track was found on. Purely informational for the
-/// client — not persisted on `Track`/in the collection database.
-#[derive(Debug, Clone, Copy, Serialize)]
+/// client — not persisted on `Track`/in the collection database. Also used (client → server)
+/// to select which backends a search should query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TrackSource {
     Beatport,

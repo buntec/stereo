@@ -90,6 +90,7 @@ export type ClientMsg =
       query_id: number;
       kind: SearchKind;
       limit: number;
+      sources: TrackSource[];
     }
   | { type: "get-git-remote" }
   | { type: "set-git-remote"; url: string | null }
@@ -178,6 +179,7 @@ export type Action =
   | { type: "set-search-busy" }
   | { type: "set-search-limit"; limit: number }
   | { type: "set-search-kind"; kind: SearchKind }
+  | { type: "set-search-sources"; sources: TrackSource[] }
   | {
       type: "set-playback-progress";
       percent: number;

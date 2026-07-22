@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 
 use stereo_backend::{
     message::MsgServer,
+    models::TrackSource,
     scraper::{
         self, bp_search_artist, bp_search_tracks, create_client, yt_create_anon_playlist,
         yt_search_simple,
@@ -22,6 +23,15 @@ use stereo_backend::{
 
 fn client() -> Arc<wreq::Client> {
     Arc::new(create_client().unwrap())
+}
+
+fn all_sources() -> Vec<TrackSource> {
+    vec![
+        TrackSource::Beatport,
+        TrackSource::Soundcloud,
+        TrackSource::Volumo,
+        TrackSource::Traxsource,
+    ]
 }
 
 // ── YouTube ───────────────────────────────────────────────────────────────────
@@ -89,6 +99,7 @@ async fn test_search_fuzzy() {
         "auguxt what that means".to_string(),
         1,
         3,
+        all_sources(),
     ));
 
     let mut tracks = vec![];
@@ -117,6 +128,7 @@ async fn test_search_by_label() {
         "Magnifik Music".to_string(),
         1,
         3,
+        all_sources(),
     ));
 
     let mut tracks = vec![];
@@ -150,6 +162,7 @@ async fn test_search_by_artist() {
         "kadosh ofc".to_string(),
         1,
         3,
+        all_sources(),
     ));
 
     let mut tracks = vec![];
