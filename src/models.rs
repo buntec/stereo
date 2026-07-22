@@ -181,10 +181,50 @@ impl SCTrack {
     }
 }
 
+pub struct VLTrack {
+    pub artists: Vec<String>,
+    pub label: String,
+    pub release_date: chrono::NaiveDate,
+    pub track_id: i64,
+    pub track_name: String,
+    pub mix_name: String,
+    pub isrc: Option<String>,
+    pub bpm: Option<i64>,
+    pub key: Option<String>,
+    pub genre: Option<String>,
+}
+
+impl VLTrack {
+    pub fn into_track(self, yt_id: String) -> Track {
+        Track {
+            yt_id,
+            title: self.track_name,
+            mix_name: Some(self.mix_name),
+            artists: self.artists,
+            release_date: Some(self.release_date),
+            label: Some(self.label),
+            bpm: self.bpm,
+            key: self.key,
+            genre: self.genre,
+            ..Default::default()
+        }
+    }
+}
+
 pub struct YTVideo {
     pub title: String,
     pub id: String,
     pub channel: String,
+}
+
+/// Which search backend a `SearchResult` track was found on. Purely informational for the
+/// client — not persisted on `Track`/in the collection database.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TrackSource {
+    Beatport,
+    Soundcloud,
+    Volumo,
 }
 
 pub struct MBRecording {

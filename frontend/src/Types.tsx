@@ -1,3 +1,5 @@
+export type TrackSource = "beatport" | "soundcloud" | "volumo";
+
 export interface ITrack {
   title: string;
   artists: string[];
@@ -12,6 +14,9 @@ export interface ITrack {
   rating?: number;
   play_count?: number;
   last_played?: string;
+  // Only ever set on search-result tracks (see ServerMsg's "search-result"); not persisted
+  // on tracks read back from the collection.
+  source?: TrackSource;
 }
 
 export interface ISearchResult {
@@ -128,7 +133,12 @@ export type ServerMsg =
       collection: ICollection;
     }
   | { type: "path-completions"; id: number; paths: string[] }
-  | { type: "search-result"; query_id: number; track: ITrack }
+  | {
+      type: "search-result";
+      query_id: number;
+      track: ITrack;
+      source: TrackSource;
+    }
   | { type: "search-results"; query_id: number; tracks: ITrack[] }
   | { type: "search-complete"; query_id: number }
   | { type: "import-from-valid"; path: string; is_valid: boolean }

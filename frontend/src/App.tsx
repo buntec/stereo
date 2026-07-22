@@ -281,15 +281,17 @@ const reducer = (state: State, action: Action): State => {
     case "clear-search-results":
       return { ...state, search_results: undefined };
 
-    case "search-result":
+    case "search-result": {
+      const track = { ...action.track, source: action.source };
       return {
         ...state,
         search_results:
           action.query_id === state.search_query_id
-            ? [...(state.search_results ?? []), action.track]
-            : [action.track],
+            ? [...(state.search_results ?? []), track]
+            : [track],
         search_query_id: action.query_id,
       };
+    }
 
     case "search-results":
       return {

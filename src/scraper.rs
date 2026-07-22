@@ -1,4 +1,7 @@
-use std::sync::{Arc, LazyLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+};
 
 use anyhow::Context;
 use chrono::NaiveDate;
@@ -10,7 +13,7 @@ use wreq_util::Emulation;
 
 use crate::{
     message::MsgServer,
-    models::{BPArtist, BPLabel, BPTrack, SCTrack, SCUser, YTVideo},
+    models::{BPArtist, BPLabel, BPTrack, SCTrack, SCUser, TrackSource, VLTrack, YTVideo},
 };
 
 pub fn create_client() -> anyhow::Result<Client> {
@@ -556,6 +559,109 @@ async fn sc_tracks_by_person(
     Ok(tracks)
 }
 
+// ── Volumo ───────────────────────────────────────────────────────────────────
+
+// Volumo's genre list is small (~30 entries) and effectively static — cache it for the
+// process lifetime rather than refetching on every search.
+static VL_GENRES: LazyLock<RwLock<Option<HashMap<i64, String>>>> = LazyLock::new(|| RwLock::new(None));
+
+async fn fetch_vl_genres(client: &Client) -> anyhow::Result<HashMap<i64, String>> {
+    let json: serde_json::Value = client
+        .get("https://volumo.com/api/v1/genres")
+        .header("Accept", "application/json")
+        .send()
+        .await?
+        .json()
+        .await?;
+    Ok(json
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|g| {
+            let id = g["id"].as_i64()?;
+            let name = g["name"].as_str()?.to_string();
+            Some((id, name))
+        })
+        .collect())
+}
+
+async fn get_vl_genres(client: &Client) -> anyhow::Result<HashMap<i64, String>> {
+    if let Some(genres) = VL_GENRES.read().await.clone() {
+        return Ok(genres);
+    }
+    let genres = fetch_vl_genres(client).await?;
+    *VL_GENRES.write().await = Some(genres.clone());
+    Ok(genres)
+}
+
+fn parse_vl_track(item: &serde_json::Value, genres: &HashMap<i64, String>) -> Option<VLTrack> {
+    let artists: Vec<String> = item["artists"]
+        .as_array()?
+        .iter()
+        .filter_map(|a| a["name"].as_str().map(String::from))
+        .collect();
+    let track_name = item["title"].as_str()?.trim().to_string();
+    let mix_name = item["version"].as_str().unwrap_or("").trim().to_string();
+    let release_date = parse_release_date(item["release_start_at"].as_str().unwrap_or(""))?;
+    let track_id = item["id"].as_i64()?;
+    let label = item["recordlabel"]["name"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let isrc = item["isrc"].as_str().map(String::from);
+    let bpm = item["bpm"].as_i64();
+    let key = item["keysign"].as_str().map(|s| s.trim().to_string());
+    let genre = item["genre_id"].as_i64().and_then(|id| genres.get(&id).cloned());
+
+    Some(VLTrack {
+        artists,
+        label,
+        release_date,
+        track_id,
+        track_name,
+        mix_name,
+        isrc,
+        bpm,
+        key,
+        genre,
+    })
+}
+
+pub async fn vl_search_tracks(
+    client: &Client,
+    q: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<VLTrack>> {
+    tracing::info!("Volumo track search: {q}");
+    let filter = serde_json::json!({ "search": q, "curation": "all" }).to_string();
+    let limit_str = limit.to_string();
+    let (resp, genres) = tokio::join!(
+        client
+            .get("https://volumo.com/api/v1/tracks")
+            .header("Accept", "application/json")
+            .query(&[
+                ("filter", filter.as_str()),
+                ("sort", "relevance"),
+                ("limit", limit_str.as_str()),
+            ])
+            .send(),
+        get_vl_genres(client),
+    );
+    let json: serde_json::Value = resp?.json().await?;
+    let genres = genres.unwrap_or_else(|e| {
+        tracing::warn!("Volumo genre list fetch failed: {e}");
+        HashMap::new()
+    });
+    let tracks = json["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| parse_vl_track(item, &genres))
+        .collect();
+    Ok(tracks)
+}
+
 // ── YouTube ───────────────────────────────────────────────────────────────────
 
 const YT_CLIENTS: &[(&str, &str)] = &[
@@ -682,6 +788,7 @@ pub async fn yt_create_anon_playlist(
 enum RawTrack {
     Bp(BPTrack),
     Sc(SCTrack),
+    Vl(VLTrack),
 }
 
 /// Words that mark a bracketed segment of a title as a mix/edit identifier, as opposed to
@@ -740,6 +847,17 @@ impl RawTrack {
                 t.artists.join(", "),
                 t.label.as_deref().unwrap_or("")
             ),
+            RawTrack::Vl(t) => {
+                let mut q = format!("{} ", t.track_name);
+                if !is_original_mix(&t.mix_name) {
+                    q += &t.mix_name;
+                    q.push(' ');
+                }
+                q += &t.artists.join(", ");
+                q.push(' ');
+                q += &t.label;
+                q
+            }
         }
     }
 
@@ -747,6 +865,7 @@ impl RawTrack {
         match self {
             RawTrack::Bp(t) => &t.track_name,
             RawTrack::Sc(t) => &t.track_name,
+            RawTrack::Vl(t) => &t.track_name,
         }
     }
 
@@ -754,15 +873,25 @@ impl RawTrack {
         match self {
             RawTrack::Bp(t) => &t.artists,
             RawTrack::Sc(t) => &t.artists,
+            RawTrack::Vl(t) => &t.artists,
         }
     }
 
     /// The remix/mix identity this track is expected to match on YouTube, if any.
-    /// Beatport exposes it as a separate field; SoundCloud embeds it in the track name.
+    /// Beatport and Volumo expose it as a separate field; SoundCloud embeds it in the track name.
     fn expected_mix(&self) -> Option<String> {
         match self {
             RawTrack::Bp(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
             RawTrack::Sc(t) => extract_mix_tag(&t.track_name),
+            RawTrack::Vl(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
+        }
+    }
+
+    fn source(&self) -> TrackSource {
+        match self {
+            RawTrack::Bp(_) => TrackSource::Beatport,
+            RawTrack::Sc(_) => TrackSource::Soundcloud,
+            RawTrack::Vl(_) => TrackSource::Volumo,
         }
     }
 
@@ -770,6 +899,7 @@ impl RawTrack {
         match self {
             RawTrack::Bp(t) => t.into_track(yt_id),
             RawTrack::Sc(t) => t.into_track(yt_id),
+            RawTrack::Vl(t) => t.into_track(yt_id),
         }
     }
 }
@@ -825,19 +955,22 @@ async fn find_best_match(client: &Client, raw: &RawTrack) -> Option<YTVideo> {
         .map(|(_, v)| v)
 }
 
-/// Round-robins two result lists together so neither source hogs the front of the queue.
-fn interleave(a: Vec<BPTrack>, b: Vec<SCTrack>) -> Vec<RawTrack> {
+/// Round-robins result lists from all backends together so no single source hogs the front
+/// of the queue.
+fn interleave(a: Vec<BPTrack>, b: Vec<SCTrack>, c: Vec<VLTrack>) -> Vec<RawTrack> {
     let cutoff = chrono::Local::now().date_naive() + chrono::Duration::days(1);
     let mut a = a.into_iter().filter(|t| t.release_date <= cutoff);
     let mut b = b.into_iter().filter(|t| t.release_date <= cutoff);
+    let mut c = c.into_iter().filter(|t| t.release_date <= cutoff);
     let mut out = Vec::new();
     loop {
-        let (x, y) = (a.next(), b.next());
-        if x.is_none() && y.is_none() {
+        let (x, y, z) = (a.next(), b.next(), c.next());
+        if x.is_none() && y.is_none() && z.is_none() {
             break;
         }
         out.extend(x.map(RawTrack::Bp));
         out.extend(y.map(RawTrack::Sc));
+        out.extend(z.map(RawTrack::Vl));
     }
     out
 }
@@ -871,9 +1004,14 @@ async fn stream_raw_tracks(
     for raw in raw_tracks {
         let best = find_best_match(client, &raw).await;
         if let Some(vid) = best {
+            let source = raw.source();
             let track = raw.into_track(vid.id);
             if tx
-                .send(MsgServer::SearchResult { query_id, track })
+                .send(MsgServer::SearchResult {
+                    query_id,
+                    track,
+                    source,
+                })
                 .await
                 .is_err()
             {
@@ -895,9 +1033,10 @@ pub async fn search_fuzzy(
     limit: usize,
 ) {
     run_search(&tx, query_id, "search_fuzzy", || async {
-        let (bp_res, sc_res) = tokio::join!(
+        let (bp_res, sc_res, vl_res) = tokio::join!(
             bp_search_tracks(&client, &query),
             sc_search_tracks(&client, &query, limit),
+            vl_search_tracks(&client, &query, limit),
         );
         let bp_tracks = bp_res.unwrap_or_else(|e| {
             tracing::warn!("Beatport track search failed: {e}");
@@ -907,12 +1046,16 @@ pub async fn search_fuzzy(
             tracing::warn!("SoundCloud track search failed: {e}");
             vec![]
         });
+        let vl_tracks = vl_res.unwrap_or_else(|e| {
+            tracing::warn!("Volumo track search failed: {e}");
+            vec![]
+        });
         stream_raw_tracks(
             &client,
             &tx,
             query_id,
             limit,
-            interleave(bp_tracks, sc_tracks),
+            interleave(bp_tracks, sc_tracks, vl_tracks),
         )
         .await;
         Ok(())
@@ -928,7 +1071,7 @@ pub async fn search_by_label(
     limit: usize,
 ) {
     run_search(&tx, query_id, "search_by_label", || async {
-        let (bp_res, sc_res) = tokio::join!(
+        let (bp_res, sc_res, vl_res) = tokio::join!(
             async {
                 let labels = bp_search_labels(&client, &label_name, 1).await?;
                 match labels.into_iter().next() {
@@ -937,6 +1080,8 @@ pub async fn search_by_label(
                 }
             },
             sc_tracks_by_person(&client, &label_name, limit, true),
+            // Volumo has no dedicated label-catalog endpoint; approximate with a text search.
+            vl_search_tracks(&client, &label_name, limit),
         );
         let bp_tracks = bp_res.unwrap_or_else(|e| {
             tracing::warn!("Beatport label search failed: {e}");
@@ -946,12 +1091,16 @@ pub async fn search_by_label(
             tracing::warn!("SoundCloud label search failed: {e}");
             vec![]
         });
+        let vl_tracks = vl_res.unwrap_or_else(|e| {
+            tracing::warn!("Volumo label search failed: {e}");
+            vec![]
+        });
         stream_raw_tracks(
             &client,
             &tx,
             query_id,
             limit,
-            interleave(bp_tracks, sc_tracks),
+            interleave(bp_tracks, sc_tracks, vl_tracks),
         )
         .await;
         Ok(())
@@ -967,7 +1116,7 @@ pub async fn search_by_artist(
     limit: usize,
 ) {
     run_search(&tx, query_id, "search_by_artist", || async {
-        let (bp_res, sc_res) = tokio::join!(
+        let (bp_res, sc_res, vl_res) = tokio::join!(
             async {
                 let artists = bp_search_artist(&client, &artist_name, 1).await?;
                 match artists.into_iter().next() {
@@ -976,6 +1125,8 @@ pub async fn search_by_artist(
                 }
             },
             sc_tracks_by_person(&client, &artist_name, limit, false),
+            // Volumo has no dedicated artist-catalog endpoint; approximate with a text search.
+            vl_search_tracks(&client, &artist_name, limit),
         );
         let bp_tracks = bp_res.unwrap_or_else(|e| {
             tracing::warn!("Beatport artist search failed: {e}");
@@ -985,12 +1136,16 @@ pub async fn search_by_artist(
             tracing::warn!("SoundCloud artist search failed: {e}");
             vec![]
         });
+        let vl_tracks = vl_res.unwrap_or_else(|e| {
+            tracing::warn!("Volumo artist search failed: {e}");
+            vec![]
+        });
         stream_raw_tracks(
             &client,
             &tx,
             query_id,
             limit,
-            interleave(bp_tracks, sc_tracks),
+            interleave(bp_tracks, sc_tracks, vl_tracks),
         )
         .await;
         Ok(())

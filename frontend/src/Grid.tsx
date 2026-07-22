@@ -352,6 +352,24 @@ export const SearchResultsGrid = ({
       width: 80,
       cellStyle: { textAlign: "right" },
     },
+    {
+      field: "source",
+      headerName: "Source",
+      filter: true,
+      width: 110,
+      valueFormatter: (params: ValueFormatterParams<ITrack, string>) => {
+        switch (params.value) {
+          case "beatport":
+            return "Beatport";
+          case "soundcloud":
+            return "SoundCloud";
+          case "volumo":
+            return "Volumo";
+          default:
+            return params.value ?? "";
+        }
+      },
+    },
   ]);
 
   const rowSelection = useMemo<RowSelectionOptions>(() => {

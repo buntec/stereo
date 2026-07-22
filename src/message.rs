@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::{Collection, Repo, ScoredName, Track};
+use crate::models::{Collection, Repo, ScoredName, Track, TrackSource};
 
 // ── Server → Client ──────────────────────────────────────────────────────────
 
@@ -50,6 +50,7 @@ pub enum MsgServer {
     SearchResult {
         query_id: i64,
         track: Track,
+        source: TrackSource,
     },
     SearchComplete {
         query_id: i64,
