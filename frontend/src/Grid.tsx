@@ -208,6 +208,7 @@ const PlayControlRenderer: React.FC<
         setValue={setValue}
         commit={commit}
         resetValue={resetValue}
+        requestReply={context.requestReply}
       />
     </Flex>
   );

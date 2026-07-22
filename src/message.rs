@@ -88,6 +88,10 @@ pub enum MsgServer {
         top_labels_five_star: Vec<ScoredName>,
         top_labels_four_plus: Vec<ScoredName>,
     },
+    FixupTrackReply {
+        id: i64,
+        track: Option<Track>,
+    },
 }
 
 // ── Client → Server ──────────────────────────────────────────────────────────
@@ -254,5 +258,9 @@ pub enum MsgClient {
         collection: String,
         #[serde(default)]
         source_collection: Option<String>,
+    },
+    FixupTrack {
+        id: i64,
+        track: Track,
     },
 }

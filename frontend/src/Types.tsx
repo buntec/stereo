@@ -97,7 +97,8 @@ export type ClientMsg =
   | { type: "set-repo"; path: string }
   | { type: "clone-repo"; url: string }
   | { type: "list-repos" }
-  | { type: "list-collections" };
+  | { type: "list-collections" }
+  | { type: "fixup-track"; track: ITrack; id?: number };
 
 export type ServerMsg =
   | {
@@ -157,7 +158,8 @@ export type ServerMsg =
       top_artists_four_plus: IScoredName[];
       top_labels_five_star: IScoredName[];
       top_labels_four_plus: IScoredName[];
-    };
+    }
+  | { type: "fixup-track-reply"; id: number; track?: ITrack };
 
 export type Action =
   | ServerMsg

@@ -1,3 +1,4 @@
+import { useState, useCallback } from "react";
 import {
   Text,
   Tooltip,
@@ -8,8 +9,8 @@ import {
   Flex,
 } from "@radix-ui/themes";
 
-import { Pencil1Icon } from "@radix-ui/react-icons";
-import type { ITrack } from "./Types";
+import { Pencil1Icon, MagicWandIcon } from "@radix-ui/react-icons";
+import type { ITrack, RequestReply } from "./Types";
 
 type EditTrackDialogProps = {
   value: ITrack;
@@ -17,6 +18,7 @@ type EditTrackDialogProps = {
   setValue: (track: ITrack) => void;
   resetValue: () => void;
   commit: () => void;
+  requestReply: RequestReply;
 };
 
 export function EditTrackDialog({
@@ -25,7 +27,20 @@ export function EditTrackDialog({
   setValue,
   resetValue,
   commit,
+  requestReply,
 }: EditTrackDialogProps) {
+  const [isFixingUp, setIsFixingUp] = useState(false);
+
+  const fixup = useCallback(() => {
+    setIsFixingUp(true);
+    requestReply({ type: "fixup-track", track: value }, (msg) => {
+      setIsFixingUp(false);
+      if ("track" in msg && msg.track) {
+        setValue(msg.track);
+      }
+    });
+  }, [requestReply, value, setValue]);
+
   return (
     <Dialog.Root>
       <Tooltip content="Edit track">
@@ -36,8 +51,21 @@ export function EditTrackDialog({
         </Dialog.Trigger>
       </Tooltip>
 
-      <Dialog.Content>
-        <Dialog.Title>Edit</Dialog.Title>
+      <Dialog.Content onOpenAutoFocus={(ev) => ev.preventDefault()}>
+        <Flex justify="between" align="center">
+          <Dialog.Title mb="0">Edit</Dialog.Title>
+          <Tooltip content="Fill in missing fields from Beatport, Traxsource, and Volumo">
+            <Button
+              variant="soft"
+              size="1"
+              onClick={fixup}
+              disabled={isFixingUp}
+            >
+              <MagicWandIcon />
+              Fixup
+            </Button>
+          </Tooltip>
+        </Flex>
 
         <Dialog.Description>Edit track meta data</Dialog.Description>
 

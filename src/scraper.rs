@@ -13,7 +13,9 @@ use wreq_util::Emulation;
 
 use crate::{
     message::MsgServer,
-    models::{BPArtist, BPLabel, BPTrack, SCTrack, SCUser, TXTrack, TrackSource, VLTrack, YTVideo},
+    models::{
+        BPArtist, BPLabel, BPTrack, SCTrack, SCUser, TXTrack, Track, TrackSource, VLTrack, YTVideo,
+    },
 };
 
 pub fn create_client() -> anyhow::Result<Client> {
@@ -1075,6 +1077,102 @@ async fn find_best_match(client: &Client, raw: &RawTrack) -> Option<YTVideo> {
         .map(|v| (score_match(raw, &v), v))
         .max_by(|(a, _), (b, _)| a.total_cmp(b))
         .map(|(_, v)| v)
+}
+
+/// Scores how well a raw track matches a title/artists pair, higher is better. Used by
+/// `fixup_track` to pick the best candidate for a track that's already in the collection,
+/// as opposed to `score_match` which matches a raw track against a YouTube video.
+fn score_raw_match(raw: &RawTrack, title: &str, artists: &[String]) -> f64 {
+    let target = format!("{} {}", artists.join(" "), title).to_lowercase();
+    let expected = format!(
+        "{} {}",
+        raw.expected_artists().join(" "),
+        raw.expected_title()
+    )
+    .to_lowercase();
+    strsim::normalized_levenshtein(&target, &expected)
+}
+
+/// Overwrites `base`'s fields with `found`'s wherever `found` actually has a value, so a
+/// confident match also cleans up existing-but-messy fields (e.g. a title/artists lifted
+/// from a YouTube video title), not just missing ones. Fields `found` doesn't have (e.g.
+/// `bp_id` when the match came from Traxsource/Volumo) are left as-is on `base`.
+fn merge_fixup(mut base: Track, found: Track) -> Track {
+    if !found.title.trim().is_empty() {
+        base.title = found.title;
+    }
+    if !found.artists.is_empty() {
+        base.artists = found.artists;
+    }
+    if found.mix_name.is_some() {
+        base.mix_name = found.mix_name;
+    }
+    if found.bp_id.is_some() {
+        base.bp_id = found.bp_id;
+    }
+    if found.release_date.is_some() {
+        base.release_date = found.release_date;
+    }
+    if found.label.is_some() {
+        base.label = found.label;
+    }
+    if found.genre.is_some() {
+        base.genre = found.genre;
+    }
+    if found.bpm.is_some() {
+        base.bpm = found.bpm;
+    }
+    if found.key.is_some() {
+        base.key = found.key;
+    }
+    base
+}
+
+/// Searches Beatport, Traxsource, and Volumo for a match on `track`'s title/artists and uses
+/// it to fill in missing fields and clean up existing ones, if a candidate scores above the
+/// similarity threshold. SoundCloud is skipped since its metadata is too sparse to be useful
+/// for fixups, and MusicBrainz isn't wired up to any of these backends.
+pub async fn fixup_track(client: Arc<Client>, track: Track) -> anyhow::Result<Option<Track>> {
+    let query = format!("{} {}", track.artists.join(" "), track.title)
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        return Ok(None);
+    }
+
+    let (bp_res, vl_res, tx_res) = tokio::join!(
+        bp_search_tracks(&client, &query),
+        vl_search_tracks(&client, &query, 10),
+        tx_search_tracks(&client, &query),
+    );
+    let bp_tracks = bp_res.unwrap_or_else(|e| {
+        tracing::warn!("Beatport fixup search failed: {e}");
+        vec![]
+    });
+    let vl_tracks = vl_res.unwrap_or_else(|e| {
+        tracing::warn!("Volumo fixup search failed: {e}");
+        vec![]
+    });
+    let tx_tracks = tx_res.unwrap_or_else(|e| {
+        tracing::warn!("Traxsource fixup search failed: {e}");
+        vec![]
+    });
+
+    let candidates = bp_tracks
+        .into_iter()
+        .map(RawTrack::Bp)
+        .chain(vl_tracks.into_iter().map(RawTrack::Vl))
+        .chain(tx_tracks.into_iter().map(RawTrack::Tx));
+
+    let best = candidates
+        .map(|raw| (score_raw_match(&raw, &track.title, &track.artists), raw))
+        .filter(|(score, _)| *score > 0.5)
+        .max_by(|(a, _), (b, _)| a.total_cmp(b));
+
+    Ok(best.map(|(_, raw)| {
+        let found = raw.into_track(track.yt_id.clone());
+        merge_fixup(track, found)
+    }))
 }
 
 /// Round-robins result lists from all backends together so no single source hogs the front

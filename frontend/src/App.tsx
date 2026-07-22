@@ -385,6 +385,7 @@ const reducer = (state: State, action: Action): State => {
     case "collection-contains-id-response":
     case "path-completions":
     case "validate-track-reply":
+    case "fixup-track-reply":
       return { ...state };
 
     default:

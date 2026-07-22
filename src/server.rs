@@ -573,6 +573,28 @@ async fn handle_msg(
             }
         }
 
+        MsgClient::FixupTrack { id, track } => {
+            match scraper::fixup_track(client.clone(), track).await {
+                Ok(found @ Some(_)) => {
+                    let _ = tx
+                        .send(MsgServer::FixupTrackReply { id, track: found })
+                        .await;
+                }
+                Ok(None) => {
+                    notify(tx, "Fixup found no matching track", "info").await;
+                    let _ = tx
+                        .send(MsgServer::FixupTrackReply { id, track: None })
+                        .await;
+                }
+                Err(e) => {
+                    notify(tx, &format!("Fixup failed: {e}"), "error").await;
+                    let _ = tx
+                        .send(MsgServer::FixupTrackReply { id, track: None })
+                        .await;
+                }
+            }
+        }
+
         MsgClient::UpdateRating { yt_id, rating } => {
             if let Some(pool) = state.pool() {
                 db::update_rating(pool, &yt_id, rating).await?;
