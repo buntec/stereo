@@ -485,6 +485,7 @@ export const SearchResultsGrid = ({
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}
+        suppressCellFocus
         rowClassRules={rowClassRules}
         autoSizeStrategy={autoSizeStrategy}
         rowHeight={32}
@@ -740,6 +741,7 @@ export const TracksGrid = ({
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}
+        suppressCellFocus
         autoSizeStrategy={autoSizeStrategy}
         rowHeight={32}
         getRowId={getRowId}
