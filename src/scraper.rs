@@ -1,11 +1,11 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, LazyLock},
 };
 
 use anyhow::Context;
 use chrono::NaiveDate;
-use futures::future::join_all;
+use futures::{future::join_all, stream, StreamExt};
 use scraper::{Html, Selector};
 use tokio::sync::{mpsc, RwLock};
 use wreq::Client;
@@ -1018,6 +1018,15 @@ impl RawTrack {
         }
     }
 
+    fn release_date(&self) -> NaiveDate {
+        match self {
+            RawTrack::Bp(t) => t.release_date,
+            RawTrack::Sc(t) => t.release_date,
+            RawTrack::Vl(t) => t.release_date,
+            RawTrack::Tx(t) => t.release_date,
+        }
+    }
+
     fn into_track(self, yt_id: String) -> crate::models::Track {
         match self {
             RawTrack::Bp(t) => t.into_track(yt_id),
@@ -1456,6 +1465,221 @@ pub async fn search_by_artist(
             interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks),
         )
         .await;
+        Ok(())
+    })
+    .await;
+}
+
+/// Fetches releases by a single artist or label name across the selected sources, dropping
+/// anything released before `cutoff`. Beatport supports a native date-range query; the other
+/// backends only offer plain-text search, so their results are filtered client-side.
+async fn gather_new_release_raw_tracks(
+    client: &Client,
+    name: &str,
+    is_label: bool,
+    cutoff: NaiveDate,
+    sources: &[TrackSource],
+) -> Vec<RawTrack> {
+    let per_source_limit = 50;
+    let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
+        async {
+            if !sources.contains(&TrackSource::Beatport) {
+                return Ok(vec![]);
+            }
+            if is_label {
+                match bp_search_labels(client, name, 1).await?.into_iter().next() {
+                    Some(label) => bp_get_label_releases(client, &label, Some(cutoff)).await,
+                    None => Ok(vec![]),
+                }
+            } else {
+                match bp_search_artist(client, name, 1).await?.into_iter().next() {
+                    Some(artist) => bp_get_artist_releases(client, &artist, Some(cutoff)).await,
+                    None => Ok(vec![]),
+                }
+            }
+        },
+        async {
+            if sources.contains(&TrackSource::Soundcloud) {
+                sc_tracks_by_person(client, name, per_source_limit, is_label).await
+            } else {
+                Ok(vec![])
+            }
+        },
+        async {
+            if sources.contains(&TrackSource::Volumo) {
+                vl_search_tracks(client, name, per_source_limit).await
+            } else {
+                Ok(vec![])
+            }
+        },
+        async {
+            if sources.contains(&TrackSource::Traxsource) {
+                tx_search_tracks(client, name).await
+            } else {
+                Ok(vec![])
+            }
+        },
+    );
+
+    // Not-yet-released tracks (pre-order pages) sneak past a lower-bound-only filter, and
+    // Beatport's own `publish_date` query param isn't reliably honored server-side, so every
+    // source gets the same client-side [cutoff, today] range check regardless of backend.
+    let today = chrono::Local::now().date_naive();
+    let in_range = |d: NaiveDate| d >= cutoff && d <= today;
+
+    let bp_tracks: Vec<BPTrack> = bp_res
+        .unwrap_or_else(|e| {
+            tracing::warn!("Beatport new-releases search for {name:?} failed: {e}");
+            vec![]
+        })
+        .into_iter()
+        .filter(|t| in_range(t.release_date))
+        .collect();
+    let sc_tracks: Vec<SCTrack> = sc_res
+        .unwrap_or_else(|e| {
+            tracing::warn!("SoundCloud new-releases search for {name:?} failed: {e}");
+            vec![]
+        })
+        .into_iter()
+        .filter(|t| in_range(t.release_date))
+        .collect();
+    let vl_tracks: Vec<VLTrack> = vl_res
+        .unwrap_or_else(|e| {
+            tracing::warn!("Volumo new-releases search for {name:?} failed: {e}");
+            vec![]
+        })
+        .into_iter()
+        .filter(|t| in_range(t.release_date))
+        .collect();
+    let tx_tracks: Vec<TXTrack> = tx_res
+        .unwrap_or_else(|e| {
+            tracing::warn!("Traxsource new-releases search for {name:?} failed: {e}");
+            vec![]
+        })
+        .into_iter()
+        .filter(|t| in_range(t.release_date))
+        .collect();
+
+    bp_tracks
+        .into_iter()
+        .map(RawTrack::Bp)
+        .chain(sc_tracks.into_iter().map(RawTrack::Sc))
+        .chain(vl_tracks.into_iter().map(RawTrack::Vl))
+        .chain(tx_tracks.into_iter().map(RawTrack::Tx))
+        .collect()
+}
+
+/// Like `stream_raw_tracks`, but skips anything whose resolved YouTube id is already in `seen`
+/// — which is seeded with the ids already in the collection, so this both excludes existing
+/// tracks and de-duplicates results found via more than one artist/label.
+/// YouTube-matches are resolved `NEW_RELEASES_MATCH_CONCURRENCY`-wide via `buffered`, which
+/// preserves `raw_tracks`' order (already sorted newest-first) while overlapping the network
+/// round-trips — the dominant cost here, since each of up to `NEW_RELEASES_LIMIT` candidates
+/// needs its own YouTube search. The dedup/send loop itself stays sequential since it's cheap
+/// and mutates `seen`.
+async fn stream_new_release_tracks(
+    client: &Client,
+    tx: &mpsc::Sender<MsgServer>,
+    query_id: i64,
+    seen: &mut HashSet<String>,
+    limit: usize,
+    raw_tracks: Vec<RawTrack>,
+) {
+    let mut matches = stream::iter(raw_tracks)
+        .map(|raw| async move {
+            let vid = find_best_match(client, &raw).await;
+            (raw, vid)
+        })
+        .buffered(NEW_RELEASES_MATCH_CONCURRENCY);
+
+    let mut count = 0;
+    while let Some((raw, vid)) = matches.next().await {
+        let Some(vid) = vid else {
+            continue;
+        };
+        if !seen.insert(vid.id.clone()) {
+            continue;
+        }
+        let source = raw.source();
+        let track = raw.into_track(vid.id);
+        if tx
+            .send(MsgServer::SearchResult {
+                query_id,
+                track,
+                source,
+            })
+            .await
+            .is_err()
+        {
+            break;
+        }
+        count += 1;
+        if count >= limit {
+            break;
+        }
+    }
+}
+
+// Beatport's bot detection is the reason `create_client` impersonates Chrome's TLS
+// fingerprint at all (see CLAUDE.md); keep the artist/label fan-out modest so we don't turn
+// that into a losing battle. YouTube isn't as sensitive, so its match-resolution step below
+// gets a wider budget.
+const NEW_RELEASES_CONCURRENCY: usize = 8;
+const NEW_RELEASES_MATCH_CONCURRENCY: usize = 12;
+// Safety cap regardless of what the client asks for, since every result costs a YouTube search.
+const NEW_RELEASES_MAX_LIMIT: usize = 1000;
+
+/// Parameters for [`search_new_releases`], grouped to keep the function signature manageable.
+pub struct NewReleasesQuery {
+    pub query_id: i64,
+    pub days: i64,
+    pub limit: usize,
+    pub artists: Vec<String>,
+    pub labels: Vec<String>,
+    pub existing_yt_ids: HashSet<String>,
+    pub sources: Vec<TrackSource>,
+}
+
+/// Searches for recent releases by the collection's top artists and labels, streaming matches
+/// via the same `SearchResult`/`SearchComplete` messages as a regular search. Tracks already in
+/// the collection are excluded, and duplicates found under more than one artist/label are
+/// collapsed into a single result.
+pub async fn search_new_releases(client: Arc<Client>, tx: mpsc::Sender<MsgServer>, q: NewReleasesQuery) {
+    let NewReleasesQuery {
+        query_id,
+        days,
+        limit,
+        artists,
+        labels,
+        existing_yt_ids,
+        sources,
+    } = q;
+    let limit = limit.min(NEW_RELEASES_MAX_LIMIT);
+    run_search(&tx, query_id, "search_new_releases", || async {
+        let cutoff = chrono::Local::now().date_naive() - chrono::Duration::days(days);
+        let names: Vec<(String, bool)> = artists
+            .into_iter()
+            .map(|a| (a, false))
+            .chain(labels.into_iter().map(|l| (l, true)))
+            .collect();
+
+        let per_name: Vec<Vec<RawTrack>> = stream::iter(names)
+            .map(|(name, is_label)| {
+                let client = client.clone();
+                let sources = sources.clone();
+                async move {
+                    gather_new_release_raw_tracks(&client, &name, is_label, cutoff, &sources).await
+                }
+            })
+            .buffer_unordered(NEW_RELEASES_CONCURRENCY)
+            .collect()
+            .await;
+
+        let mut raw_tracks: Vec<RawTrack> = per_name.into_iter().flatten().collect();
+        raw_tracks.sort_by_key(|t| std::cmp::Reverse(t.release_date()));
+
+        let mut seen = existing_yt_ids;
+        stream_new_release_tracks(&client, &tx, query_id, &mut seen, limit, raw_tracks).await;
         Ok(())
     })
     .await;

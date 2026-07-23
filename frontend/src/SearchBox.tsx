@@ -112,7 +112,7 @@ function SearchBox({
         <Tooltip content="Limit number of search results">
           <TextField.Slot side="right">
             <Select.Root
-              defaultValue="50"
+              defaultValue="100"
               value={`${searchLimit}`}
               onValueChange={(value: string) => setSearchLimit(parseInt(value))}
             >
@@ -122,6 +122,8 @@ function SearchBox({
                 <Select.Item value="25">25</Select.Item>
                 <Select.Item value="50">50</Select.Item>
                 <Select.Item value="100">100</Select.Item>
+                <Select.Item value="500">500</Select.Item>
+                <Select.Item value="1000">1000</Select.Item>
               </Select.Content>
             </Select.Root>
           </TextField.Slot>

@@ -217,6 +217,12 @@ pub enum MsgClient {
         kind: SearchKind,
         sources: Vec<TrackSource>,
     },
+    SearchNewReleases {
+        query_id: i64,
+        days: i64,
+        limit: i64,
+        sources: Vec<TrackSource>,
+    },
     SearchCancelAll {},
     CollectionContainsId {
         id: i64,

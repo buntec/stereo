@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use anyhow::Context;
 use sqlx::{
@@ -188,6 +191,15 @@ pub async fn track_exists(pool: &SqlitePool, yt_id: &str) -> anyhow::Result<bool
         .fetch_optional(pool)
         .await?;
     Ok(row.is_some())
+}
+
+pub async fn get_all_yt_ids(pool: &SqlitePool) -> anyhow::Result<HashSet<String>> {
+    let rows = sqlx::query("SELECT yt_id FROM tracks")
+        .fetch_all(pool)
+        .await?;
+    rows.iter()
+        .map(|r| r.try_get::<String, _>("yt_id").map_err(Into::into))
+        .collect()
 }
 
 pub async fn update_rating(

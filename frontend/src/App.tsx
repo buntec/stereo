@@ -62,6 +62,7 @@ import { useYTPlayer, type YTPlayerOptions } from "./YT.tsx";
 import { formatDuration, useLocalStorage, shuffleArray } from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid } from "./Grid.tsx";
 import SearchBox from "./SearchBox.tsx";
+import NewReleasesBox from "./NewReleasesBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector from "./CollectionSelector.tsx";
 import RepoSelector from "./RepoSelector.tsx";
@@ -132,6 +133,8 @@ type State = {
   search_limit: number;
   search_kind: SearchKind;
   search_sources: TrackSource[];
+  new_releases_days: number;
+  new_releases_busy: boolean;
 
   track_selection: string[];
   track_info?: ITrack;
@@ -315,12 +318,15 @@ const reducer = (state: State, action: Action): State => {
 
     case "search-complete":
       if (!state.search_query_id || state.search_query_id === action.query_id) {
-        return { ...state, search_busy: false };
+        return { ...state, search_busy: false, new_releases_busy: false };
       }
       return { ...state };
 
     case "set-search-busy":
-      return { ...state, search_busy: true };
+      return { ...state, search_busy: true, new_releases_busy: false };
+
+    case "set-new-releases-busy":
+      return { ...state, search_busy: true, new_releases_busy: true };
 
     case "set-search-limit":
       return { ...state, search_limit: action.limit };
@@ -330,6 +336,9 @@ const reducer = (state: State, action: Action): State => {
 
     case "set-search-sources":
       return { ...state, search_sources: action.sources };
+
+    case "set-new-releases-days":
+      return { ...state, new_releases_days: action.days };
 
     case "set-playback-progress":
       return {
@@ -402,9 +411,11 @@ function App() {
     should_refresh_grid: false,
     should_purge_grid: false,
     search_busy: false,
-    search_limit: 50,
+    search_limit: 100,
     search_kind: "fuzzy",
     search_sources: ["beatport", "volumo", "traxsource"],
+    new_releases_days: 7,
+    new_releases_busy: false,
     notification_show: false,
   });
 
@@ -795,6 +806,29 @@ function App() {
     sendMsg,
     state.search_box_input,
     state.search_kind,
+    state.search_limit,
+    state.search_sources,
+  ]);
+
+  const handleNewReleasesSearch = useCallback(() => {
+    const query_id = ++queryId.current;
+    const days = state.new_releases_days;
+    dispatch({
+      type: "search-box-input",
+      input: `New releases · last ${days} day${days === 1 ? "" : "s"}`,
+    });
+    dispatch({ type: "clear-search-results" });
+    dispatch({ type: "set-new-releases-busy" });
+    sendMsg({
+      type: "search-new-releases",
+      query_id,
+      days,
+      limit: state.search_limit,
+      sources: state.search_sources,
+    });
+  }, [
+    sendMsg,
+    state.new_releases_days,
     state.search_limit,
     state.search_sources,
   ]);
@@ -1249,8 +1283,21 @@ function App() {
               setSearchSources={(sources: TrackSource[]) =>
                 dispatch({ type: "set-search-sources", sources })
               }
-              searchBusy={!!state.search_box_input && state.search_busy}
+              searchBusy={
+                !!state.search_box_input &&
+                state.search_busy &&
+                !state.new_releases_busy
+              }
               errorMessage={state.search_error_message}
+            />
+
+            <NewReleasesBox
+              days={state.new_releases_days}
+              setDays={(days: number) =>
+                dispatch({ type: "set-new-releases-days", days })
+              }
+              onSearch={handleNewReleasesSearch}
+              busy={state.new_releases_busy}
             />
 
             <Flex
@@ -1526,6 +1573,19 @@ function App() {
                   <PlusIcon />
                 </IconButton>
               </Tooltip>
+
+              {state.search_results !== undefined && (
+                <Tooltip content={`${state.search_results.length} results`}>
+                  <Flex align="center" gap="1" px="2" className="row-count">
+                    <Text size="2" color="gray" weight="bold">
+                      {state.search_results.length}
+                    </Text>
+                    <Text size="2" color="gray">
+                      results
+                    </Text>
+                  </Flex>
+                </Tooltip>
+              )}
             </Flex>
           ) : (
             <Flex width="100%" gap="2" p="2" className="grid-controls">

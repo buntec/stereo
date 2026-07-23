@@ -238,6 +238,15 @@ async fn send_collection_stats(state: &SessionState, tx: &mpsc::Sender<MsgServer
     }
 }
 
+/// Merges two `ScoredName` lists into a deduplicated name list, preserving first-seen order.
+fn union_names(a: Vec<crate::models::ScoredName>, b: Vec<crate::models::ScoredName>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    a.into_iter()
+        .chain(b)
+        .filter_map(|s| seen.insert(s.name.clone()).then_some(s.name))
+        .collect()
+}
+
 fn git_spawn(state: &mut SessionState, _home: &std::path::Path) {
     if let (Some(col), Some(repo)) = (&state.collection, &state.repo) {
         // If a push is already pending it will capture any changes made since it was scheduled.
@@ -570,6 +579,49 @@ async fn handle_msg(
                     )),
                 };
                 state.search_task = Some(handle);
+            }
+        }
+
+        MsgClient::SearchNewReleases {
+            query_id,
+            days,
+            limit,
+            sources,
+        } => {
+            if let Some(task) = state.search_task.take() {
+                task.abort();
+            }
+            if let Some(pool) = state.pool() {
+                let stats = db::get_collection_stats(pool).await?;
+                let artists = union_names(stats.top_artists_five_star, stats.top_artists_four_plus);
+                let labels = union_names(stats.top_labels_five_star, stats.top_labels_four_plus);
+                let existing_yt_ids = db::get_all_yt_ids(pool).await?;
+                if artists.is_empty() && labels.is_empty() {
+                    notify(
+                        tx,
+                        "No rated tracks yet to base a new-releases search on",
+                        "info",
+                    )
+                    .await;
+                    let _ = tx.send(MsgServer::SearchComplete { query_id }).await;
+                } else {
+                    let tx2 = tx.clone();
+                    let c = client.clone();
+                    let handle = tokio::spawn(scraper::search_new_releases(
+                        c,
+                        tx2,
+                        scraper::NewReleasesQuery {
+                            query_id,
+                            days,
+                            limit: limit as usize,
+                            artists,
+                            labels,
+                            existing_yt_ids,
+                            sources,
+                        },
+                    ));
+                    state.search_task = Some(handle);
+                }
             }
         }
 

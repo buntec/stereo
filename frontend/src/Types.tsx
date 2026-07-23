@@ -92,6 +92,13 @@ export type ClientMsg =
       limit: number;
       sources: TrackSource[];
     }
+  | {
+      type: "search-new-releases";
+      query_id: number;
+      days: number;
+      limit: number;
+      sources: TrackSource[];
+    }
   | { type: "get-git-remote" }
   | { type: "set-git-remote"; url: string | null }
   | { type: "set-repo"; path: string }
@@ -182,6 +189,8 @@ export type Action =
   | { type: "set-search-limit"; limit: number }
   | { type: "set-search-kind"; kind: SearchKind }
   | { type: "set-search-sources"; sources: TrackSource[] }
+  | { type: "set-new-releases-days"; days: number }
+  | { type: "set-new-releases-busy" }
   | {
       type: "set-playback-progress";
       percent: number;
