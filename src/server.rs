@@ -594,7 +594,11 @@ async fn handle_msg(
             if let Some(pool) = state.pool() {
                 let stats = db::get_collection_stats(pool).await?;
                 let artists = union_names(stats.top_artists_five_star, stats.top_artists_four_plus);
-                let labels = union_names(stats.top_labels_five_star, stats.top_labels_four_plus);
+                let labels: Vec<String> = stats
+                    .top_labels_four_plus
+                    .into_iter()
+                    .map(|s| s.name)
+                    .collect();
                 let existing_yt_ids = db::get_all_yt_ids(pool).await?;
                 if artists.is_empty() && labels.is_empty() {
                     notify(

@@ -49,6 +49,7 @@ export interface IRepo {
 }
 
 export type SearchKind = "fuzzy" | "by-label" | "by-artist";
+export type SearchBoxKind = SearchKind | "new-releases";
 
 export type ClientMsg =
   | { type: "set-collection"; path: string }
@@ -187,10 +188,9 @@ export type Action =
   | { type: "set-search-failure" }
   | { type: "set-search-busy" }
   | { type: "set-search-limit"; limit: number }
-  | { type: "set-search-kind"; kind: SearchKind }
+  | { type: "set-search-kind"; kind: SearchBoxKind }
   | { type: "set-search-sources"; sources: TrackSource[] }
   | { type: "set-new-releases-days"; days: number }
-  | { type: "set-new-releases-busy" }
   | {
       type: "set-playback-progress";
       percent: number;

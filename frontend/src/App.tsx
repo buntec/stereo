@@ -49,7 +49,7 @@ import type {
   ICollection,
   ICollectionStats,
   IRepo,
-  SearchKind,
+  SearchBoxKind,
   TrackSource,
   Action,
   ClientMsg,
@@ -62,7 +62,6 @@ import { useYTPlayer, type YTPlayerOptions } from "./YT.tsx";
 import { formatDuration, useLocalStorage, shuffleArray } from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid } from "./Grid.tsx";
 import SearchBox from "./SearchBox.tsx";
-import NewReleasesBox from "./NewReleasesBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector from "./CollectionSelector.tsx";
 import RepoSelector from "./RepoSelector.tsx";
@@ -131,10 +130,9 @@ type State = {
   search_error_message?: string;
   search_box_input?: string;
   search_limit: number;
-  search_kind: SearchKind;
+  search_kind: SearchBoxKind;
   search_sources: TrackSource[];
   new_releases_days: number;
-  new_releases_busy: boolean;
 
   track_selection: string[];
   track_info?: ITrack;
@@ -318,15 +316,12 @@ const reducer = (state: State, action: Action): State => {
 
     case "search-complete":
       if (!state.search_query_id || state.search_query_id === action.query_id) {
-        return { ...state, search_busy: false, new_releases_busy: false };
+        return { ...state, search_busy: false };
       }
       return { ...state };
 
     case "set-search-busy":
-      return { ...state, search_busy: true, new_releases_busy: false };
-
-    case "set-new-releases-busy":
-      return { ...state, search_busy: true, new_releases_busy: true };
+      return { ...state, search_busy: true };
 
     case "set-search-limit":
       return { ...state, search_limit: action.limit };
@@ -415,7 +410,6 @@ function App() {
     search_kind: "fuzzy",
     search_sources: ["beatport", "volumo", "traxsource"],
     new_releases_days: 7,
-    new_releases_busy: false,
     notification_show: false,
   });
 
@@ -788,6 +782,20 @@ function App() {
   }, [sendMsg, state.search_box_input]);
 
   const handleSearch = useCallback(() => {
+    if (state.search_kind === "new-releases") {
+      const query_id = ++queryId.current;
+      dispatch({ type: "clear-search-results" });
+      dispatch({ type: "set-search-busy" });
+      sendMsg({
+        type: "search-new-releases",
+        query_id,
+        days: state.new_releases_days,
+        limit: state.search_limit,
+        sources: state.search_sources,
+      });
+      return;
+    }
+
     const query = state.search_box_input?.trim() ?? "";
     if (query.length > 0) {
       const query_id = ++queryId.current;
@@ -808,29 +816,7 @@ function App() {
     state.search_kind,
     state.search_limit,
     state.search_sources,
-  ]);
-
-  const handleNewReleasesSearch = useCallback(() => {
-    const query_id = ++queryId.current;
-    const days = state.new_releases_days;
-    dispatch({
-      type: "search-box-input",
-      input: `New releases · last ${days} day${days === 1 ? "" : "s"}`,
-    });
-    dispatch({ type: "clear-search-results" });
-    dispatch({ type: "set-new-releases-busy" });
-    sendMsg({
-      type: "search-new-releases",
-      query_id,
-      days,
-      limit: state.search_limit,
-      sources: state.search_sources,
-    });
-  }, [
-    sendMsg,
     state.new_releases_days,
-    state.search_limit,
-    state.search_sources,
   ]);
 
   useEffect(() => {
@@ -1078,8 +1064,24 @@ function App() {
     [settings, setSettings],
   );
 
+  const isSearchGridActive =
+    (state.search_results !== undefined || state.search_busy) &&
+    (state.search_kind === "new-releases" || !!state.search_box_input);
+
   const centerGridAroundCurrentTrack = useCallback(() => {
-    if (state.current_id && gridReady && gridRef.current) {
+    if (!state.current_id) {
+      return;
+    }
+    if (isSearchGridActive) {
+      const index = state.search_results?.findIndex(
+        (track) => track.yt_id === state.current_id,
+      );
+      if (index !== undefined && index >= 0) {
+        searchGridRef.current?.api.ensureIndexVisible(index, "middle");
+      }
+      return;
+    }
+    if (gridReady && gridRef.current) {
       const api = gridRef.current.api;
       const filterModel = api.getState().filter?.filterModel;
       const sortModel = api.getState().sort?.sortModel;
@@ -1102,7 +1104,13 @@ function App() {
         },
       );
     }
-  }, [gridReady, requestReply, state.current_id]);
+  }, [
+    gridReady,
+    requestReply,
+    state.current_id,
+    isSearchGridActive,
+    state.search_results,
+  ]);
 
   const nextTrack = useCallback(
     () => dispatch({ type: "play-next-track" }),
@@ -1276,28 +1284,23 @@ function App() {
                 dispatch({ type: "set-search-limit", limit })
               }
               searchKind={state.search_kind}
-              setSearchKind={(kind: SearchKind) =>
+              setSearchKind={(kind: SearchBoxKind) =>
                 dispatch({ type: "set-search-kind", kind })
               }
               searchSources={state.search_sources}
               setSearchSources={(sources: TrackSource[]) =>
                 dispatch({ type: "set-search-sources", sources })
               }
-              searchBusy={
-                !!state.search_box_input &&
-                state.search_busy &&
-                !state.new_releases_busy
-              }
-              errorMessage={state.search_error_message}
-            />
-
-            <NewReleasesBox
-              days={state.new_releases_days}
-              setDays={(days: number) =>
+              newReleasesDays={state.new_releases_days}
+              setNewReleasesDays={(days: number) =>
                 dispatch({ type: "set-new-releases-days", days })
               }
-              onSearch={handleNewReleasesSearch}
-              busy={state.new_releases_busy}
+              searchBusy={
+                (state.search_kind === "new-releases" ||
+                  !!state.search_box_input) &&
+                state.search_busy
+              }
+              errorMessage={state.search_error_message}
             />
 
             <Flex
@@ -1543,7 +1546,8 @@ function App() {
             <div ref={playerRef} />
           </div>
           {(state.search_results !== undefined || state.search_busy) &&
-          !!state.search_box_input ? (
+          (state.search_kind === "new-releases" ||
+            !!state.search_box_input) ? (
             <Flex width="100%" gap="2" p="2">
               <Tooltip content="Add selected tracks (don't overwrite existing)">
                 <IconButton
@@ -1685,7 +1689,8 @@ function App() {
           )}
           <Box className="grid-container">
             {(state.search_results !== undefined || state.search_busy) &&
-            !!state.search_box_input ? (
+            (state.search_kind === "new-releases" ||
+              !!state.search_box_input) ? (
               <SearchResultsGrid
                 gridRef={searchGridRef}
                 currentId={state.current_id}
