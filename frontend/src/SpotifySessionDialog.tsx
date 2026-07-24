@@ -12,6 +12,7 @@ import {
 } from "@radix-ui/themes";
 
 import type { RequestReply } from "./Types.tsx";
+import SpotifyIcon from "./SpotifyIcon.tsx";
 
 type SpotifySessionDialogProps = {
   requestReply: RequestReply;
@@ -48,9 +49,7 @@ function SpotifySessionDialog({ requestReply }: SpotifySessionDialogProps) {
       <Tooltip content="Connect a Spotify account (for creating playlists)">
         <Dialog.Trigger>
           <IconButton variant={connected ? "solid" : "soft"} color="green">
-            <Text size="1" weight="bold">
-              Sp
-            </Text>
+            <SpotifyIcon />
           </IconButton>
         </Dialog.Trigger>
       </Tooltip>
