@@ -72,6 +72,8 @@ import {
   OAuthProgressDialog,
   useYouTubeOAuthCallback,
 } from "./YouTubePlaylistDialog.tsx";
+import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
+import SpotifyPlaylistDialog from "./SpotifyPlaylistDialog.tsx";
 import AppearanceSwitch from "./AppearanceSwitch.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
@@ -383,6 +385,8 @@ const reducer = (state: State, action: Action): State => {
     case "default-collection":
     case "rows":
     case "yt-anon-playlist":
+    case "spotify-session":
+    case "spotify-playlist":
     case "tracks":
     case "row-index":
     case "heartbeat":
@@ -926,6 +930,49 @@ function App() {
   const [ytPlaylistOpen, setYtPlaylistOpen] = useState(false);
   const [ytPlaylistYtIds, setYtPlaylistYtIds] = useState<string[]>([]);
 
+  const [spotifyPlaylistOpen, setSpotifyPlaylistOpen] = useState(false);
+  const [spotifyPlaylistTracks, setSpotifyPlaylistTracks] = useState<
+    { artist: string; title: string }[]
+  >([]);
+
+  const exportSelectionToSpotifyPlaylist = useCallback(() => {
+    const selectedRows = gridRef.current?.api.getSelectedRows();
+    if (selectedRows && selectedRows.length > 0) {
+      setSpotifyPlaylistTracks(
+        selectedRows.map((t: ITrack) => ({
+          artist: t.artists.join(", "),
+          title: t.title,
+        })),
+      );
+      setSpotifyPlaylistOpen(true);
+    }
+  }, []);
+
+  const createSpotifyPlaylist = useCallback(
+    (name: string) => {
+      requestReply(
+        {
+          type: "create-spotify-playlist",
+          name,
+          tracks: spotifyPlaylistTracks,
+        },
+        (r) => {
+          if ("matched" in r) {
+            if (r.url) window.open(r.url, "_blank");
+            dispatch({
+              type: "notification",
+              kind: r.url ? "info" : "error",
+              message: r.url
+                ? `Created Spotify playlist with ${r.matched}/${r.total} matched tracks`
+                : "Failed to create Spotify playlist",
+            });
+          }
+        },
+      );
+    },
+    [requestReply, spotifyPlaylistTracks],
+  );
+
   const openSelectedTracksAsYTSavedPlaylist = useCallback(() => {
     const selectedRows = gridRef.current?.api.getSelectedRows();
     if (selectedRows && selectedRows.length > 0) {
@@ -1271,6 +1318,7 @@ function App() {
                   }}
                 />
               )}
+              <SpotifySessionDialog requestReply={requestReply} />
             </Flex>
 
             <SearchBox
@@ -1546,8 +1594,7 @@ function App() {
             <div ref={playerRef} />
           </div>
           {(state.search_results !== undefined || state.search_busy) &&
-          (state.search_kind === "new-releases" ||
-            !!state.search_box_input) ? (
+          (state.search_kind === "new-releases" || !!state.search_box_input) ? (
             <Flex width="100%" gap="2" p="2">
               <Tooltip content="Add selected tracks (don't overwrite existing)">
                 <IconButton
@@ -1624,6 +1671,9 @@ function App() {
                 }
                 exportTop50ToYTM={openTopTracksAsYTMPlaylist}
                 exportAllToYTSavedPlaylist={openAllTracksAsYTSavedPlaylist}
+                exportSelectionToSpotifyPlaylist={
+                  exportSelectionToSpotifyPlaylist
+                }
               />
 
               <ImportDialog
@@ -1734,6 +1784,12 @@ function App() {
           open={ytPlaylistOpen}
           ytIds={ytPlaylistYtIds}
           onOpenChange={setYtPlaylistOpen}
+        />
+        <SpotifyPlaylistDialog
+          open={spotifyPlaylistOpen}
+          trackCount={spotifyPlaylistTracks.length}
+          onOpenChange={setSpotifyPlaylistOpen}
+          onCreate={createSpotifyPlaylist}
         />
         <OAuthProgressDialog phase={oauthPhase} />
       </Toast.Provider>

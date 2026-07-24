@@ -16,6 +16,7 @@ use crate::{
     models::{
         BPArtist, BPLabel, BPTrack, SCTrack, SCUser, TXTrack, Track, TrackSource, VLTrack, YTVideo,
     },
+    spotify::{self, SpTrack},
 };
 
 pub fn create_client() -> anyhow::Result<Client> {
@@ -896,6 +897,7 @@ enum RawTrack {
     Sc(SCTrack),
     Vl(VLTrack),
     Tx(TXTrack),
+    Sp(SpTrack),
 }
 
 /// Words that mark a bracketed segment of a title as a mix/edit identifier, as opposed to
@@ -976,6 +978,7 @@ impl RawTrack {
                 q += &t.label;
                 q
             }
+            RawTrack::Sp(t) => format!("{} {}", t.track_name, t.artists.join(", ")),
         }
     }
 
@@ -985,6 +988,7 @@ impl RawTrack {
             RawTrack::Sc(t) => &t.track_name,
             RawTrack::Vl(t) => &t.track_name,
             RawTrack::Tx(t) => &t.track_name,
+            RawTrack::Sp(t) => &t.track_name,
         }
     }
 
@@ -994,6 +998,7 @@ impl RawTrack {
             RawTrack::Sc(t) => &t.artists,
             RawTrack::Vl(t) => &t.artists,
             RawTrack::Tx(t) => &t.artists,
+            RawTrack::Sp(t) => &t.artists,
         }
     }
 
@@ -1006,6 +1011,7 @@ impl RawTrack {
             RawTrack::Sc(t) => extract_mix_tag(&t.track_name),
             RawTrack::Vl(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
             RawTrack::Tx(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
+            RawTrack::Sp(_) => None,
         }
     }
 
@@ -1015,6 +1021,7 @@ impl RawTrack {
             RawTrack::Sc(_) => TrackSource::Soundcloud,
             RawTrack::Vl(_) => TrackSource::Volumo,
             RawTrack::Tx(_) => TrackSource::Traxsource,
+            RawTrack::Sp(_) => TrackSource::Spotify,
         }
     }
 
@@ -1024,6 +1031,7 @@ impl RawTrack {
             RawTrack::Sc(t) => t.release_date,
             RawTrack::Vl(t) => t.release_date,
             RawTrack::Tx(t) => t.release_date,
+            RawTrack::Sp(t) => t.release_date,
         }
     }
 
@@ -1033,6 +1041,7 @@ impl RawTrack {
             RawTrack::Sc(t) => t.into_track(yt_id),
             RawTrack::Vl(t) => t.into_track(yt_id),
             RawTrack::Tx(t) => t.into_track(yt_id),
+            RawTrack::Sp(t) => t.into_track(yt_id),
         }
     }
 }
@@ -1186,22 +1195,30 @@ pub async fn fixup_track(client: Arc<Client>, track: Track) -> anyhow::Result<Op
 
 /// Round-robins result lists from all backends together so no single source hogs the front
 /// of the queue.
-fn interleave(a: Vec<BPTrack>, b: Vec<SCTrack>, c: Vec<VLTrack>, d: Vec<TXTrack>) -> Vec<RawTrack> {
+fn interleave(
+    a: Vec<BPTrack>,
+    b: Vec<SCTrack>,
+    c: Vec<VLTrack>,
+    d: Vec<TXTrack>,
+    e: Vec<SpTrack>,
+) -> Vec<RawTrack> {
     let cutoff = chrono::Local::now().date_naive() + chrono::Duration::days(1);
     let mut a = a.into_iter().filter(|t| t.release_date <= cutoff);
     let mut b = b.into_iter().filter(|t| t.release_date <= cutoff);
     let mut c = c.into_iter().filter(|t| t.release_date <= cutoff);
     let mut d = d.into_iter().filter(|t| t.release_date <= cutoff);
+    let mut e = e.into_iter().filter(|t| t.release_date <= cutoff);
     let mut out = Vec::new();
     loop {
-        let (w, x, y, z) = (a.next(), b.next(), c.next(), d.next());
-        if w.is_none() && x.is_none() && y.is_none() && z.is_none() {
+        let (v, w, x, y, z) = (a.next(), b.next(), c.next(), d.next(), e.next());
+        if v.is_none() && w.is_none() && x.is_none() && y.is_none() && z.is_none() {
             break;
         }
-        out.extend(w.map(RawTrack::Bp));
-        out.extend(x.map(RawTrack::Sc));
-        out.extend(y.map(RawTrack::Vl));
-        out.extend(z.map(RawTrack::Tx));
+        out.extend(v.map(RawTrack::Bp));
+        out.extend(w.map(RawTrack::Sc));
+        out.extend(x.map(RawTrack::Vl));
+        out.extend(y.map(RawTrack::Tx));
+        out.extend(z.map(RawTrack::Sp));
     }
     out
 }
@@ -1265,7 +1282,7 @@ pub async fn search_fuzzy(
     sources: Vec<TrackSource>,
 ) {
     run_search(&tx, query_id, "search_fuzzy", || async {
-        let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
+        let (bp_res, sc_res, vl_res, tx_res, sp_res) = tokio::join!(
             async {
                 if sources.contains(&TrackSource::Beatport) {
                     bp_search_tracks(&client, &query).await
@@ -1294,6 +1311,13 @@ pub async fn search_fuzzy(
                     Ok(vec![])
                 }
             },
+            async {
+                if sources.contains(&TrackSource::Spotify) {
+                    spotify::search_tracks(&client, &query, limit).await
+                } else {
+                    Ok(vec![])
+                }
+            },
         );
         let bp_tracks = bp_res.unwrap_or_else(|e| {
             tracing::warn!("Beatport track search failed: {e}");
@@ -1311,12 +1335,16 @@ pub async fn search_fuzzy(
             tracing::warn!("Traxsource track search failed: {e}");
             vec![]
         });
+        let sp_tracks = sp_res.unwrap_or_else(|e| {
+            tracing::warn!("Spotify track search failed: {e}");
+            vec![]
+        });
         stream_raw_tracks(
             &client,
             &tx,
             query_id,
             limit,
-            interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks),
+            interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks, sp_tracks),
         )
         .await;
         Ok(())
@@ -1333,7 +1361,7 @@ pub async fn search_by_label(
     sources: Vec<TrackSource>,
 ) {
     run_search(&tx, query_id, "search_by_label", || async {
-        let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
+        let (bp_res, sc_res, vl_res, tx_res, sp_res) = tokio::join!(
             async {
                 if !sources.contains(&TrackSource::Beatport) {
                     return Ok(vec![]);
@@ -1367,6 +1395,14 @@ pub async fn search_by_label(
                     Ok(vec![])
                 }
             },
+            async {
+                // Spotify's search API also has no dedicated label-catalog endpoint.
+                if sources.contains(&TrackSource::Spotify) {
+                    spotify::search_tracks(&client, &label_name, limit).await
+                } else {
+                    Ok(vec![])
+                }
+            },
         );
         let bp_tracks = bp_res.unwrap_or_else(|e| {
             tracing::warn!("Beatport label search failed: {e}");
@@ -1384,12 +1420,16 @@ pub async fn search_by_label(
             tracing::warn!("Traxsource label search failed: {e}");
             vec![]
         });
+        let sp_tracks = sp_res.unwrap_or_else(|e| {
+            tracing::warn!("Spotify label search failed: {e}");
+            vec![]
+        });
         stream_raw_tracks(
             &client,
             &tx,
             query_id,
             limit,
-            interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks),
+            interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks, sp_tracks),
         )
         .await;
         Ok(())
@@ -1406,7 +1446,7 @@ pub async fn search_by_artist(
     sources: Vec<TrackSource>,
 ) {
     run_search(&tx, query_id, "search_by_artist", || async {
-        let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
+        let (bp_res, sc_res, vl_res, tx_res, sp_res) = tokio::join!(
             async {
                 if !sources.contains(&TrackSource::Beatport) {
                     return Ok(vec![]);
@@ -1440,6 +1480,14 @@ pub async fn search_by_artist(
                     Ok(vec![])
                 }
             },
+            async {
+                // Same for Spotify.
+                if sources.contains(&TrackSource::Spotify) {
+                    spotify::search_tracks(&client, &artist_name, limit).await
+                } else {
+                    Ok(vec![])
+                }
+            },
         );
         let bp_tracks = bp_res.unwrap_or_else(|e| {
             tracing::warn!("Beatport artist search failed: {e}");
@@ -1457,12 +1505,16 @@ pub async fn search_by_artist(
             tracing::warn!("Traxsource artist search failed: {e}");
             vec![]
         });
+        let sp_tracks = sp_res.unwrap_or_else(|e| {
+            tracing::warn!("Spotify artist search failed: {e}");
+            vec![]
+        });
         stream_raw_tracks(
             &client,
             &tx,
             query_id,
             limit,
-            interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks),
+            interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks, sp_tracks),
         )
         .await;
         Ok(())
@@ -1644,7 +1696,11 @@ pub struct NewReleasesQuery {
 /// via the same `SearchResult`/`SearchComplete` messages as a regular search. Tracks already in
 /// the collection are excluded, and duplicates found under more than one artist/label are
 /// collapsed into a single result.
-pub async fn search_new_releases(client: Arc<Client>, tx: mpsc::Sender<MsgServer>, q: NewReleasesQuery) {
+pub async fn search_new_releases(
+    client: Arc<Client>,
+    tx: mpsc::Sender<MsgServer>,
+    q: NewReleasesQuery,
+) {
     let NewReleasesQuery {
         query_id,
         days,

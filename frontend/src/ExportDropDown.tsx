@@ -11,6 +11,7 @@ type ExportDropDownProps = {
   exportSelectionToYTSavedPlaylist: () => void;
   exportTop50ToYTM: () => void;
   exportAllToYTSavedPlaylist: () => void;
+  exportSelectionToSpotifyPlaylist: () => void;
 };
 
 function ExportDropDown({
@@ -21,6 +22,7 @@ function ExportDropDown({
   exportSelectionToYTSavedPlaylist,
   exportTop50ToYTM,
   exportAllToYTSavedPlaylist,
+  exportSelectionToSpotifyPlaylist,
 }: ExportDropDownProps) {
   const hasSelection = selectionCount > 0;
 
@@ -62,6 +64,12 @@ function ExportDropDown({
           onSelect={exportSelectionToYTSavedPlaylist}
         >
           Export selection to YouTube playlist (login required)
+        </DropdownMenu.Item>
+        <DropdownMenu.Item
+          disabled={!hasSelection}
+          onSelect={exportSelectionToSpotifyPlaylist}
+        >
+          Create Spotify playlist from selection
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
         <DropdownMenu.Item onSelect={exportTop50ToYTM}>

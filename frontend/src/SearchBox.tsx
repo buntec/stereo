@@ -37,6 +37,7 @@ const ALL_SEARCH_SOURCES: { value: TrackSource; label: string }[] = [
   { value: "soundcloud", label: "SoundCloud" },
   { value: "volumo", label: "Volumo" },
   { value: "traxsource", label: "Traxsource" },
+  { value: "spotify", label: "Spotify" },
 ];
 
 const DAY_OPTIONS = [1, 7, 14, 30, 60, 90, 180, 365];
@@ -143,12 +144,7 @@ function SearchBox({
         {kindSelect}
       </Tooltip>
       {isNewReleases ? (
-        <Flex
-          className="search-box-text-field"
-          align="center"
-          gap="2"
-          px="2"
-        >
+        <Flex className="search-box-text-field" align="center" gap="2" px="2">
           <MagnifyingGlassIcon height="16" width="16" />
           {searchBusy ? <Spinner size="2" /> : null}
           <Select.Root

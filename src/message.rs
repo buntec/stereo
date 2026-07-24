@@ -70,6 +70,16 @@ pub enum MsgServer {
     GitRemote {
         url: Option<String>,
     },
+    SpotifySession {
+        id: i64,
+        connected: bool,
+    },
+    SpotifyPlaylist {
+        id: i64,
+        url: Option<String>,
+        matched: i64,
+        total: i64,
+    },
     ValidateTrackReply {
         id: i64,
         is_valid: bool,
@@ -92,6 +102,12 @@ pub enum MsgServer {
         id: i64,
         track: Option<Track>,
     },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SpotifyTrackRef {
+    pub artist: String,
+    pub title: String,
 }
 
 // ── Client → Server ──────────────────────────────────────────────────────────
@@ -242,6 +258,21 @@ pub enum MsgClient {
     GetGitRemote,
     SetGitRemote {
         url: Option<String>,
+    },
+    GetSpotifySession {
+        id: i64,
+    },
+    SetSpotifySession {
+        id: i64,
+        cookie: Option<String>,
+    },
+    DetectSpotifySession {
+        id: i64,
+    },
+    CreateSpotifyPlaylist {
+        id: i64,
+        name: String,
+        tracks: Vec<SpotifyTrackRef>,
     },
     SetRepo {
         path: String,

@@ -256,6 +256,7 @@ pub enum TrackSource {
     Soundcloud,
     Volumo,
     Traxsource,
+    Spotify,
 }
 
 pub struct MBRecording {

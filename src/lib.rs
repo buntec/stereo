@@ -5,4 +5,5 @@ pub mod models;
 pub mod scraper;
 pub mod server;
 pub mod settings;
+pub mod spotify;
 pub mod utils;

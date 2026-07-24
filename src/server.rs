@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use anyhow::Context;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -16,6 +17,7 @@ use crate::{
     models::{Collection, Track},
     scraper,
     settings::Settings,
+    spotify,
     utils::{self, PathKind},
 };
 
@@ -115,7 +117,9 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
 
     let mut client_rx = client_rx;
     while let Some(msg) = client_rx.recv().await {
-        if let Err(e) = handle_msg(&mut state, &server_tx, &http_client, &repos_dir, msg).await {
+        if let Err(e) =
+            handle_msg(&mut state, &server_tx, &http_client, &home, &repos_dir, msg).await
+        {
             tracing::error!("Message handling error: {e}");
         }
     }
@@ -239,7 +243,10 @@ async fn send_collection_stats(state: &SessionState, tx: &mpsc::Sender<MsgServer
 }
 
 /// Merges two `ScoredName` lists into a deduplicated name list, preserving first-seen order.
-fn union_names(a: Vec<crate::models::ScoredName>, b: Vec<crate::models::ScoredName>) -> Vec<String> {
+fn union_names(
+    a: Vec<crate::models::ScoredName>,
+    b: Vec<crate::models::ScoredName>,
+) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     a.into_iter()
         .chain(b)
@@ -284,6 +291,7 @@ async fn handle_msg(
     state: &mut SessionState,
     tx: &mpsc::Sender<MsgServer>,
     client: &Arc<wreq::Client>,
+    data_home: &std::path::Path,
     home: &std::path::Path,
     msg: MsgClient,
 ) -> anyhow::Result<()> {
@@ -435,6 +443,66 @@ async fn handle_msg(
             }
         }
 
+        MsgClient::GetSpotifySession { id } => {
+            let connected = spotify::SpotifySession::load(data_home).await.is_some();
+            let _ = tx.send(MsgServer::SpotifySession { id, connected }).await;
+        }
+
+        MsgClient::SetSpotifySession { id, cookie } => {
+            let result = match &cookie {
+                Some(cookie) => spotify::SpotifySession::save(data_home, cookie).await,
+                None => spotify::SpotifySession::clear(data_home).await,
+            };
+            match result {
+                Ok(()) => {
+                    let _ = tx
+                        .send(MsgServer::SpotifySession {
+                            id,
+                            connected: cookie.is_some(),
+                        })
+                        .await;
+                }
+                Err(e) => notify(tx, &format!("Failed to set Spotify session: {e}"), "error").await,
+            }
+        }
+
+        MsgClient::DetectSpotifySession { id } => {
+            let tx = tx.clone();
+            let data_home = data_home.to_path_buf();
+            tokio::spawn(async move {
+                match spotify::detect_session().await {
+                    Ok(session) => {
+                        match spotify::SpotifySession::save(&data_home, &session.cookie).await {
+                            Ok(()) => {
+                                let _ = tx
+                                    .send(MsgServer::SpotifySession {
+                                        id,
+                                        connected: true,
+                                    })
+                                    .await;
+                            }
+                            Err(e) => {
+                                notify(
+                                    &tx,
+                                    &format!("Failed to save Spotify session: {e}"),
+                                    "error",
+                                )
+                                .await
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        notify(
+                            &tx,
+                            &format!("Could not auto-detect Spotify session: {e}"),
+                            "error",
+                        )
+                        .await
+                    }
+                }
+            });
+        }
+
         MsgClient::DeleteTracks { ids } => {
             if let Some(pool) = state.pool() {
                 db::delete_tracks(pool, &ids).await?;
@@ -516,6 +584,68 @@ async fn handle_msg(
                     .await;
                 }
             }
+        }
+
+        MsgClient::CreateSpotifyPlaylist { id, name, tracks } => {
+            let Some(session) = spotify::SpotifySession::load(data_home).await else {
+                notify(tx, "Connect a Spotify account first", "error").await;
+                return Ok(());
+            };
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let total = tracks.len() as i64;
+                let matches: Vec<Option<String>> = futures::stream::iter(tracks)
+                    .map(|t| {
+                        let client = Arc::clone(&client);
+                        async move {
+                            match spotify::match_track(&client, &t.artist, &t.title).await {
+                                Ok(found) => found.map(|sp| sp.uri),
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Spotify match failed for {} - {}: {e}",
+                                        t.artist,
+                                        t.title
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                    })
+                    .buffer_unordered(5)
+                    .collect()
+                    .await;
+                let uris: Vec<String> = matches.into_iter().flatten().collect();
+                let matched = uris.len() as i64;
+
+                let result: anyhow::Result<String> = async {
+                    let playlist_uri = spotify::create_playlist(&client, &session, &name).await?;
+                    spotify::add_tracks(&client, &session, &playlist_uri, &uris).await?;
+                    spotify::playlist_url(&playlist_uri).context("malformed playlist uri")
+                }
+                .await;
+
+                match result {
+                    Ok(url) => {
+                        let _ = tx
+                            .send(MsgServer::SpotifyPlaylist {
+                                id,
+                                url: Some(url),
+                                matched,
+                                total,
+                            })
+                            .await;
+                    }
+                    Err(e) => {
+                        notify(
+                            &tx,
+                            &format!("Failed to create Spotify playlist: {e}"),
+                            "error",
+                        )
+                        .await;
+                    }
+                }
+            });
         }
 
         MsgClient::CreateYtAnonPlaylist { id, yt_ids } => {

@@ -44,3 +44,13 @@ strsim = "0.11"
 tempfile = "3"
 clap = { version = "4", features = ["derive", "env"] }
 url = "2"
+
+# Spotify integration: TOTP for the anonymous web-player token, regex/base64 for
+# extracting persisted-query hashes and decoding the app server config out of Spotify's
+# obfuscated JS/HTML.
+totp-rs = "5"
+regex = "1"
+base64 = "0.22"
+# Reads Spotify session cookies directly from installed browsers, as an alternative to
+# manually pasting the Cookie header.
+rookie = "0.5"

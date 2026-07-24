@@ -1,4 +1,9 @@
-export type TrackSource = "beatport" | "soundcloud" | "volumo" | "traxsource";
+export type TrackSource =
+  | "beatport"
+  | "soundcloud"
+  | "volumo"
+  | "traxsource"
+  | "spotify";
 
 export interface ITrack {
   title: string;
@@ -102,6 +107,15 @@ export type ClientMsg =
     }
   | { type: "get-git-remote" }
   | { type: "set-git-remote"; url: string | null }
+  | { type: "get-spotify-session"; id?: number }
+  | { type: "set-spotify-session"; id?: number; cookie: string | null }
+  | { type: "detect-spotify-session"; id?: number }
+  | {
+      type: "create-spotify-playlist";
+      id?: number;
+      name: string;
+      tracks: { artist: string; title: string }[];
+    }
   | { type: "set-repo"; path: string }
   | { type: "clone-repo"; url: string }
   | { type: "list-repos" }
@@ -158,6 +172,14 @@ export type ServerMsg =
       contains_id: boolean;
     }
   | { type: "git-remote"; url: string | null }
+  | { type: "spotify-session"; id: number; connected: boolean }
+  | {
+      type: "spotify-playlist";
+      id: number;
+      url: string | null;
+      matched: number;
+      total: number;
+    }
   | { type: "repos"; repos: IRepo[] }
   | { type: "collections"; collections: ICollection[] }
   | {
