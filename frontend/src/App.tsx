@@ -30,7 +30,7 @@ import {
 } from "@radix-ui/react-icons";
 
 import { Theme } from "@astryxdesign/core/theme";
-import { neutralTheme } from "@astryxdesign/theme-neutral";
+import { stereoTheme } from "./theme";
 import { Slider } from "@astryxdesign/core/Slider";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { Skeleton } from "@astryxdesign/core/Skeleton";
@@ -1487,7 +1487,7 @@ function App() {
   });
 
   return (
-    <Theme theme={neutralTheme} mode={settings.appearance}>
+    <Theme theme={stereoTheme} mode={settings.appearance}>
       <VStack
         ref={appShellRef}
         className={`app-main ${settings.fullScreen ? "fullscreen" : ""}`}
