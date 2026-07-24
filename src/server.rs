@@ -1114,10 +1114,9 @@ async fn handle_msg(
 
         MsgClient::IncPlayCount { yt_id } => {
             if let Some(pool) = state.pool() {
-                if let Some(mut track) = db::get_track(pool, &yt_id).await? {
-                    track.play_count += 1;
-                    track.last_played = Some(chrono::Local::now().date_naive());
-                    db::insert_track(pool, &track, false).await?;
+                let last_played = chrono::Local::now().date_naive();
+                db::inc_play_count(pool, &yt_id, last_played).await?;
+                if let Some(track) = db::get_track(pool, &yt_id).await? {
                     let _ = tx.send(MsgServer::TrackUpdate { track }).await;
                 }
                 git_spawn(state, home);

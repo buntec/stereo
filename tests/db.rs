@@ -304,6 +304,120 @@ async fn test_get_row_index() {
 }
 
 #[tokio::test]
+async fn test_get_rows_ties_broken_by_yt_id() {
+    let (pool, _dir) = setup().await;
+    // All tracks share the same release_date (set by make_track), so sorting by
+    // release_date alone leaves ties that must be broken by yt_id.
+    for yt_id in ["zorro", "apple", "mango"] {
+        db::insert_track(&pool, &make_track(yt_id), true)
+            .await
+            .unwrap();
+    }
+
+    let sort = vec![SortModelItem {
+        col_id: "release_date".to_string(),
+        sort: "asc".to_string(),
+        sort_type: None,
+    }];
+
+    let rows = db::get_rows(&pool, 0, 10, &sort, &HashMap::new())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        rows.iter().map(|r| r.yt_id.as_str()).collect::<Vec<_>>(),
+        vec!["apple", "mango", "zorro"]
+    );
+}
+
+#[tokio::test]
+async fn test_get_row_index_ties_broken_by_yt_id() {
+    let (pool, _dir) = setup().await;
+    for yt_id in ["zorro", "apple", "mango"] {
+        db::insert_track(&pool, &make_track(yt_id), true)
+            .await
+            .unwrap();
+    }
+
+    let sort = vec![SortModelItem {
+        col_id: "release_date".to_string(),
+        sort: "asc".to_string(),
+        sort_type: None,
+    }];
+
+    let idx = db::get_row_index(&pool, "mango", &sort, &HashMap::new())
+        .await
+        .unwrap();
+    assert_eq!(idx, 1); // apple(0), mango(1), zorro(2)
+}
+
+#[tokio::test]
+async fn test_inc_play_count() {
+    let (pool, _dir) = setup().await;
+    db::insert_track(&pool, &make_track("play1"), true)
+        .await
+        .unwrap();
+
+    let day1 = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
+    db::inc_play_count(&pool, "play1", day1).await.unwrap();
+
+    let fetched = db::get_track(&pool, "play1").await.unwrap().unwrap();
+    assert_eq!(fetched.play_count, 1);
+    assert_eq!(fetched.last_played, Some(day1));
+
+    let day2 = NaiveDate::from_ymd_opt(2026, 7, 2).unwrap();
+    db::inc_play_count(&pool, "play1", day2).await.unwrap();
+
+    let fetched = db::get_track(&pool, "play1").await.unwrap().unwrap();
+    assert_eq!(fetched.play_count, 2);
+    assert_eq!(fetched.last_played, Some(day2));
+}
+
+#[tokio::test]
+async fn test_inc_play_count_does_not_reorder_ties() {
+    // Regression test: incrementing play count used to go through `insert_track`'s
+    // `INSERT OR REPLACE`, which deletes and re-inserts the row (a new rowid), which could
+    // shuffle its position among tied sort keys. `inc_play_count` uses a targeted UPDATE
+    // instead, and ties are broken deterministically by yt_id, so order must be stable.
+    let (pool, _dir) = setup().await;
+    for yt_id in ["a_track", "b_track"] {
+        db::insert_track(&pool, &make_track(yt_id), true)
+            .await
+            .unwrap();
+    }
+
+    let sort = vec![SortModelItem {
+        col_id: "release_date".to_string(),
+        sort: "asc".to_string(),
+        sort_type: None,
+    }];
+
+    let before = db::get_rows(&pool, 0, 10, &sort, &HashMap::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        before.iter().map(|r| r.yt_id.as_str()).collect::<Vec<_>>(),
+        vec!["a_track", "b_track"]
+    );
+
+    db::inc_play_count(
+        &pool,
+        "b_track",
+        NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let after = db::get_rows(&pool, 0, 10, &sort, &HashMap::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        after.iter().map(|r| r.yt_id.as_str()).collect::<Vec<_>>(),
+        vec!["a_track", "b_track"]
+    );
+}
+
+#[tokio::test]
 async fn test_validate_db_schema_valid() {
     let (_pool, dir) = setup().await;
     let path = dir.path().join("test.db");

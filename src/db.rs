@@ -219,6 +219,19 @@ pub async fn update_rating(
     Ok(())
 }
 
+pub async fn inc_play_count(
+    pool: &SqlitePool,
+    yt_id: &str,
+    last_played: chrono::NaiveDate,
+) -> anyhow::Result<()> {
+    sqlx::query("UPDATE tracks SET play_count = play_count + 1, last_played = ? WHERE yt_id = ?")
+        .bind(last_played.format("%Y-%m-%d").to_string())
+        .bind(yt_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn get_tracks_missing_sp_id(pool: &SqlitePool) -> anyhow::Result<Vec<Track>> {
     let rows = sqlx::query("SELECT * FROM tracks WHERE sp_id IS NULL")
         .fetch_all(pool)
@@ -411,6 +424,26 @@ pub async fn count_rows(pool: &SqlitePool, filter_model: &FilterModelMap) -> any
     Ok(row.get::<i64, _>(0))
 }
 
+/// Builds `ORDER BY` clause parts from an ag-Grid sort model, always appending `yt_id ASC` as a
+/// final tiebreaker (unless already present) so that rows with equal sort-key values keep a
+/// stable, deterministic order across requests instead of falling back to whatever order SQLite
+/// happens to return them in (which can shift when a row is rewritten, e.g. by `INSERT OR
+/// REPLACE`).
+fn build_order_by_parts(sort_model: &[SortModelItem]) -> Vec<String> {
+    let mut parts: Vec<String> = sort_model
+        .iter()
+        .filter(|s| VALID_COLUMNS.contains(&s.col_id.as_str()))
+        .map(|s| {
+            let dir = if s.sort == "asc" { "ASC" } else { "DESC" };
+            format!("{} {dir}", s.col_id)
+        })
+        .collect();
+    if !sort_model.iter().any(|s| s.col_id == "yt_id") {
+        parts.push("yt_id ASC".to_string());
+    }
+    parts
+}
+
 pub async fn get_rows(
     pool: &SqlitePool,
     start_row: i64,
@@ -420,23 +453,8 @@ pub async fn get_rows(
 ) -> anyhow::Result<Vec<Track>> {
     let (where_clause, mut params) = build_where_clause(filter_model);
 
-    let order_by = if sort_model.is_empty() {
-        String::new()
-    } else {
-        let parts: Vec<String> = sort_model
-            .iter()
-            .filter(|s| VALID_COLUMNS.contains(&s.col_id.as_str()))
-            .map(|s| {
-                let dir = if s.sort == "asc" { "ASC" } else { "DESC" };
-                format!("{} {dir}", s.col_id)
-            })
-            .collect();
-        if parts.is_empty() {
-            String::new()
-        } else {
-            format!(" ORDER BY {}", parts.join(", "))
-        }
-    };
+    let parts = build_order_by_parts(sort_model);
+    let order_by = format!(" ORDER BY {}", parts.join(", "));
 
     params.push(SqlParam::Int(end_row - start_row));
     params.push(SqlParam::Int(start_row));
@@ -457,23 +475,7 @@ pub async fn get_row_index(
 ) -> anyhow::Result<i64> {
     let (where_clause, mut params) = build_where_clause(filter_model);
 
-    let order_by = if sort_model.is_empty() {
-        "yt_id ASC".to_string()
-    } else {
-        let parts: Vec<String> = sort_model
-            .iter()
-            .filter(|s| VALID_COLUMNS.contains(&s.col_id.as_str()))
-            .map(|s| {
-                let dir = if s.sort == "asc" { "ASC" } else { "DESC" };
-                format!("{} {dir}", s.col_id)
-            })
-            .collect();
-        if parts.is_empty() {
-            "yt_id ASC".to_string()
-        } else {
-            parts.join(", ")
-        }
-    };
+    let order_by = build_order_by_parts(sort_model).join(", ");
 
     let inner_where = if where_clause.is_empty() {
         String::new()
