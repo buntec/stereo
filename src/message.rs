@@ -119,6 +119,23 @@ pub enum MsgServer {
         matched: i64,
         total: i64,
     },
+    #[serde(rename = "youtube-session")]
+    YouTubeSession {
+        id: i64,
+        connected: bool,
+        client_id: Option<String>,
+    },
+    #[serde(rename = "youtube-playlist")]
+    YouTubePlaylist {
+        id: i64,
+        url: Option<String>,
+    },
+    #[serde(rename = "youtube-playlist-progress")]
+    YouTubePlaylistProgress {
+        id: i64,
+        current: i64,
+        total: i64,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -321,5 +338,32 @@ pub enum MsgClient {
     },
     BackfillSpotifyIds {
         id: i64,
+    },
+    #[serde(rename = "get-youtube-session")]
+    GetYouTubeSession {
+        id: i64,
+    },
+    #[serde(rename = "set-youtube-credentials")]
+    SetYouTubeCredentials {
+        id: i64,
+        client_id: String,
+        client_secret: String,
+    },
+    #[serde(rename = "disconnect-youtube-session")]
+    DisconnectYouTubeSession {
+        id: i64,
+    },
+    #[serde(rename = "exchange-youtube-code")]
+    ExchangeYouTubeCode {
+        id: i64,
+        code: String,
+        verifier: String,
+        redirect_uri: String,
+    },
+    #[serde(rename = "create-youtube-playlist")]
+    CreateYouTubePlaylist {
+        id: i64,
+        name: String,
+        yt_ids: Vec<String>,
     },
 }

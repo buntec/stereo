@@ -25,6 +25,7 @@ use crate::{
     settings::Settings,
     spotify,
     utils::{self, PathKind},
+    youtube,
 };
 
 const GIT_PUSH_INTERVAL: Duration = Duration::from_secs(5 * 60);
@@ -111,6 +112,20 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
             repos: utils::list_repos(&repos_dir).await,
         })
         .await;
+    {
+        let session = youtube::YouTubeSession::load(&home).await;
+        let connected = session
+            .as_ref()
+            .is_some_and(youtube::YouTubeSession::connected);
+        let client_id = session.map(|s| s.client_id);
+        let _ = server_tx
+            .send(MsgServer::YouTubeSession {
+                id: 0,
+                connected,
+                client_id,
+            })
+            .await;
+    }
 
     let mut state = SessionState::default();
     let http_client = Arc::new(match scraper::create_client() {
@@ -751,6 +766,143 @@ async fn handle_msg(
                         total,
                     })
                     .await;
+            });
+        }
+
+        MsgClient::GetYouTubeSession { id } => {
+            let session = youtube::YouTubeSession::load(data_home).await;
+            let connected = session
+                .as_ref()
+                .is_some_and(youtube::YouTubeSession::connected);
+            let client_id = session.map(|s| s.client_id);
+            let _ = tx
+                .send(MsgServer::YouTubeSession {
+                    id,
+                    connected,
+                    client_id,
+                })
+                .await;
+        }
+
+        MsgClient::SetYouTubeCredentials {
+            id,
+            client_id,
+            client_secret,
+        } => match youtube::save_credentials(data_home, &client_id, &client_secret).await {
+            Ok(session) => {
+                let _ = tx
+                    .send(MsgServer::YouTubeSession {
+                        id,
+                        connected: session.connected(),
+                        client_id: Some(session.client_id),
+                    })
+                    .await;
+            }
+            Err(e) => {
+                notify(
+                    tx,
+                    &format!("Failed to save YouTube credentials: {e}"),
+                    "error",
+                )
+                .await
+            }
+        },
+
+        MsgClient::DisconnectYouTubeSession { id } => {
+            match youtube::YouTubeSession::clear(data_home).await {
+                Ok(()) => {
+                    let _ = tx
+                        .send(MsgServer::YouTubeSession {
+                            id,
+                            connected: false,
+                            client_id: None,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    notify(
+                        tx,
+                        &format!("Failed to disconnect YouTube session: {e}"),
+                        "error",
+                    )
+                    .await
+                }
+            }
+        }
+
+        MsgClient::ExchangeYouTubeCode {
+            id,
+            code,
+            verifier,
+            redirect_uri,
+        } => {
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            let data_home = data_home.to_path_buf();
+            tokio::spawn(async move {
+                match youtube::exchange_code(&client, &data_home, &code, &verifier, &redirect_uri)
+                    .await
+                {
+                    Ok(session) => {
+                        let _ = tx
+                            .send(MsgServer::YouTubeSession {
+                                id,
+                                connected: session.connected(),
+                                client_id: Some(session.client_id),
+                            })
+                            .await;
+                    }
+                    Err(e) => notify(&tx, &format!("YouTube sign-in failed: {e}"), "error").await,
+                }
+            });
+        }
+
+        MsgClient::CreateYouTubePlaylist { id, name, yt_ids } => {
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            let data_home = data_home.to_path_buf();
+            tokio::spawn(async move {
+                let access_token = match youtube::ensure_access_token(&client, &data_home).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        notify(&tx, &format!("{e}"), "error").await;
+                        return;
+                    }
+                };
+
+                let total = yt_ids.len() as i64;
+                let result: anyhow::Result<String> = async {
+                    let (playlist_id, url) =
+                        youtube::create_playlist(&client, &access_token, &name).await?;
+                    for (i, yt_id) in yt_ids.iter().enumerate() {
+                        youtube::add_video(&client, &access_token, &playlist_id, yt_id).await?;
+                        let _ = tx
+                            .send(MsgServer::YouTubePlaylistProgress {
+                                id,
+                                current: i as i64 + 1,
+                                total,
+                            })
+                            .await;
+                    }
+                    Ok(url)
+                }
+                .await;
+
+                match result {
+                    Ok(url) => {
+                        let _ = tx
+                            .send(MsgServer::YouTubePlaylist { id, url: Some(url) })
+                            .await;
+                    }
+                    Err(e) => {
+                        notify(
+                            &tx,
+                            &format!("Failed to create YouTube playlist: {e}"),
+                            "error",
+                        )
+                        .await
+                    }
+                }
             });
         }
 

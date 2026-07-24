@@ -69,9 +69,11 @@ import ImportDialog from "./ImportDialog.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
 import {
   YouTubePlaylistDialog,
-  OAuthProgressDialog,
-  useYouTubeOAuthCallback,
+  YouTubePlaylistProgressDialog,
 } from "./YouTubePlaylistDialog.tsx";
+import YouTubeSessionDialog, {
+  useYouTubeOAuthCallback,
+} from "./YouTubeSessionDialog.tsx";
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
 import SpotifyPlaylistDialog, {
   SpotifyPlaylistProgressDialog,
@@ -164,6 +166,15 @@ type State = {
   spotify_playlist_matched?: number;
   spotify_playlist_total?: number;
   spotify_playlist_open_url?: string | null;
+
+  youtube_connected: boolean;
+  youtube_client_id?: string | null;
+
+  youtube_playlist_id?: number;
+  youtube_playlist_running: boolean;
+  youtube_playlist_current?: number;
+  youtube_playlist_total?: number;
+  youtube_playlist_open_url?: string | null;
 };
 
 const reducer = (state: State, action: Action): State => {
@@ -477,6 +488,46 @@ const reducer = (state: State, action: Action): State => {
     case "clear-spotify-playlist-open-url":
       return { ...state, spotify_playlist_open_url: undefined };
 
+    case "youtube-session":
+      return {
+        ...state,
+        youtube_connected: action.connected,
+        youtube_client_id: action.client_id,
+      };
+
+    case "start-youtube-playlist-export":
+      return {
+        ...state,
+        youtube_playlist_id: action.id,
+        youtube_playlist_running: true,
+        youtube_playlist_current: 0,
+        youtube_playlist_total: action.total,
+      };
+
+    case "youtube-playlist-progress":
+      if (action.id !== state.youtube_playlist_id) return { ...state };
+      return {
+        ...state,
+        youtube_playlist_current: action.current,
+        youtube_playlist_total: action.total,
+      };
+
+    case "youtube-playlist":
+      if (action.id !== state.youtube_playlist_id) return { ...state };
+      return {
+        ...state,
+        youtube_playlist_running: false,
+        youtube_playlist_open_url: action.url,
+        notification_kind: action.url ? "info" : "error",
+        notification_msg: action.url
+          ? "Created YouTube playlist"
+          : "Failed to create YouTube playlist",
+        notification_show: true,
+      };
+
+    case "clear-youtube-playlist-open-url":
+      return { ...state, youtube_playlist_open_url: undefined };
+
     default:
       throw new Error(`missing handler for action: ${JSON.stringify(action)}`);
   }
@@ -498,6 +549,8 @@ function App() {
     notification_show: false,
     spotify_backfill_running: false,
     spotify_playlist_running: false,
+    youtube_connected: false,
+    youtube_playlist_running: false,
   });
 
   const [settings, setSettings] = useLocalStorage<Settings>(
@@ -1065,6 +1118,32 @@ function App() {
     }
   }, [state.spotify_playlist_open_url]);
 
+  const youtubePlaylistReqId = useRef<number>(0);
+  const createYouTubePlaylist = useCallback(
+    (name: string) => {
+      const id = ++youtubePlaylistReqId.current;
+      dispatch({
+        type: "start-youtube-playlist-export",
+        id,
+        total: ytPlaylistYtIds.length,
+      });
+      sendMsg({
+        type: "create-youtube-playlist",
+        id,
+        name,
+        yt_ids: ytPlaylistYtIds,
+      });
+    },
+    [sendMsg, ytPlaylistYtIds],
+  );
+
+  useEffect(() => {
+    if (state.youtube_playlist_open_url) {
+      window.open(state.youtube_playlist_open_url, "_blank");
+      dispatch({ type: "clear-youtube-playlist-open-url" });
+    }
+  }, [state.youtube_playlist_open_url]);
+
   const openSelectedTracksAsYTSavedPlaylist = useCallback(() => {
     const selectedRows = gridRef.current?.api.getSelectedRows();
     if (selectedRows && selectedRows.length > 0) {
@@ -1129,19 +1208,7 @@ function App() {
     }
   }, [requestReply]);
 
-  const oauthPhase = useYouTubeOAuthCallback(
-    (url, count) => {
-      window.open(url, "_blank");
-      dispatch({
-        type: "notification",
-        message: `YouTube playlist created with ${count} track${count !== 1 ? "s" : ""}`,
-        kind: "info",
-      });
-    },
-    (msg) => {
-      dispatch({ type: "notification", message: msg, kind: "error" });
-    },
-  );
+  useYouTubeOAuthCallback(requestReply, dispatch);
 
   const addSelectedTracks = useCallback(
     (overwrite: boolean) => {
@@ -1448,6 +1515,11 @@ function App() {
                 backfillMatched={state.spotify_backfill_matched}
                 backfillTotal={state.spotify_backfill_total}
                 onBackfill={backfillSpotifyIds}
+              />
+              <YouTubeSessionDialog
+                requestReply={requestReply}
+                connected={state.youtube_connected}
+                clientId={state.youtube_client_id ?? null}
               />
             </Flex>
 
@@ -1913,8 +1985,14 @@ function App() {
         />
         <YouTubePlaylistDialog
           open={ytPlaylistOpen}
-          ytIds={ytPlaylistYtIds}
+          trackCount={ytPlaylistYtIds.length}
           onOpenChange={setYtPlaylistOpen}
+          onCreate={createYouTubePlaylist}
+        />
+        <YouTubePlaylistProgressDialog
+          running={state.youtube_playlist_running}
+          current={state.youtube_playlist_current ?? 0}
+          total={state.youtube_playlist_total ?? 0}
         />
         <SpotifyPlaylistDialog
           open={spotifyPlaylistOpen}
@@ -1928,7 +2006,6 @@ function App() {
           matched={state.spotify_playlist_matched ?? 0}
           total={state.spotify_playlist_total ?? 0}
         />
-        <OAuthProgressDialog phase={oauthPhase} />
       </Toast.Provider>
     </Theme>
   );

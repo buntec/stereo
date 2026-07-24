@@ -17,7 +17,7 @@ tower = "0.4"
 futures = "0.3"
 
 # HTTP client with Chrome TLS fingerprint impersonation to bypass Beatport bot-detection.
-wreq = { version = "6.0.0-rc.29", features = ["json", "gzip", "brotli", "stream", "query"] }
+wreq = { version = "6.0.0-rc.29", features = ["json", "gzip", "brotli", "stream", "query", "form"] }
 wreq-util = "3.0.0-rc.12"
 
 # Embed frontend assets into the binary at compile time

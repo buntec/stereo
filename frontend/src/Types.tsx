@@ -122,7 +122,28 @@ export type ClientMsg =
   | { type: "list-repos" }
   | { type: "list-collections" }
   | { type: "fixup-track"; track: ITrack; id?: number }
-  | { type: "backfill-spotify-ids"; id: number };
+  | { type: "backfill-spotify-ids"; id: number }
+  | { type: "get-youtube-session"; id?: number }
+  | {
+      type: "set-youtube-credentials";
+      id?: number;
+      client_id: string;
+      client_secret: string;
+    }
+  | { type: "disconnect-youtube-session"; id?: number }
+  | {
+      type: "exchange-youtube-code";
+      id?: number;
+      code: string;
+      verifier: string;
+      redirect_uri: string;
+    }
+  | {
+      type: "create-youtube-playlist";
+      id?: number;
+      name: string;
+      yt_ids: string[];
+    };
 
 export type ServerMsg =
   | {
@@ -211,6 +232,23 @@ export type ServerMsg =
       id: number;
       matched: number;
       total: number;
+    }
+  | {
+      type: "youtube-session";
+      id: number;
+      connected: boolean;
+      client_id: string | null;
+    }
+  | {
+      type: "youtube-playlist";
+      id: number;
+      url: string | null;
+    }
+  | {
+      type: "youtube-playlist-progress";
+      id: number;
+      current: number;
+      total: number;
     };
 
 export type Action =
@@ -246,7 +284,9 @@ export type Action =
   | { type: "toggle-show-player2" }
   | { type: "start-spotify-backfill"; id: number }
   | { type: "start-spotify-playlist-export"; id: number; total: number }
-  | { type: "clear-spotify-playlist-open-url" };
+  | { type: "clear-spotify-playlist-open-url" }
+  | { type: "start-youtube-playlist-export"; id: number; total: number }
+  | { type: "clear-youtube-playlist-open-url" };
 
 export type RequestReply = (
   request: ClientMsg,
