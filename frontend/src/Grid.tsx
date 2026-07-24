@@ -26,6 +26,7 @@ import {
   type RowSelectionOptions,
   type SelectionChangedEvent,
   themeQuartz,
+  colorSchemeDark,
   type SizeColumnsToContentStrategy,
   type GridState,
   type StateUpdatedEvent,
@@ -291,6 +292,7 @@ interface SearchResultsGridProps {
   lastCollectionUpdate?: number;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
+  appearance: "light" | "dark";
 }
 
 type SearchResultsGridContext = {
@@ -313,6 +315,7 @@ export const SearchResultsGrid = ({
   lastCollectionUpdate,
   onArtistClick,
   onLabelClick,
+  appearance,
 }: SearchResultsGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -407,8 +410,10 @@ export const SearchResultsGrid = ({
   }, []);
 
   const theme = useMemo(() => {
-    return themeQuartz.withParams({});
-  }, []);
+    return appearance === "dark"
+      ? themeQuartz.withPart(colorSchemeDark)
+      : themeQuartz;
+  }, [appearance]);
 
   const columnTypes = useMemo(() => {
     return {
@@ -507,9 +512,10 @@ type ToggleableColumn = {
 
 type ColumnsMenuProps = {
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
+  gridReady: boolean;
 };
 
-export const ColumnsMenu = ({ gridRef }: ColumnsMenuProps) => {
+export const ColumnsMenu = ({ gridRef, gridReady }: ColumnsMenuProps) => {
   const [columns, setColumns] = useState<ToggleableColumn[]>([]);
 
   const refreshColumns = useCallback(() => {
@@ -534,8 +540,8 @@ export const ColumnsMenu = ({ gridRef }: ColumnsMenuProps) => {
   }, [gridRef]);
 
   useEffect(() => {
-    refreshColumns();
-  }, [refreshColumns]);
+    if (gridReady) refreshColumns();
+  }, [gridReady, refreshColumns]);
 
   const options = useMemo(
     () => columns.map((c) => ({ value: c.colId, label: c.headerName })),
@@ -591,6 +597,7 @@ interface TracksGridProps {
   onRowCountChange?: (count: number) => void;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
+  appearance: "light" | "dark";
 }
 
 type TracksGridContext = {
@@ -616,6 +623,7 @@ export const TracksGrid = ({
   onRowCountChange,
   onArtistClick,
   onLabelClick,
+  appearance,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -735,8 +743,10 @@ export const TracksGrid = ({
   }, []);
 
   const theme = useMemo(() => {
-    return themeQuartz.withParams({});
-  }, []);
+    return appearance === "dark"
+      ? themeQuartz.withPart(colorSchemeDark)
+      : themeQuartz;
+  }, [appearance]);
 
   const columnTypes = useMemo(() => {
     return {

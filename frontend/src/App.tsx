@@ -1686,6 +1686,7 @@ function App() {
                     valueDisplay="none"
                     value={state.playback_progress_pct ?? 0}
                     onChange={(v: number) => onSliderValueChange([v])}
+                    style={{ paddingInline: "var(--spacing-3)" }}
                   />
                 </StackItem>
                 <Text>
@@ -1935,7 +1936,7 @@ function App() {
               isValidImportFrom={state.import_from_is_valid}
             />
 
-            <ColumnsMenu gridRef={gridRef} />
+            <ColumnsMenu gridRef={gridRef} gridReady={gridReady} />
 
             <IconButton
               variant="secondary"
@@ -1992,6 +1993,7 @@ function App() {
               lastCollectionUpdate={state.collection_last_update}
               onArtistClick={handleArtistClick}
               onLabelClick={handleLabelClick}
+              appearance={settings.appearance}
             />
           ) : (
             <TracksGrid
@@ -2008,6 +2010,7 @@ function App() {
               onRowCountChange={setFilteredRowCount}
               onArtistClick={handleArtistClick}
               onLabelClick={handleLabelClick}
+              appearance={settings.appearance}
             />
           )}
         </StackItem>

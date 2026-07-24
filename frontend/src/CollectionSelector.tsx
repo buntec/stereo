@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { InputGroup } from "@astryxdesign/core/InputGroup";
+import { InputGroup, InputGroupText } from "@astryxdesign/core/InputGroup";
 import { Selector } from "@astryxdesign/core/Selector";
 import { Divider } from "@astryxdesign/core/Divider";
 import { IconButton } from "@astryxdesign/core/IconButton";
@@ -54,7 +54,9 @@ function CollectionSelector({
   return (
     <HStack className="collection-selector-box" gap={0} vAlign="center">
       <InputGroup label="Collection" isLabelHidden>
-        <CubeIcon color={isValid ? "green" : "red"} height={14} width={14} />
+        <InputGroupText>
+          <CubeIcon color={isValid ? "green" : "red"} height={14} width={14} />
+        </InputGroupText>
         <Selector
           label="Collection"
           isLabelHidden
