@@ -8,7 +8,7 @@ import type {
 
 import { type CustomCellRendererProps } from "ag-grid-react";
 
-import { IconButton, Tooltip, Flex } from "@radix-ui/themes";
+import { IconButton, Tooltip, Flex, DropdownMenu } from "@radix-ui/themes";
 
 import { AgGridReact } from "ag-grid-react";
 
@@ -38,7 +38,7 @@ import {
   type Dispatch,
 } from "react";
 
-import { CheckCircledIcon, PlayIcon } from "@radix-ui/react-icons";
+import { CheckCircledIcon, PlayIcon, ColumnsIcon } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import logger from "./logger.tsx";
@@ -497,6 +497,73 @@ export const SearchResultsGrid = ({
   );
 };
 
+type ToggleableColumn = {
+  colId: string;
+  headerName: string;
+  visible: boolean;
+};
+
+type ColumnsMenuProps = {
+  gridRef: React.RefObject<AgGridReact<ITrack> | null>;
+};
+
+export const ColumnsMenu = ({ gridRef }: ColumnsMenuProps) => {
+  const [columns, setColumns] = useState<ToggleableColumn[]>([]);
+
+  const refreshColumns = useCallback(() => {
+    const api = gridRef.current?.api;
+    if (!api) return;
+
+    const headerNames = new Map<string, string>();
+    for (const def of (api.getColumnDefs() ?? []) as ColDef[]) {
+      if (def.field && def.headerName) {
+        headerNames.set(def.field, def.headerName);
+      }
+    }
+
+    setColumns(
+      api.getColumnState().flatMap((s) => {
+        const headerName = headerNames.get(s.colId);
+        return headerName
+          ? [{ colId: s.colId, headerName, visible: !s.hide }]
+          : [];
+      }),
+    );
+  }, [gridRef]);
+
+  const toggleColumn = useCallback(
+    (colId: string, visible: boolean) => {
+      gridRef.current?.api.setColumnsVisible([colId], visible);
+      refreshColumns();
+    },
+    [gridRef, refreshColumns],
+  );
+
+  return (
+    <DropdownMenu.Root onOpenChange={(open) => open && refreshColumns()}>
+      <Tooltip content="Show/hide columns">
+        <DropdownMenu.Trigger>
+          <IconButton variant="soft">
+            <ColumnsIcon />
+          </IconButton>
+        </DropdownMenu.Trigger>
+      </Tooltip>
+      <DropdownMenu.Content>
+        {columns.map((c) => (
+          <DropdownMenu.CheckboxItem
+            key={c.colId}
+            checked={c.visible}
+            onSelect={(e) => e.preventDefault()}
+            onCheckedChange={(checked) => toggleColumn(c.colId, checked)}
+          >
+            {c.headerName}
+          </DropdownMenu.CheckboxItem>
+        ))}
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  );
+};
+
 interface TracksGridProps {
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
   currentId?: string;
@@ -589,6 +656,12 @@ export const TracksGrid = ({
       cellStyle: { textAlign: "right" },
     },
     {
+      field: "key",
+      headerName: "Key",
+      filter: true,
+      width: 80,
+    },
+    {
       field: "rating",
       headerName: "Rating",
       filter: "agNumberColumnFilter",
@@ -602,6 +675,27 @@ export const TracksGrid = ({
       cellStyle: { textAlign: "right" },
     },
     { field: "last_played", headerName: "Last played", filter: true },
+    {
+      field: "bp_id",
+      headerName: "Beatport ID",
+      filter: "agNumberColumnFilter",
+      width: 120,
+      hide: true,
+    },
+    {
+      field: "sp_id",
+      headerName: "Spotify ID",
+      filter: true,
+      width: 120,
+      hide: true,
+    },
+    {
+      field: "mb_id",
+      headerName: "MusicBrainz ID",
+      filter: true,
+      width: 150,
+      hide: true,
+    },
   ]);
 
   const rowSelection = useMemo<RowSelectionOptions>(() => {

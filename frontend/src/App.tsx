@@ -60,7 +60,7 @@ import type {
 import { useWebSocket } from "./WebSocket.tsx";
 import { useYTPlayer, type YTPlayerOptions } from "./YT.tsx";
 import { formatDuration, useLocalStorage, shuffleArray } from "./Utils.tsx";
-import { TracksGrid, SearchResultsGrid } from "./Grid.tsx";
+import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
 import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector from "./CollectionSelector.tsx";
@@ -1900,6 +1900,8 @@ function App() {
                 }}
                 isValidImportFrom={state.import_from_is_valid}
               />
+
+              <ColumnsMenu gridRef={gridRef} />
 
               <Tooltip content="Reset columns">
                 <IconButton variant="soft" onClick={resetColumnState}>
