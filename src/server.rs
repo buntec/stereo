@@ -536,6 +536,23 @@ async fn handle_msg(
             });
         }
 
+        MsgClient::GetSpotifyPlaylistInfo { id, url } => {
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let name = async {
+                    let playlist_id = spotify::parse_playlist_id(&url)
+                        .context("not a valid Spotify playlist link")?;
+                    spotify::playlist_info(&client, &playlist_id)
+                        .await
+                        .map(|info| info.name)
+                }
+                .await
+                .ok();
+                let _ = tx.send(MsgServer::SpotifyPlaylistInfo { id, name }).await;
+            });
+        }
+
         MsgClient::DeleteTracks { ids } => {
             if let Some(pool) = state.pool() {
                 db::delete_tracks(pool, &ids).await?;
@@ -619,7 +636,12 @@ async fn handle_msg(
             }
         }
 
-        MsgClient::CreateSpotifyPlaylist { id, name, tracks } => {
+        MsgClient::CreateSpotifyPlaylist {
+            id,
+            name,
+            tracks,
+            existing_playlist,
+        } => {
             let Some(session) = spotify::SpotifySession::load(data_home).await else {
                 notify(tx, "Connect a Spotify account first", "error").await;
                 return Ok(());
@@ -675,7 +697,16 @@ async fn handle_msg(
                 let matched = uris.len() as i64;
 
                 let result: anyhow::Result<String> = async {
-                    let playlist_uri = spotify::create_playlist(&client, &session, &name).await?;
+                    let playlist_uri = match &existing_playlist {
+                        Some(existing) => {
+                            let playlist_id = spotify::parse_playlist_id(existing)
+                                .context("not a valid Spotify playlist link")?;
+                            let playlist_uri = format!("spotify:playlist:{playlist_id}");
+                            spotify::clear_playlist(&client, &session, &playlist_uri).await?;
+                            playlist_uri
+                        }
+                        None => spotify::create_playlist(&client, &session, &name).await?,
+                    };
                     spotify::add_tracks(&client, &session, &playlist_uri, &uris).await?;
                     spotify::playlist_url(&playlist_uri).context("malformed playlist uri")
                 }

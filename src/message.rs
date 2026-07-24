@@ -86,6 +86,10 @@ pub enum MsgServer {
         matched: i64,
         total: i64,
     },
+    SpotifyPlaylistInfo {
+        id: i64,
+        name: Option<String>,
+    },
     ValidateTrackReply {
         id: i64,
         is_valid: bool,
@@ -314,6 +318,12 @@ pub enum MsgClient {
         id: i64,
         name: String,
         tracks: Vec<SpotifyTrackRef>,
+        #[serde(default)]
+        existing_playlist: Option<String>,
+    },
+    GetSpotifyPlaylistInfo {
+        id: i64,
+        url: String,
     },
     SetRepo {
         path: String,

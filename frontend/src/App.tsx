@@ -77,6 +77,7 @@ import YouTubeSessionDialog, {
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
 import SpotifyPlaylistDialog, {
   SpotifyPlaylistProgressDialog,
+  type SpotifyPlaylistTarget,
 } from "./SpotifyPlaylistDialog.tsx";
 import AppearanceSwitch from "./AppearanceSwitch.tsx";
 import Notification from "./Notification.tsx";
@@ -420,6 +421,7 @@ const reducer = (state: State, action: Action): State => {
     case "validate-track-reply":
     case "fixup-track-reply":
     case "check-spotify-id-reply":
+    case "spotify-playlist-info":
       return { ...state };
 
     case "start-spotify-backfill":
@@ -1109,7 +1111,7 @@ function App() {
 
   const spotifyPlaylistReqId = useRef<number>(0);
   const createSpotifyPlaylist = useCallback(
-    (name: string) => {
+    (target: SpotifyPlaylistTarget) => {
       const id = ++spotifyPlaylistReqId.current;
       dispatch({
         type: "start-spotify-playlist-export",
@@ -1119,8 +1121,9 @@ function App() {
       sendMsg({
         type: "create-spotify-playlist",
         id,
-        name,
+        name: target.mode === "new" ? target.name : "",
         tracks: spotifyPlaylistTracks,
+        existing_playlist: target.mode === "existing" ? target.url : null,
       });
     },
     [sendMsg, spotifyPlaylistTracks],
@@ -2036,6 +2039,7 @@ function App() {
         <SpotifyPlaylistDialog
           open={spotifyPlaylistOpen}
           trackCount={spotifyPlaylistTracks.length}
+          requestReply={requestReply}
           onOpenChange={setSpotifyPlaylistOpen}
           onCreate={createSpotifyPlaylist}
         />

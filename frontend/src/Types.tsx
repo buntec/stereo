@@ -117,7 +117,9 @@ export type ClientMsg =
       id?: number;
       name: string;
       tracks: { artist: string; title: string; sp_id?: string | null }[];
+      existing_playlist?: string | null;
     }
+  | { type: "get-spotify-playlist-info"; id?: number; url: string }
   | { type: "set-repo"; path: string }
   | { type: "clone-repo"; url: string }
   | { type: "list-repos" }
@@ -217,6 +219,11 @@ export type ServerMsg =
       checked: number;
       matched: number;
       total: number;
+    }
+  | {
+      type: "spotify-playlist-info";
+      id: number;
+      name: string | null;
     }
   | { type: "repos"; repos: IRepo[] }
   | { type: "collections"; collections: ICollection[] }

@@ -446,7 +446,7 @@ async fn pathfinder_query(
     ];
 
     let resp = client
-        .post("https://api-partner.spotify.com/pathfinder/v1/query")
+        .post("https://api-partner.spotify.com/pathfinder/v2/query")
         .headers(headers)
         .query(&params)
         .send()
@@ -788,6 +788,110 @@ pub async fn create_playlist(
 pub fn playlist_url(playlist_uri: &str) -> Option<String> {
     let id = playlist_uri.rsplit(':').next()?;
     Some(format!("https://open.spotify.com/playlist/{id}"))
+}
+
+/// Extracts a bare playlist id from a pasted `open.spotify.com/playlist/...` URL, a
+/// `spotify:playlist:...` URI, or a bare id typed directly.
+pub fn parse_playlist_id(input: &str) -> Option<String> {
+    let input = input.trim();
+    if let Some(id) = input.strip_prefix("spotify:playlist:") {
+        return Some(id.to_string());
+    }
+    if let Some(rest) = input.split_once("open.spotify.com/playlist/") {
+        return Some(rest.1.split(['?', '#', '/']).next()?.to_string());
+    }
+    (!input.is_empty() && input.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| input.to_string())
+}
+
+pub struct PlaylistInfo {
+    pub name: String,
+}
+
+/// Looks up a playlist's display name via Spotify's public oEmbed endpoint (anonymous, no
+/// session needed) -- used to confirm the right playlist with the user before overwriting its
+/// tracks.
+pub async fn playlist_info(client: &Client, id: &str) -> anyhow::Result<PlaylistInfo> {
+    let url = format!("https://open.spotify.com/oembed?url=https://open.spotify.com/playlist/{id}");
+    let resp = client.get(&url).send().await?;
+    anyhow::ensure!(resp.status().is_success(), "playlist not found");
+    let body: Value = resp.json().await?;
+    let name = body["title"]
+        .as_str()
+        .context("no title in oembed response")?
+        .to_string();
+    Ok(PlaylistInfo { name })
+}
+
+/// Fetches every item currently in `playlist_uri`, paginating `fetchPlaylistContents`, and
+/// returns their per-item `uid`s -- the identifier `removeFromPlaylist` needs (not the track
+/// URI, since a track can appear more than once in a playlist).
+async fn fetch_playlist_uids(
+    client: &Client,
+    session: &SpotifySession,
+    playlist_uri: &str,
+) -> anyhow::Result<Vec<String>> {
+    const PAGE_SIZE: i64 = 100;
+    let mut uids = Vec::new();
+    let mut offset: i64 = 0;
+    loop {
+        let variables = serde_json::json!({
+            "uri": playlist_uri,
+            "offset": offset,
+            "limit": PAGE_SIZE,
+            "includeEpisodeContentRatingsV2": true,
+        });
+        let resp = pathfinder_query(
+            client,
+            "fetchPlaylistContents",
+            variables,
+            Some(&session.cookie),
+        )
+        .await?;
+        let content = &resp["data"]["playlistV2"]["content"];
+        let items = content["items"]
+            .as_array()
+            .context("no content.items in fetchPlaylistContents response")?;
+        if items.is_empty() {
+            break;
+        }
+        uids.extend(
+            items
+                .iter()
+                .filter_map(|item| item["uid"].as_str().map(String::from)),
+        );
+        offset += items.len() as i64;
+        if offset >= content["totalCount"].as_i64().unwrap_or(0) {
+            break;
+        }
+    }
+    Ok(uids)
+}
+
+/// Removes every track currently in `playlist_uri`, leaving the (now-empty) playlist itself --
+/// and crucially its id/URL -- intact, so an existing playlist can be overwritten in place
+/// instead of replaced by a new one.
+pub async fn clear_playlist(
+    client: &Client,
+    session: &SpotifySession,
+    playlist_uri: &str,
+) -> anyhow::Result<()> {
+    let uids = fetch_playlist_uids(client, session, playlist_uri).await?;
+    const CHUNK_SIZE: usize = 100;
+    for chunk in uids.chunks(CHUNK_SIZE) {
+        let variables = serde_json::json!({
+            "playlistUri": playlist_uri,
+            "uids": chunk,
+        });
+        pathfinder_query(
+            client,
+            "removeFromPlaylist",
+            variables,
+            Some(&session.cookie),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// Adds tracks (by Spotify URI) to an existing playlist.
