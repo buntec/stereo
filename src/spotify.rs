@@ -452,7 +452,9 @@ async fn pathfinder_query(
         .send()
         .await?;
     let status = resp.status();
-    let body: Value = resp.json().await?;
+    let text = resp.text().await?;
+    let body: Value = serde_json::from_str(&text)
+        .with_context(|| format!("pathfinder query returned non-JSON body ({status}): {text}"))?;
     anyhow::ensure!(status.is_success(), "pathfinder query failed: {body}");
     Ok(body)
 }
@@ -744,20 +746,24 @@ pub fn playlist_url(playlist_uri: &str) -> Option<String> {
 }
 
 /// Adds tracks (by Spotify URI) to an existing playlist.
+///
+/// Sent in chunks: the URIs go out as a query-string parameter, so a single
+/// request with too many tracks produces a URL long enough that Spotify (or a
+/// CDN in front of it) rejects it with a non-JSON error body.
 pub async fn add_tracks(
     client: &Client,
     session: &SpotifySession,
     playlist_uri: &str,
     track_uris: &[String],
 ) -> anyhow::Result<()> {
-    if track_uris.is_empty() {
-        return Ok(());
+    const CHUNK_SIZE: usize = 100;
+    for chunk in track_uris.chunks(CHUNK_SIZE) {
+        let variables = serde_json::json!({
+            "playlistItemUris": chunk,
+            "playlistUri": playlist_uri,
+            "newPosition": { "moveType": "BOTTOM_OF_PLAYLIST", "fromUid": null },
+        });
+        pathfinder_query(client, "addToPlaylist", variables, Some(&session.cookie)).await?;
     }
-    let variables = serde_json::json!({
-        "playlistItemUris": track_uris,
-        "playlistUri": playlist_uri,
-        "newPosition": { "moveType": "BOTTOM_OF_PLAYLIST", "fromUid": null },
-    });
-    pathfinder_query(client, "addToPlaylist", variables, Some(&session.cookie)).await?;
     Ok(())
 }

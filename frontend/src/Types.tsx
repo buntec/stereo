@@ -115,7 +115,7 @@ export type ClientMsg =
       type: "create-spotify-playlist";
       id?: number;
       name: string;
-      tracks: { artist: string; title: string }[];
+      tracks: { artist: string; title: string; sp_id?: string | null }[];
     }
   | { type: "set-repo"; path: string }
   | { type: "clone-repo"; url: string }
@@ -182,6 +182,13 @@ export type ServerMsg =
       matched: number;
       total: number;
     }
+  | {
+      type: "spotify-playlist-progress";
+      id: number;
+      checked: number;
+      matched: number;
+      total: number;
+    }
   | { type: "repos"; repos: IRepo[] }
   | { type: "collections"; collections: ICollection[] }
   | {
@@ -237,7 +244,9 @@ export type Action =
   | { type: "rows" }
   | { type: "toggle-shuffle" }
   | { type: "toggle-show-player2" }
-  | { type: "start-spotify-backfill"; id: number };
+  | { type: "start-spotify-backfill"; id: number }
+  | { type: "start-spotify-playlist-export"; id: number; total: number }
+  | { type: "clear-spotify-playlist-open-url" };
 
 export type RequestReply = (
   request: ClientMsg,

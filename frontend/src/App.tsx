@@ -73,7 +73,9 @@ import {
   useYouTubeOAuthCallback,
 } from "./YouTubePlaylistDialog.tsx";
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
-import SpotifyPlaylistDialog from "./SpotifyPlaylistDialog.tsx";
+import SpotifyPlaylistDialog, {
+  SpotifyPlaylistProgressDialog,
+} from "./SpotifyPlaylistDialog.tsx";
 import AppearanceSwitch from "./AppearanceSwitch.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
@@ -155,6 +157,13 @@ type State = {
   spotify_backfill_checked?: number;
   spotify_backfill_matched?: number;
   spotify_backfill_total?: number;
+
+  spotify_playlist_id?: number;
+  spotify_playlist_running: boolean;
+  spotify_playlist_checked?: number;
+  spotify_playlist_matched?: number;
+  spotify_playlist_total?: number;
+  spotify_playlist_open_url?: string | null;
 };
 
 const reducer = (state: State, action: Action): State => {
@@ -392,7 +401,6 @@ const reducer = (state: State, action: Action): State => {
     case "rows":
     case "yt-anon-playlist":
     case "spotify-session":
-    case "spotify-playlist":
     case "tracks":
     case "row-index":
     case "heartbeat":
@@ -434,6 +442,41 @@ const reducer = (state: State, action: Action): State => {
         notification_show: true,
       };
 
+    case "start-spotify-playlist-export":
+      return {
+        ...state,
+        spotify_playlist_id: action.id,
+        spotify_playlist_running: true,
+        spotify_playlist_checked: 0,
+        spotify_playlist_matched: 0,
+        spotify_playlist_total: action.total,
+      };
+
+    case "spotify-playlist-progress":
+      if (action.id !== state.spotify_playlist_id) return { ...state };
+      return {
+        ...state,
+        spotify_playlist_checked: action.checked,
+        spotify_playlist_matched: action.matched,
+        spotify_playlist_total: action.total,
+      };
+
+    case "spotify-playlist":
+      if (action.id !== state.spotify_playlist_id) return { ...state };
+      return {
+        ...state,
+        spotify_playlist_running: false,
+        spotify_playlist_open_url: action.url,
+        notification_kind: action.url ? "info" : "error",
+        notification_msg: action.url
+          ? `Created Spotify playlist with ${action.matched}/${action.total} matched tracks`
+          : "Failed to create Spotify playlist",
+        notification_show: true,
+      };
+
+    case "clear-spotify-playlist-open-url":
+      return { ...state, spotify_playlist_open_url: undefined };
+
     default:
       throw new Error(`missing handler for action: ${JSON.stringify(action)}`);
   }
@@ -454,6 +497,7 @@ function App() {
     new_releases_days: 7,
     notification_show: false,
     spotify_backfill_running: false,
+    spotify_playlist_running: false,
   });
 
   const [settings, setSettings] = useLocalStorage<Settings>(
@@ -978,7 +1022,7 @@ function App() {
 
   const [spotifyPlaylistOpen, setSpotifyPlaylistOpen] = useState(false);
   const [spotifyPlaylistTracks, setSpotifyPlaylistTracks] = useState<
-    { artist: string; title: string }[]
+    { artist: string; title: string; sp_id?: string | null }[]
   >([]);
 
   const exportSelectionToSpotifyPlaylist = useCallback(() => {
@@ -988,36 +1032,38 @@ function App() {
         selectedRows.map((t: ITrack) => ({
           artist: t.artists.join(", "),
           title: t.title,
+          sp_id: t.sp_id,
         })),
       );
       setSpotifyPlaylistOpen(true);
     }
   }, []);
 
+  const spotifyPlaylistReqId = useRef<number>(0);
   const createSpotifyPlaylist = useCallback(
     (name: string) => {
-      requestReply(
-        {
-          type: "create-spotify-playlist",
-          name,
-          tracks: spotifyPlaylistTracks,
-        },
-        (r) => {
-          if ("matched" in r && "url" in r) {
-            if (r.url) window.open(r.url, "_blank");
-            dispatch({
-              type: "notification",
-              kind: r.url ? "info" : "error",
-              message: r.url
-                ? `Created Spotify playlist with ${r.matched}/${r.total} matched tracks`
-                : "Failed to create Spotify playlist",
-            });
-          }
-        },
-      );
+      const id = ++spotifyPlaylistReqId.current;
+      dispatch({
+        type: "start-spotify-playlist-export",
+        id,
+        total: spotifyPlaylistTracks.length,
+      });
+      sendMsg({
+        type: "create-spotify-playlist",
+        id,
+        name,
+        tracks: spotifyPlaylistTracks,
+      });
     },
-    [requestReply, spotifyPlaylistTracks],
+    [sendMsg, spotifyPlaylistTracks],
   );
+
+  useEffect(() => {
+    if (state.spotify_playlist_open_url) {
+      window.open(state.spotify_playlist_open_url, "_blank");
+      dispatch({ type: "clear-spotify-playlist-open-url" });
+    }
+  }, [state.spotify_playlist_open_url]);
 
   const openSelectedTracksAsYTSavedPlaylist = useCallback(() => {
     const selectedRows = gridRef.current?.api.getSelectedRows();
@@ -1046,6 +1092,36 @@ function App() {
             if (yt_ids.length > 0) {
               setYtPlaylistYtIds(yt_ids);
               setYtPlaylistOpen(true);
+            }
+          }
+        },
+      );
+    }
+  }, [requestReply]);
+
+  const exportAllToSpotifyPlaylist = useCallback(() => {
+    if (gridRef.current) {
+      const api = gridRef.current.api;
+      const filterModel = api.getState().filter?.filterModel;
+      const sortModel = api.getState().sort?.sortModel;
+      requestReply(
+        {
+          type: "get-rows",
+          startRow: 0,
+          endRow: 10000,
+          filterModel,
+          sortModel,
+        },
+        (r) => {
+          if ("rows" in r) {
+            const tracks = (r.rows as ITrack[]).map((t) => ({
+              artist: t.artists.join(", "),
+              title: t.title,
+              sp_id: t.sp_id,
+            }));
+            if (tracks.length > 0) {
+              setSpotifyPlaylistTracks(tracks);
+              setSpotifyPlaylistOpen(true);
             }
           }
         },
@@ -1728,6 +1804,7 @@ function App() {
                 exportSelectionToSpotifyPlaylist={
                   exportSelectionToSpotifyPlaylist
                 }
+                exportAllToSpotifyPlaylist={exportAllToSpotifyPlaylist}
               />
 
               <ImportDialog
@@ -1844,6 +1921,12 @@ function App() {
           trackCount={spotifyPlaylistTracks.length}
           onOpenChange={setSpotifyPlaylistOpen}
           onCreate={createSpotifyPlaylist}
+        />
+        <SpotifyPlaylistProgressDialog
+          running={state.spotify_playlist_running}
+          checked={state.spotify_playlist_checked ?? 0}
+          matched={state.spotify_playlist_matched ?? 0}
+          total={state.spotify_playlist_total ?? 0}
         />
         <OAuthProgressDialog phase={oauthPhase} />
       </Toast.Provider>

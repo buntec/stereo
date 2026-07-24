@@ -601,21 +601,43 @@ async fn handle_msg(
             let tx = tx.clone();
             tokio::spawn(async move {
                 let total = tracks.len() as i64;
+                let checked = Arc::new(AtomicI64::new(0));
+                let matched_count = Arc::new(AtomicI64::new(0));
                 let matches: Vec<Option<String>> = futures::stream::iter(tracks)
                     .map(|t| {
                         let client = Arc::clone(&client);
+                        let tx = tx.clone();
+                        let checked = Arc::clone(&checked);
+                        let matched_count = Arc::clone(&matched_count);
                         async move {
-                            match spotify::match_track(&client, &t.artist, &t.title).await {
-                                Ok(found) => found.map(|sp| sp.uri),
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Spotify match failed for {} - {}: {e}",
-                                        t.artist,
-                                        t.title
-                                    );
-                                    None
+                            let uri = if let Some(sp_id) = t.sp_id {
+                                Some(format!("spotify:track:{sp_id}"))
+                            } else {
+                                match spotify::match_track(&client, &t.artist, &t.title).await {
+                                    Ok(found) => found.map(|sp| sp.uri),
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Spotify match failed for {} - {}: {e}",
+                                            t.artist,
+                                            t.title
+                                        );
+                                        None
+                                    }
                                 }
+                            };
+                            if uri.is_some() {
+                                matched_count.fetch_add(1, Ordering::Relaxed);
                             }
+                            let checked_n = checked.fetch_add(1, Ordering::Relaxed) + 1;
+                            let _ = tx
+                                .send(MsgServer::SpotifyPlaylistProgress {
+                                    id,
+                                    checked: checked_n,
+                                    matched: matched_count.load(Ordering::Relaxed),
+                                    total,
+                                })
+                                .await;
+                            uri
                         }
                     })
                     .buffer_unordered(5)

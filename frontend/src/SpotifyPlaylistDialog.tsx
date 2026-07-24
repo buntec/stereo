@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Text, Button, Dialog, TextField, Flex } from "@radix-ui/themes";
+import {
+  Text,
+  Button,
+  Dialog,
+  TextField,
+  Flex,
+  Progress,
+} from "@radix-ui/themes";
 
 type SpotifyPlaylistDialogProps = {
   open: boolean;
@@ -58,6 +65,40 @@ function SpotifyPlaylistDialog({
               Create
             </Button>
           </Dialog.Close>
+        </Flex>
+      </Dialog.Content>
+    </Dialog.Root>
+  );
+}
+
+type SpotifyPlaylistProgressDialogProps = {
+  running: boolean;
+  checked: number;
+  matched: number;
+  total: number;
+};
+
+export function SpotifyPlaylistProgressDialog({
+  running,
+  checked,
+  matched,
+  total,
+}: SpotifyPlaylistProgressDialogProps) {
+  const progressValue =
+    total > 0 ? Math.round((checked / total) * 100) : undefined;
+
+  return (
+    <Dialog.Root open={running}>
+      <Dialog.Content maxWidth="400px">
+        <Dialog.Title>Creating Spotify playlist</Dialog.Title>
+        <Flex direction="column" gap="3" mt="2">
+          <Text size="2">
+            Matching tracks… ({checked} / {total})
+          </Text>
+          <Progress value={progressValue} size="2" />
+          <Text size="1" color="gray">
+            {matched} of {checked} checked tracks matched
+          </Text>
         </Flex>
       </Dialog.Content>
     </Dialog.Root>

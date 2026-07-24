@@ -80,6 +80,12 @@ pub enum MsgServer {
         matched: i64,
         total: i64,
     },
+    SpotifyPlaylistProgress {
+        id: i64,
+        checked: i64,
+        matched: i64,
+        total: i64,
+    },
     ValidateTrackReply {
         id: i64,
         is_valid: bool,
@@ -119,6 +125,8 @@ pub enum MsgServer {
 pub struct SpotifyTrackRef {
     pub artist: String,
     pub title: String,
+    #[serde(default)]
+    pub sp_id: Option<String>,
 }
 
 // ── Client → Server ──────────────────────────────────────────────────────────
