@@ -60,6 +60,7 @@ export type SearchBoxKind = SearchKind | "new-releases";
 export type ClientMsg =
   | { type: "set-collection"; path: string }
   | { type: "validate-track"; track: unknown; id?: number }
+  | { type: "check-spotify-id"; sp_id: string; id?: number }
   | { type: "create-collection"; name: string }
   | { type: "collection-contains-id"; yt_id: string }
   | { type: "get-track-info"; yt_id: string }
@@ -153,6 +154,12 @@ export type ServerMsg =
     }
   | { type: "heartbeat"; timestamp: number }
   | { type: "validate-track-reply"; is_valid: boolean; id: number }
+  | {
+      type: "check-spotify-id-reply";
+      id: number;
+      sp_id: string;
+      exists: boolean;
+    }
   | { type: "set-playlist"; ids: string[] }
   | { type: "play-id"; id: string }
   | { type: "play-next-track" }

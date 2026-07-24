@@ -90,6 +90,11 @@ pub enum MsgServer {
         id: i64,
         is_valid: bool,
     },
+    CheckSpotifyIdReply {
+        id: i64,
+        sp_id: String,
+        exists: bool,
+    },
     RowIndex {
         id: i64,
         index: i64,
@@ -325,6 +330,10 @@ pub enum MsgClient {
     ValidateTrack {
         id: i64,
         track: serde_json::Value,
+    },
+    CheckSpotifyId {
+        id: i64,
+        sp_id: String,
     },
     ExportTracksToCollection {
         tracks: Vec<Track>,

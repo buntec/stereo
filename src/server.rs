@@ -436,6 +436,17 @@ async fn handle_msg(
                 .await;
         }
 
+        MsgClient::CheckSpotifyId { id, sp_id } => {
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let exists = spotify::track_exists(&client, &sp_id).await.unwrap_or(true);
+                let _ = tx
+                    .send(MsgServer::CheckSpotifyIdReply { id, sp_id, exists })
+                    .await;
+            });
+        }
+
         MsgClient::GetGitRemote => {
             let git_dir = state.repo.as_deref().unwrap_or(home);
             let _ = tx
@@ -628,7 +639,8 @@ async fn handle_msg(
                             let uri = if let Some(sp_id) = t.sp_id {
                                 Some(format!("spotify:track:{sp_id}"))
                             } else {
-                                match spotify::match_track(&client, &t.artist, &t.title).await {
+                                match spotify::match_track(&client, &t.artist, &t.title, None).await
+                                {
                                     Ok(found) => found.map(|sp| sp.uri),
                                     Err(e) => {
                                         tracing::warn!(
@@ -720,7 +732,14 @@ async fn handle_msg(
                         let matched = Arc::clone(&matched);
                         async move {
                             let artist = track.artists.join(", ");
-                            match spotify::match_track(&client, &artist, &track.title).await {
+                            match spotify::match_track(
+                                &client,
+                                &artist,
+                                &track.title,
+                                track.mix_name.as_deref(),
+                            )
+                            .await
+                            {
                                 Ok(Some(sp)) => {
                                     if let Err(e) =
                                         db::update_sp_id(&pool, &track.yt_id, sp.id()).await

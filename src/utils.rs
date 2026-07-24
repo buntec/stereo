@@ -1,4 +1,72 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
+
+use regex::Regex;
+
+// Strips a trailing "feat./ft./featuring X" clause from a title. That artist is normally
+// already present in the artists list, so leaving it in the title duplicates it as free text in
+// a search query, which empirically drives search engines (Spotify's included) to bury the
+// correct track outside the first few results.
+static FEAT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\s*[(\[]?\b(feat\.?|ft\.?|featuring)\b.*$").unwrap());
+
+pub fn strip_feat(title: &str) -> String {
+    FEAT_RE.replace(title, "").trim().to_string()
+}
+
+// Beatport disambiguates identically-named artists by appending a short parenthetical tag to
+// the artist name, e.g. "THMS (US)", "Kadosh (ofc)", "KOKA (DE)" — scraped and stored verbatim
+// as part of the artist name. Other catalogs (Spotify included) don't use this convention, and
+// empirically it drives search engines to bury the correct track outside the first few results
+// just as badly as an un-stripped "feat." clause does.
+static ARTIST_DISAMBIGUATOR_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*\([A-Za-z0-9]{2,6}\)").unwrap());
+
+pub fn strip_artist_disambiguators(artists: &str) -> String {
+    ARTIST_DISAMBIGUATOR_RE
+        .replace_all(artists, "")
+        .trim()
+        .to_string()
+}
+
+/// True if a mix name denotes the plain original (no remix identity to match/search on).
+pub fn is_original_mix(mix_name: &str) -> bool {
+    matches!(
+        mix_name.trim().to_lowercase().as_str(),
+        "" | "original mix" | "original"
+    )
+}
+
+// A trailing "(Original Mix)"/"- Original Mix" carries no distinguishing information — by
+// definition there's only one "original" — so a third party spelling it out in their track name
+// while we have no mix info at all (meaning we didn't record one, not that we know it's a remix)
+// shouldn't count against an otherwise-exact match.
+static GENERIC_MIX_SUFFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\s*[-(]\s*original(?:\s+mix)?\)?\s*$").unwrap());
+
+pub fn strip_generic_mix_suffix(track_name: &str) -> String {
+    GENERIC_MIX_SUFFIX_RE
+        .replace(track_name, "")
+        .trim()
+        .to_string()
+}
+
+/// Lowercases, strips punctuation, and sorts words alphabetically, so similarity comparisons
+/// are insensitive to artist-ordering differences between our metadata and a third party's
+/// (e.g. "Marcus Worgull, Daniel Bortz" vs. Spotify's "Daniel Bortz, Marcus Worgull" for the
+/// same track) instead of penalizing them as if they were edits.
+pub fn normalize_for_match(s: &str) -> String {
+    let mut words: Vec<&str> = s.split_whitespace().collect();
+    words.sort_unstable();
+    words
+        .join(" ")
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase()
+}
 
 pub fn collection_label(path: &str) -> &str {
     Path::new(path)

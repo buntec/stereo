@@ -459,6 +459,15 @@ async fn pathfinder_query(
     Ok(body)
 }
 
+/// Checks whether a track id exists on Spotify, via the public, unauthenticated oEmbed endpoint
+/// (200 if the track exists, 404 otherwise). Much lighter than the pathfinder/TOTP machinery
+/// above, which is only needed for search and session-authenticated mutations.
+pub async fn track_exists(client: &Client, id: &str) -> anyhow::Result<bool> {
+    let url = format!("https://open.spotify.com/oembed?url=https://open.spotify.com/track/{id}");
+    let status = client.get(&url).send().await?.status();
+    Ok(status.is_success())
+}
+
 // ── Search ───────────────────────────────────────────────────────────────────────────────────
 
 pub struct SpTrack {
@@ -537,20 +546,56 @@ pub async fn search_tracks(
 }
 
 /// Best-effort match of an existing collection track (identified by artist/title, since stereo
-/// doesn't persist a Spotify id) against Spotify's catalog, for playlist export.
+/// doesn't persist a Spotify id) against Spotify's catalog, for playlist export and id backfill.
 pub async fn match_track(
     client: &Client,
     artist: &str,
     title: &str,
+    mix_name: Option<&str>,
 ) -> anyhow::Result<Option<SpTrack>> {
-    let query = format!("{artist} {title}");
-    let candidates = search_tracks(client, &query, 5).await?;
-    let target = query.to_lowercase();
+    let clean_artist = crate::utils::strip_artist_disambiguators(artist);
+    let mix_name = mix_name.filter(|m| !crate::utils::is_original_mix(m));
+
+    // The query sent to Spotify's own search should carry as little noise as possible — a
+    // redundant "feat. X" clause or a Beatport-only "(US)"-style disambiguator tag empirically
+    // buries the correct track outside the first few results entirely. A mix name is the same
+    // risk in disguise: Spotify frequently doesn't carry it in the searchable text at all (its
+    // own entry might just be the bare title), so appending it can bury the correct track just
+    // as badly as "feat." does. Rather than guess, search both ways and pool the candidates.
+    let clean_title = crate::utils::strip_feat(title);
+    let base_query = format!("{clean_artist} {clean_title}");
+    let mut candidates = search_tracks(client, &base_query, 5).await?;
+    if let Some(mix) = mix_name {
+        let mix_query = format!("{base_query} {mix}");
+        candidates.extend(search_tracks(client, &mix_query, 5).await?);
+    }
+
+    // Scoring, on the other hand, should keep whatever real information the title carries —
+    // a "feat. X" credit not already covered by the artists list is still useful signal once
+    // we're just comparing candidates rather than driving Spotify's own relevance ranking.
+    let target = match mix_name {
+        Some(mix) => format!("{clean_artist} {title} {mix}"),
+        None => format!("{clean_artist} {title}"),
+    };
+    let target = crate::utils::normalize_for_match(&target);
+
+    let mut seen = std::collections::HashSet::new();
     Ok(candidates
         .into_iter()
+        .filter(|t| seen.insert(t.uri.clone()))
         .map(|t| {
-            let expected = format!("{} {}", t.artists.join(" "), t.track_name).to_lowercase();
-            (strsim::normalized_levenshtein(&target, &expected), t)
+            let expected = format!(
+                "{} {}",
+                t.artists.join(" "),
+                crate::utils::strip_generic_mix_suffix(&t.track_name)
+            );
+            (
+                strsim::normalized_levenshtein(
+                    &target,
+                    &crate::utils::normalize_for_match(&expected),
+                ),
+                t,
+            )
         })
         .filter(|(score, _)| *score > 0.5)
         .max_by(|(a, _), (b, _)| a.total_cmp(b))

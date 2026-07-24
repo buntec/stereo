@@ -17,6 +17,7 @@ use crate::{
         BPArtist, BPLabel, BPTrack, SCTrack, SCUser, TXTrack, Track, TrackSource, VLTrack, YTVideo,
     },
     spotify::{self, SpTrack},
+    utils::is_original_mix,
 };
 
 pub fn create_client() -> anyhow::Result<Client> {
@@ -906,14 +907,6 @@ const MIX_KEYWORDS: &[&str] = &[
     "remix", "mix", "edit", "bootleg", "flip", "rework", "vip", "dub", "version", "rmx",
 ];
 
-/// True if a Beatport `mix_name` denotes the plain original (no remix identity to match on).
-fn is_original_mix(mix_name: &str) -> bool {
-    matches!(
-        mix_name.trim().to_lowercase().as_str(),
-        "" | "original mix" | "original"
-    )
-}
-
 /// Extracts a mix/remix tag from a title, e.g. "Artist - Track (Someone Remix)" -> `Some("someone remix")`.
 /// Looks inside bracketed groups for one containing a mix keyword; later groups win, since
 /// remix credits typically follow other tags like the label name.
@@ -1055,9 +1048,11 @@ fn score_match(raw: &RawTrack, candidate: &YTVideo) -> f64 {
         "{} {}",
         raw.expected_artists().join(" "),
         raw.expected_title()
-    )
-    .to_lowercase();
-    let mut score = strsim::normalized_levenshtein(&expected, &candidate.title.to_lowercase());
+    );
+    let mut score = strsim::normalized_levenshtein(
+        &crate::utils::normalize_for_match(&expected),
+        &crate::utils::normalize_for_match(&candidate.title),
+    );
 
     let candidate_tag = extract_mix_tag(&candidate.title);
     match raw.expected_mix() {
@@ -1097,18 +1092,32 @@ async fn find_best_match(client: &Client, raw: &RawTrack) -> Option<YTVideo> {
         .map(|(_, v)| v)
 }
 
-/// Scores how well a raw track matches a title/artists pair, higher is better. Used by
+/// Scores how well a raw track matches a title/artists/mix triple, higher is better. Used by
 /// `fixup_track` to pick the best candidate for a track that's already in the collection,
 /// as opposed to `score_match` which matches a raw track against a YouTube video.
-fn score_raw_match(raw: &RawTrack, title: &str, artists: &[String]) -> f64 {
-    let target = format!("{} {}", artists.join(" "), title).to_lowercase();
+fn score_raw_match(raw: &RawTrack, title: &str, artists: &[String], mix_name: Option<&str>) -> f64 {
+    // Unlike the query sent out to search backends, scoring keeps the title's "feat. X" clause
+    // (real signal once we're just comparing candidates) but still drops artist-name
+    // disambiguator tags like "(US)"/"(ofc)" (Beatport-only noise, present on both sides here
+    // only by scraping accident).
+    let clean_artists = crate::utils::strip_artist_disambiguators(&artists.join(" "));
+    let target = match mix_name.filter(|m| !is_original_mix(m)) {
+        Some(mix) => format!("{clean_artists} {title} {mix}"),
+        None => format!("{clean_artists} {title}"),
+    };
     let expected = format!(
         "{} {}",
         raw.expected_artists().join(" "),
         raw.expected_title()
+    );
+    let expected = match raw.expected_mix() {
+        Some(mix) => format!("{expected} {mix}"),
+        None => expected,
+    };
+    strsim::normalized_levenshtein(
+        &crate::utils::normalize_for_match(&target),
+        &crate::utils::normalize_for_match(&expected),
     )
-    .to_lowercase();
-    strsim::normalized_levenshtein(&target, &expected)
 }
 
 /// Overwrites `base`'s fields with `found`'s wherever `found` actually has a value, so a
@@ -1151,9 +1160,15 @@ fn merge_fixup(mut base: Track, found: Track) -> Track {
 /// similarity threshold. SoundCloud is skipped since its metadata is too sparse to be useful
 /// for fixups, and MusicBrainz isn't wired up to any of these backends.
 pub async fn fixup_track(client: Arc<Client>, track: Track) -> anyhow::Result<Option<Track>> {
-    let query = format!("{} {}", track.artists.join(" "), track.title)
-        .trim()
-        .to_string();
+    let clean_title = crate::utils::strip_feat(&track.title);
+    let clean_artists = crate::utils::strip_artist_disambiguators(&track.artists.join(" "));
+    let mix_name = track.mix_name.as_deref().filter(|m| !is_original_mix(m));
+    let query = match mix_name {
+        Some(mix) => format!("{clean_artists} {clean_title} {mix}"),
+        None => format!("{clean_artists} {clean_title}"),
+    }
+    .trim()
+    .to_string();
     if query.is_empty() {
         return Ok(None);
     }
@@ -1183,7 +1198,17 @@ pub async fn fixup_track(client: Arc<Client>, track: Track) -> anyhow::Result<Op
         .chain(tx_tracks.into_iter().map(RawTrack::Tx));
 
     let best = candidates
-        .map(|raw| (score_raw_match(&raw, &track.title, &track.artists), raw))
+        .map(|raw| {
+            (
+                score_raw_match(
+                    &raw,
+                    &track.title,
+                    &track.artists,
+                    track.mix_name.as_deref(),
+                ),
+                raw,
+            )
+        })
         .filter(|(score, _)| *score > 0.5)
         .max_by(|(a, _), (b, _)| a.total_cmp(b));
 

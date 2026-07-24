@@ -419,6 +419,7 @@ const reducer = (state: State, action: Action): State => {
     case "path-completions":
     case "validate-track-reply":
     case "fixup-track-reply":
+    case "check-spotify-id-reply":
       return { ...state };
 
     case "start-spotify-backfill":

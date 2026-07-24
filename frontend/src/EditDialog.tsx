@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Text,
   Tooltip,
@@ -7,10 +7,20 @@ import {
   Dialog,
   TextField,
   Flex,
+  Spinner,
 } from "@radix-ui/themes";
 
-import { Pencil1Icon, MagicWandIcon } from "@radix-ui/react-icons";
+import {
+  Pencil1Icon,
+  MagicWandIcon,
+  CheckCircledIcon,
+  CrossCircledIcon,
+} from "@radix-ui/react-icons";
 import type { ITrack, RequestReply } from "./Types";
+
+const SPOTIFY_ID_CHECK_DEBOUNCE_MS = 500;
+
+type SpotifyIdStatus = "idle" | "checking" | "valid" | "invalid";
 
 type EditTrackDialogProps = {
   value: ITrack;
@@ -30,6 +40,30 @@ export function EditTrackDialog({
   requestReply,
 }: EditTrackDialogProps) {
   const [isFixingUp, setIsFixingUp] = useState(false);
+
+  const [spotifyIdStatus, setSpotifyIdStatus] =
+    useState<SpotifyIdStatus>("idle");
+  const spotifyIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+
+  useEffect(() => {
+    clearTimeout(spotifyIdTimer.current);
+    const sp_id = value.sp_id;
+    if (!sp_id) {
+      setSpotifyIdStatus("idle");
+      return;
+    }
+    setSpotifyIdStatus("checking");
+    spotifyIdTimer.current = setTimeout(() => {
+      requestReply({ type: "check-spotify-id", sp_id }, (msg) => {
+        if ("exists" in msg && msg.sp_id === sp_id) {
+          setSpotifyIdStatus(msg.exists ? "valid" : "invalid");
+        }
+      });
+    }, SPOTIFY_ID_CHECK_DEBOUNCE_MS);
+    return () => clearTimeout(spotifyIdTimer.current);
+  }, [value.sp_id, requestReply]);
 
   const fixup = useCallback(() => {
     setIsFixingUp(true);
@@ -210,7 +244,23 @@ export function EditTrackDialog({
               onChange={(ev) =>
                 setValue({ ...value, sp_id: ev.target.value || undefined })
               }
-            />
+            >
+              {spotifyIdStatus !== "idle" && (
+                <TextField.Slot>
+                  {spotifyIdStatus === "checking" && <Spinner size="1" />}
+                  {spotifyIdStatus === "valid" && (
+                    <Tooltip content="Track exists on Spotify">
+                      <CheckCircledIcon color="green" />
+                    </Tooltip>
+                  )}
+                  {spotifyIdStatus === "invalid" && (
+                    <Tooltip content="No track with this ID on Spotify">
+                      <CrossCircledIcon color="red" />
+                    </Tooltip>
+                  )}
+                </TextField.Slot>
+              )}
+            </TextField.Root>
           </label>
 
           <label>
