@@ -26,6 +26,7 @@ fn make_track(yt_id: &str) -> Track {
         bpm: Some(128),
         label: Some("Test Label".to_string()),
         release_date: Some(NaiveDate::from_ymd_opt(2024, 6, 1).unwrap()),
+        sp_id: Some("4uLU6hMCjMI75M1A2tKUQC".to_string()),
         ..Default::default()
     }
 }
@@ -56,6 +57,7 @@ async fn test_insert_and_get_track() {
         fetched.release_date,
         Some(NaiveDate::from_ymd_opt(2024, 6, 1).unwrap())
     );
+    assert_eq!(fetched.sp_id.as_deref(), Some("4uLU6hMCjMI75M1A2tKUQC"));
 }
 
 #[tokio::test]
@@ -325,6 +327,51 @@ async fn test_validate_db_schema_wrong_schema() {
         .unwrap();
     pool.close().await;
     assert!(!db::validate_db_schema(&path).await);
+}
+
+#[tokio::test]
+async fn test_validate_db_schema_migrates_old_schema_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let pool = db::open_pool(&path).await.unwrap();
+    // Schema as it existed before the `sp_id` column was added.
+    sqlx::query(
+        "CREATE TABLE tracks (
+            yt_id TEXT PRIMARY KEY,
+            bp_id INTEGER,
+            mb_id TEXT,
+            title TEXT NOT NULL,
+            mix_name TEXT,
+            artists TEXT NOT NULL,
+            release_date TEXT,
+            label TEXT,
+            album TEXT,
+            length INTEGER,
+            bpm INTEGER,
+            genre TEXT,
+            key TEXT,
+            mood TEXT,
+            rating INTEGER,
+            play_count INTEGER DEFAULT 0,
+            last_played TEXT
+        )",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO tracks (yt_id, title, artists) VALUES ('abc', 'Old Track', '[]')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    assert!(db::validate_db_schema(&path).await);
+
+    // The migration should have preserved existing rows and left sp_id unset.
+    let pool = db::open_pool(&path).await.unwrap();
+    let track = db::get_track(&pool, "abc").await.unwrap().unwrap();
+    assert_eq!(track.title, "Old Track");
+    assert_eq!(track.sp_id, None);
 }
 
 #[tokio::test]

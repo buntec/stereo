@@ -149,6 +149,12 @@ type State = {
 
   git_remote?: string | null;
   collection_stats?: ICollectionStats;
+
+  spotify_backfill_id?: number;
+  spotify_backfill_running: boolean;
+  spotify_backfill_checked?: number;
+  spotify_backfill_matched?: number;
+  spotify_backfill_total?: number;
 };
 
 const reducer = (state: State, action: Action): State => {
@@ -396,6 +402,38 @@ const reducer = (state: State, action: Action): State => {
     case "fixup-track-reply":
       return { ...state };
 
+    case "start-spotify-backfill":
+      return {
+        ...state,
+        spotify_backfill_id: action.id,
+        spotify_backfill_running: true,
+        spotify_backfill_checked: 0,
+        spotify_backfill_matched: 0,
+        spotify_backfill_total: 0,
+      };
+
+    case "spotify-backfill-progress":
+      if (action.id !== state.spotify_backfill_id) return { ...state };
+      return {
+        ...state,
+        spotify_backfill_checked: action.checked,
+        spotify_backfill_matched: action.matched,
+        spotify_backfill_total: action.total,
+      };
+
+    case "spotify-backfill-complete":
+      if (action.id !== state.spotify_backfill_id) return { ...state };
+      return {
+        ...state,
+        spotify_backfill_running: false,
+        notification_kind: "info",
+        notification_msg:
+          action.total === 0
+            ? "No tracks needed a Spotify ID"
+            : `Spotify backfill complete: ${action.matched}/${action.total} tracks matched`,
+        notification_show: true,
+      };
+
     default:
       throw new Error(`missing handler for action: ${JSON.stringify(action)}`);
   }
@@ -415,6 +453,7 @@ function App() {
     search_sources: ["beatport", "volumo", "traxsource"],
     new_releases_days: 7,
     notification_show: false,
+    spotify_backfill_running: false,
   });
 
   const [settings, setSettings] = useLocalStorage<Settings>(
@@ -531,6 +570,13 @@ function App() {
   const searchGridRef = useRef<AgGridReact<ITrack>>(null);
 
   const queryId = useRef<number>(0);
+
+  const backfillId = useRef<number>(0);
+  const backfillSpotifyIds = useCallback(() => {
+    const id = ++backfillId.current;
+    dispatch({ type: "start-spotify-backfill", id });
+    sendMsg({ type: "backfill-spotify-ids", id });
+  }, [sendMsg]);
 
   useEffect(() => {
     if (state.should_refresh_grid) {
@@ -957,7 +1003,7 @@ function App() {
           tracks: spotifyPlaylistTracks,
         },
         (r) => {
-          if ("matched" in r) {
+          if ("matched" in r && "url" in r) {
             if (r.url) window.open(r.url, "_blank");
             dispatch({
               type: "notification",
@@ -1318,7 +1364,15 @@ function App() {
                   }}
                 />
               )}
-              <SpotifySessionDialog requestReply={requestReply} />
+              <SpotifySessionDialog
+                requestReply={requestReply}
+                collectionOpen={!!state.collection}
+                backfillRunning={state.spotify_backfill_running}
+                backfillChecked={state.spotify_backfill_checked}
+                backfillMatched={state.spotify_backfill_matched}
+                backfillTotal={state.spotify_backfill_total}
+                onBackfill={backfillSpotifyIds}
+              />
             </Flex>
 
             <SearchBox

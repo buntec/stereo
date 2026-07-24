@@ -468,9 +468,16 @@ pub struct SpTrack {
 }
 
 impl SpTrack {
+    /// The bare Spotify track id, extracted from `uri` (`spotify:track:<id>`).
+    pub fn id(&self) -> &str {
+        self.uri.rsplit(':').next().unwrap_or(&self.uri)
+    }
+
     pub fn into_track(self, yt_id: String) -> Track {
+        let sp_id = Some(self.id().to_string());
         Track {
             yt_id,
+            sp_id,
             title: self.track_name,
             artists: self.artists,
             album: self.album,

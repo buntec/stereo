@@ -465,7 +465,7 @@ export const SearchResultsGrid = ({
 
   const getRowId = useCallback(
     (params: GetRowIdParams<ITrack>) =>
-      `${params.data.yt_id}:${params.data.bp_id}:${params.data.mb_id}`,
+      `${params.data.yt_id}:${params.data.bp_id}:${params.data.sp_id}:${params.data.mb_id}`,
     [],
   );
 
@@ -713,7 +713,7 @@ export const TracksGrid = ({
 
   const getRowId = useCallback(
     (params: GetRowIdParams<ITrack>) =>
-      `${params.data.yt_id}:${params.data.bp_id}:${params.data.mb_id}`,
+      `${params.data.yt_id}:${params.data.bp_id}:${params.data.sp_id}:${params.data.mb_id}`,
     [],
   );
 

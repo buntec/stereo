@@ -32,6 +32,7 @@ pub struct Collection {
 pub struct Track {
     pub yt_id: String,
     pub bp_id: Option<i64>,
+    pub sp_id: Option<String>,
     pub mb_id: Option<String>,
     pub title: String,
     pub mix_name: Option<String>,
@@ -89,6 +90,7 @@ impl Track {
         Ok(Track {
             yt_id: row.try_get("yt_id").unwrap_or_default(),
             bp_id: row.try_get("bp_id").unwrap_or(None),
+            sp_id: row.try_get("sp_id").unwrap_or(None),
             mb_id: row.try_get("mb_id").unwrap_or(None),
             title: row.try_get("title").unwrap_or_default(),
             mix_name: row.try_get("mix_name").unwrap_or(None),

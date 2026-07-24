@@ -1,4 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicI64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use anyhow::Context;
 use axum::{
@@ -645,6 +651,84 @@ async fn handle_msg(
                         .await;
                     }
                 }
+            });
+        }
+
+        MsgClient::BackfillSpotifyIds { id } => {
+            let (Some(pool), Some(col)) = (state.pool.clone(), state.collection.clone()) else {
+                notify(tx, "No collection open", "error").await;
+                return Ok(());
+            };
+            let repo = state.repo.clone();
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let tracks = match db::get_tracks_missing_sp_id(&pool).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        notify(&tx, &format!("Spotify backfill failed: {e}"), "error").await;
+                        return;
+                    }
+                };
+                let total = tracks.len() as i64;
+                let checked = Arc::new(AtomicI64::new(0));
+                let matched = Arc::new(AtomicI64::new(0));
+
+                futures::stream::iter(tracks)
+                    .for_each_concurrent(5, |track| {
+                        let client = Arc::clone(&client);
+                        let pool = pool.clone();
+                        let tx = tx.clone();
+                        let checked = Arc::clone(&checked);
+                        let matched = Arc::clone(&matched);
+                        async move {
+                            let artist = track.artists.join(", ");
+                            match spotify::match_track(&client, &artist, &track.title).await {
+                                Ok(Some(sp)) => {
+                                    if let Err(e) =
+                                        db::update_sp_id(&pool, &track.yt_id, sp.id()).await
+                                    {
+                                        tracing::warn!(
+                                            "Failed to persist sp_id for {}: {e}",
+                                            track.yt_id
+                                        );
+                                    } else {
+                                        matched.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(e) => tracing::warn!(
+                                    "Spotify match failed for {}: {e}",
+                                    track.display_name()
+                                ),
+                            }
+                            let checked_n = checked.fetch_add(1, Ordering::Relaxed) + 1;
+                            let _ = tx
+                                .send(MsgServer::SpotifyBackfillProgress {
+                                    id,
+                                    checked: checked_n,
+                                    matched: matched.load(Ordering::Relaxed),
+                                    total,
+                                })
+                                .await;
+                        }
+                    })
+                    .await;
+
+                let matched_n = matched.load(Ordering::Relaxed);
+                if matched_n > 0 {
+                    let _ = tx.send(MsgServer::ReloadTracks {}).await;
+                    if let Some(repo) = repo {
+                        git::commit_and_push(repo, col.path).await;
+                    }
+                }
+                let _ = tx
+                    .send(MsgServer::SpotifyBackfillComplete {
+                        id,
+                        matched: matched_n,
+                        total,
+                    })
+                    .await;
             });
         }
 

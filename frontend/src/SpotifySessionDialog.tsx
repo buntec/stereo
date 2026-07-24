@@ -9,6 +9,7 @@ import {
   Flex,
   Code,
   Badge,
+  Separator,
 } from "@radix-ui/themes";
 
 import type { RequestReply } from "./Types.tsx";
@@ -16,9 +17,23 @@ import SpotifyIcon from "./SpotifyIcon.tsx";
 
 type SpotifySessionDialogProps = {
   requestReply: RequestReply;
+  collectionOpen: boolean;
+  backfillRunning: boolean;
+  backfillChecked?: number;
+  backfillMatched?: number;
+  backfillTotal?: number;
+  onBackfill: () => void;
 };
 
-function SpotifySessionDialog({ requestReply }: SpotifySessionDialogProps) {
+function SpotifySessionDialog({
+  requestReply,
+  collectionOpen,
+  backfillRunning,
+  backfillChecked,
+  backfillMatched,
+  backfillTotal,
+  onBackfill,
+}: SpotifySessionDialogProps) {
   const [connected, setConnected] = useState(false);
   const [cookie, setCookie] = useState("");
   const [detecting, setDetecting] = useState(false);
@@ -93,6 +108,28 @@ function SpotifySessionDialog({ requestReply }: SpotifySessionDialogProps) {
               onChange={(ev) => setCookie(ev.target.value)}
             />
           </label>
+        </Flex>
+
+        <Separator size="4" my="4" />
+
+        <Flex direction="column" gap="2">
+          <Text as="div" size="2" weight="bold">
+            Backfill Spotify IDs
+          </Text>
+          <Text as="div" size="2" color="gray">
+            Matches every track in the current collection that's missing a
+            Spotify ID by artist/title (doesn't require a connected account).
+            {backfillRunning &&
+              ` Matching… ${backfillChecked ?? 0}/${backfillTotal ?? 0} checked, ${backfillMatched ?? 0} matched.`}
+          </Text>
+          <Button
+            variant="soft"
+            onClick={onBackfill}
+            loading={backfillRunning}
+            disabled={backfillRunning || !collectionOpen}
+          >
+            Backfill missing Spotify IDs for this collection
+          </Button>
         </Flex>
 
         <Flex gap="3" mt="4" justify="end">

@@ -17,6 +17,7 @@ use crate::{
 const VALID_COLUMNS: &[&str] = &[
     "yt_id",
     "bp_id",
+    "sp_id",
     "mb_id",
     "title",
     "mix_name",
@@ -49,6 +50,7 @@ pub async fn init_db(pool: &SqlitePool) -> anyhow::Result<()> {
         "CREATE TABLE IF NOT EXISTS tracks (
             yt_id TEXT PRIMARY KEY,
             bp_id INTEGER,
+            sp_id TEXT,
             mb_id TEXT,
             title TEXT NOT NULL,
             mix_name TEXT,
@@ -83,13 +85,14 @@ pub async fn insert_track(
     };
     let sql = format!(
         "INSERT OR {on_conflict} INTO tracks \
-         (yt_id, bp_id, mb_id, title, mix_name, artists, release_date, label, album, \
+         (yt_id, bp_id, sp_id, mb_id, title, mix_name, artists, release_date, label, album, \
           length, bpm, genre, key, mood, rating, play_count, last_played) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     sqlx::query(&sql)
         .bind(&track.yt_id)
         .bind(track.bp_id)
+        .bind(&track.sp_id)
         .bind(&track.mb_id)
         .bind(&track.title)
         .bind(&track.mix_name)
@@ -121,15 +124,16 @@ pub async fn insert_tracks(
     let on_conflict = if ignore_existing { "IGNORE" } else { "REPLACE" };
     let sql = format!(
         "INSERT OR {on_conflict} INTO tracks \
-         (yt_id, bp_id, mb_id, title, mix_name, artists, release_date, label, album, \
+         (yt_id, bp_id, sp_id, mb_id, title, mix_name, artists, release_date, label, album, \
           length, bpm, genre, key, mood, rating, play_count, last_played) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     let mut tx = pool.begin().await?;
     for track in tracks {
         sqlx::query(&sql)
             .bind(&track.yt_id)
             .bind(track.bp_id)
+            .bind(&track.sp_id)
             .bind(&track.mb_id)
             .bind(&track.title)
             .bind(&track.mix_name)
@@ -209,6 +213,22 @@ pub async fn update_rating(
 ) -> anyhow::Result<()> {
     sqlx::query("UPDATE tracks SET rating = ? WHERE yt_id = ?")
         .bind(rating)
+        .bind(yt_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_tracks_missing_sp_id(pool: &SqlitePool) -> anyhow::Result<Vec<Track>> {
+    let rows = sqlx::query("SELECT * FROM tracks WHERE sp_id IS NULL")
+        .fetch_all(pool)
+        .await?;
+    rows.iter().map(Track::from_db_row).collect()
+}
+
+pub async fn update_sp_id(pool: &SqlitePool, yt_id: &str, sp_id: &str) -> anyhow::Result<()> {
+    sqlx::query("UPDATE tracks SET sp_id = ? WHERE yt_id = ?")
+        .bind(sp_id)
         .bind(yt_id)
         .execute(pool)
         .await?;
@@ -479,6 +499,25 @@ pub async fn get_row_index(
     Ok(row.map(|r| r.get::<i64, _>(0)).unwrap_or(-1))
 }
 
+/// Brings an existing `tracks` table up to date with columns added after the collection was
+/// created (there's no version-tracked migration system — collections are just `.db` files that
+/// may have been created by an older build of the app). No-op if the table doesn't look like a
+/// `tracks` table yet, or already has the column.
+async fn migrate_schema(pool: &SqlitePool) -> anyhow::Result<()> {
+    let rows = sqlx::query("PRAGMA table_info(tracks)")
+        .fetch_all(pool)
+        .await?;
+    let found_cols: std::collections::HashSet<String> =
+        rows.iter().map(|r| r.get::<String, _>("name")).collect();
+
+    if found_cols.contains("yt_id") && !found_cols.contains("sp_id") {
+        sqlx::query("ALTER TABLE tracks ADD COLUMN sp_id TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 pub async fn validate_db_schema(path: &Path) -> bool {
     if !path.exists() {
         return false;
@@ -498,6 +537,8 @@ pub async fn validate_db_schema(path: &Path) -> bool {
     };
 
     let result = async {
+        migrate_schema(&pool).await?;
+
         let rows = sqlx::query("PRAGMA table_info(tracks)")
             .fetch_all(&pool)
             .await?;
@@ -518,6 +559,7 @@ pub async fn validate_db_schema(path: &Path) -> bool {
         let expected: std::collections::HashSet<&str> = [
             "yt_id",
             "bp_id",
+            "sp_id",
             "mb_id",
             "title",
             "mix_name",
@@ -672,6 +714,7 @@ pub async fn import_from_db(
     let mut cols = vec![
         "yt_id",
         "bp_id",
+        "sp_id",
         "mb_id",
         "title",
         "mix_name",

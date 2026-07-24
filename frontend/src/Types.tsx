@@ -10,6 +10,7 @@ export interface ITrack {
   artists: string[];
   yt_id: string;
   bp_id?: number;
+  sp_id?: string;
   mb_id?: string;
   release_date?: string;
   label?: string;
@@ -120,7 +121,8 @@ export type ClientMsg =
   | { type: "clone-repo"; url: string }
   | { type: "list-repos" }
   | { type: "list-collections" }
-  | { type: "fixup-track"; track: ITrack; id?: number };
+  | { type: "fixup-track"; track: ITrack; id?: number }
+  | { type: "backfill-spotify-ids"; id: number };
 
 export type ServerMsg =
   | {
@@ -189,7 +191,20 @@ export type ServerMsg =
       top_labels_five_star: IScoredName[];
       top_labels_four_plus: IScoredName[];
     }
-  | { type: "fixup-track-reply"; id: number; track?: ITrack };
+  | { type: "fixup-track-reply"; id: number; track?: ITrack }
+  | {
+      type: "spotify-backfill-progress";
+      id: number;
+      checked: number;
+      matched: number;
+      total: number;
+    }
+  | {
+      type: "spotify-backfill-complete";
+      id: number;
+      matched: number;
+      total: number;
+    };
 
 export type Action =
   | ServerMsg
@@ -221,7 +236,8 @@ export type Action =
     }
   | { type: "rows" }
   | { type: "toggle-shuffle" }
-  | { type: "toggle-show-player2" };
+  | { type: "toggle-show-player2" }
+  | { type: "start-spotify-backfill"; id: number };
 
 export type RequestReply = (
   request: ClientMsg,

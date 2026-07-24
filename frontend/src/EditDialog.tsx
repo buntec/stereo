@@ -203,6 +203,18 @@ export function EditTrackDialog({
 
           <label>
             <Text as="div" size="2" mb="1" weight="bold">
+              Spotify ID
+            </Text>
+            <TextField.Root
+              value={value.sp_id ?? ""}
+              onChange={(ev) =>
+                setValue({ ...value, sp_id: ev.target.value || undefined })
+              }
+            />
+          </label>
+
+          <label>
+            <Text as="div" size="2" mb="1" weight="bold">
               Music Brainz ID
             </Text>
             <TextField.Root

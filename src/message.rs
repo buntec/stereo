@@ -102,6 +102,17 @@ pub enum MsgServer {
         id: i64,
         track: Option<Track>,
     },
+    SpotifyBackfillProgress {
+        id: i64,
+        checked: i64,
+        matched: i64,
+        total: i64,
+    },
+    SpotifyBackfillComplete {
+        id: i64,
+        matched: i64,
+        total: i64,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -299,5 +310,8 @@ pub enum MsgClient {
     FixupTrack {
         id: i64,
         track: Track,
+    },
+    BackfillSpotifyIds {
+        id: i64,
     },
 }
