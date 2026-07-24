@@ -529,6 +529,20 @@ const reducer = (state: State, action: Action): State => {
     case "clear-youtube-playlist-open-url":
       return { ...state, youtube_playlist_open_url: undefined };
 
+    case "cancel-youtube-playlist":
+      if (!state.youtube_playlist_running) return { ...state };
+      return {
+        ...state,
+        youtube_playlist_running: false,
+        youtube_playlist_id: undefined,
+        notification_kind: action.reason === "timeout" ? "warning" : "info",
+        notification_msg:
+          action.reason === "timeout"
+            ? "YouTube playlist export stalled (possibly hit the API quota) — cancelled"
+            : "Cancelled YouTube playlist export",
+        notification_show: true,
+      };
+
     default:
       throw new Error(`missing handler for action: ${JSON.stringify(action)}`);
   }
@@ -1144,6 +1158,27 @@ function App() {
       dispatch({ type: "clear-youtube-playlist-open-url" });
     }
   }, [state.youtube_playlist_open_url]);
+
+  const cancelYouTubePlaylist = useCallback(
+    (reason: "cancelled" | "timeout" = "cancelled") => {
+      const id = youtubePlaylistReqId.current;
+      dispatch({ type: "cancel-youtube-playlist", reason });
+      sendMsg({ type: "cancel-youtube-playlist", id });
+    },
+    [sendMsg],
+  );
+
+  // Auto-cancel if the server goes quiet for 15s (e.g. hitting the YouTube
+  // API quota) so the progress dialog never gets stuck open indefinitely.
+  useEffect(() => {
+    if (!state.youtube_playlist_running) return;
+    const timer = setTimeout(() => cancelYouTubePlaylist("timeout"), 15000);
+    return () => clearTimeout(timer);
+  }, [
+    state.youtube_playlist_running,
+    state.youtube_playlist_current,
+    cancelYouTubePlaylist,
+  ]);
 
   const openSelectedTracksAsYTSavedPlaylist = useCallback(() => {
     const selectedRows = gridRef.current?.api.getSelectedRows();
@@ -1996,6 +2031,7 @@ function App() {
           running={state.youtube_playlist_running}
           current={state.youtube_playlist_current ?? 0}
           total={state.youtube_playlist_total ?? 0}
+          onCancel={cancelYouTubePlaylist}
         />
         <SpotifyPlaylistDialog
           open={spotifyPlaylistOpen}

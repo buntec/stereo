@@ -74,18 +74,25 @@ type YouTubePlaylistProgressDialogProps = {
   running: boolean;
   current: number;
   total: number;
+  onCancel: () => void;
 };
 
 export function YouTubePlaylistProgressDialog({
   running,
   current,
   total,
+  onCancel,
 }: YouTubePlaylistProgressDialogProps) {
   const progressValue =
     total > 0 ? Math.round((current / total) * 100) : undefined;
 
   return (
-    <Dialog.Root open={running}>
+    <Dialog.Root
+      open={running}
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
+    >
       <Dialog.Content maxWidth="400px">
         <Dialog.Title>Creating YouTube playlist</Dialog.Title>
         <Flex direction="column" gap="3" mt="2">
@@ -93,6 +100,11 @@ export function YouTubePlaylistProgressDialog({
             Adding tracks… ({current} / {total})
           </Text>
           <Progress value={progressValue} size="2" />
+        </Flex>
+        <Flex gap="3" mt="4" justify="end">
+          <Button variant="soft" color="gray" onClick={onCancel}>
+            Cancel
+          </Button>
         </Flex>
       </Dialog.Content>
     </Dialog.Root>

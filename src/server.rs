@@ -36,6 +36,7 @@ struct SessionState {
     collection: Option<Collection>,
     repo: Option<std::path::PathBuf>,
     search_task: Option<tokio::task::JoinHandle<()>>,
+    youtube_playlist_task: Option<tokio::task::JoinHandle<()>>,
     git_push_handle: Option<tokio::task::JoinHandle<()>>,
     last_git_push: Option<std::time::Instant>,
 }
@@ -877,10 +878,13 @@ async fn handle_msg(
         }
 
         MsgClient::CreateYouTubePlaylist { id, name, yt_ids } => {
+            if let Some(task) = state.youtube_playlist_task.take() {
+                task.abort();
+            }
             let client = Arc::clone(client);
             let tx = tx.clone();
             let data_home = data_home.to_path_buf();
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 let access_token = match youtube::ensure_access_token(&client, &data_home).await {
                     Ok(t) => t,
                     Err(e) => {
@@ -919,10 +923,19 @@ async fn handle_msg(
                             &format!("Failed to create YouTube playlist: {e}"),
                             "error",
                         )
-                        .await
+                        .await;
+                        let _ = tx.send(MsgServer::YouTubePlaylist { id, url: None }).await;
                     }
                 }
             });
+            state.youtube_playlist_task = Some(handle);
+        }
+
+        MsgClient::CancelYouTubePlaylist { id } => {
+            if let Some(task) = state.youtube_playlist_task.take() {
+                task.abort();
+            }
+            let _ = tx.send(MsgServer::YouTubePlaylist { id, url: None }).await;
         }
 
         MsgClient::CreateYtAnonPlaylist { id, yt_ids } => {

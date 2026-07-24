@@ -144,7 +144,8 @@ export type ClientMsg =
       id?: number;
       name: string;
       yt_ids: string[];
-    };
+    }
+  | { type: "cancel-youtube-playlist"; id: number };
 
 export type ServerMsg =
   | {
@@ -293,7 +294,8 @@ export type Action =
   | { type: "start-spotify-playlist-export"; id: number; total: number }
   | { type: "clear-spotify-playlist-open-url" }
   | { type: "start-youtube-playlist-export"; id: number; total: number }
-  | { type: "clear-youtube-playlist-open-url" };
+  | { type: "clear-youtube-playlist-open-url" }
+  | { type: "cancel-youtube-playlist"; reason: "cancelled" | "timeout" };
 
 export type RequestReply = (
   request: ClientMsg,

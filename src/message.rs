@@ -375,4 +375,8 @@ pub enum MsgClient {
         name: String,
         yt_ids: Vec<String>,
     },
+    #[serde(rename = "cancel-youtube-playlist")]
+    CancelYouTubePlaylist {
+        id: i64,
+    },
 }
