@@ -1,12 +1,11 @@
 import { useState } from "react";
-import {
-  Text,
-  Button,
-  Dialog,
-  TextField,
-  Flex,
-  Progress,
-} from "@radix-ui/themes";
+import { Text } from "@astryxdesign/core/Text";
+import { Button } from "@astryxdesign/core/Button";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 
 type YouTubePlaylistDialogProps = {
   open: boolean;
@@ -23,50 +22,59 @@ export function YouTubePlaylistDialog({
 }: YouTubePlaylistDialogProps) {
   const [name, setName] = useState("stereo");
 
+  const submit = () => {
+    if (!name.trim() || trackCount === 0) return;
+    onCreate(name.trim());
+    onOpenChange(false);
+  };
+
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Content maxWidth="440px">
-        <Dialog.Title>Export to YouTube playlist</Dialog.Title>
-        <Dialog.Description size="2" mb="4">
-          Creates a private playlist on your connected YouTube account with{" "}
-          {trackCount} track{trackCount !== 1 ? "s" : ""}.
-        </Dialog.Description>
-
-        <label>
-          <Text as="div" size="2" mb="1" weight="bold">
-            Playlist name
-          </Text>
-          <TextField.Root
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="stereo"
-            onKeyDown={(ev) => {
-              if (ev.key === "Enter" && name.trim()) {
-                onCreate(name.trim());
-                onOpenChange(false);
-              }
-            }}
+    <Dialog
+      isOpen={open}
+      onOpenChange={onOpenChange}
+      purpose="form"
+      width={440}
+    >
+      <Layout
+        header={
+          <DialogHeader
+            title="Export to YouTube playlist"
+            subtitle={`Creates a private playlist on your connected YouTube account with ${trackCount} track${trackCount !== 1 ? "s" : ""}.`}
+            onOpenChange={() => onOpenChange(false)}
           />
-        </label>
-
-        <Flex gap="3" mt="4" justify="end">
-          <Dialog.Close>
-            <Button variant="soft" color="gray">
-              Cancel
-            </Button>
-          </Dialog.Close>
-          <Dialog.Close>
-            <Button
-              color="red"
-              disabled={!name.trim() || trackCount === 0}
-              onClick={() => onCreate(name.trim())}
-            >
-              Export
-            </Button>
-          </Dialog.Close>
-        </Flex>
-      </Dialog.Content>
-    </Dialog.Root>
+        }
+        content={
+          <LayoutContent>
+            <TextInput
+              label="Playlist name"
+              value={name}
+              onChange={setName}
+              placeholder="stereo"
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter") submit();
+              }}
+            />
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack gap={2} hAlign="end">
+              <Button
+                label="Cancel"
+                variant="secondary"
+                onClick={() => onOpenChange(false)}
+              />
+              <Button
+                label="Export"
+                variant="primary"
+                isDisabled={!name.trim() || trackCount === 0}
+                onClick={submit}
+              />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
   );
 }
 
@@ -83,30 +91,42 @@ export function YouTubePlaylistProgressDialog({
   total,
   onCancel,
 }: YouTubePlaylistProgressDialogProps) {
-  const progressValue =
-    total > 0 ? Math.round((current / total) * 100) : undefined;
+  const progressValue = total > 0 ? Math.round((current / total) * 100) : 0;
 
   return (
-    <Dialog.Root
-      open={running}
+    <Dialog
+      isOpen={running}
       onOpenChange={(open) => {
         if (!open) onCancel();
       }}
+      purpose="form"
+      width={400}
     >
-      <Dialog.Content maxWidth="400px">
-        <Dialog.Title>Creating YouTube playlist</Dialog.Title>
-        <Flex direction="column" gap="3" mt="2">
-          <Text size="2">
-            Adding tracks… ({current} / {total})
-          </Text>
-          <Progress value={progressValue} size="2" />
-        </Flex>
-        <Flex gap="3" mt="4" justify="end">
-          <Button variant="soft" color="gray" onClick={onCancel}>
-            Cancel
-          </Button>
-        </Flex>
-      </Dialog.Content>
-    </Dialog.Root>
+      <Layout
+        header={<DialogHeader title="Creating YouTube playlist" />}
+        content={
+          <LayoutContent>
+            <VStack gap={3}>
+              <Text type="body">
+                Adding tracks… ({current} / {total})
+              </Text>
+              <ProgressBar
+                label="Adding tracks"
+                isLabelHidden
+                value={progressValue}
+                isIndeterminate={total === 0}
+              />
+            </VStack>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack gap={2} hAlign="end">
+              <Button label="Cancel" variant="secondary" onClick={onCancel} />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
   );
 }

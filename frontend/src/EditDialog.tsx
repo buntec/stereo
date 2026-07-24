@@ -1,21 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import {
-  Text,
-  Tooltip,
-  Button,
-  IconButton,
-  Dialog,
-  TextField,
-  Flex,
-  Spinner,
-} from "@radix-ui/themes";
+import { Button } from "@astryxdesign/core/Button";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
 
-import {
-  Pencil1Icon,
-  MagicWandIcon,
-  CheckCircledIcon,
-  CrossCircledIcon,
-} from "@radix-ui/react-icons";
+import { Pencil1Icon, MagicWandIcon } from "@radix-ui/react-icons";
 import type { ITrack, RequestReply } from "./Types";
 
 const SPOTIFY_ID_CHECK_DEBOUNCE_MS = 500;
@@ -39,6 +31,7 @@ export function EditTrackDialog({
   commit,
   requestReply,
 }: EditTrackDialogProps) {
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [isFixingUp, setIsFixingUp] = useState(false);
 
   const [spotifyIdStatus, setSpotifyIdStatus] =
@@ -75,218 +68,185 @@ export function EditTrackDialog({
     });
   }, [requestReply, value, setValue]);
 
+  const closeDialog = () => setDialogOpen(false);
+
   return (
-    <Dialog.Root>
-      <Tooltip content="Edit track">
-        <Dialog.Trigger>
-          <IconButton variant="ghost" size="1" onClick={resetValue}>
-            <Pencil1Icon />
-          </IconButton>
-        </Dialog.Trigger>
-      </Tooltip>
+    <>
+      <IconButton
+        variant="ghost"
+        size="sm"
+        label="Edit track"
+        tooltip="Edit track"
+        icon={<Pencil1Icon />}
+        onClick={() => {
+          resetValue();
+          setDialogOpen(true);
+        }}
+      />
 
-      <Dialog.Content onOpenAutoFocus={(ev) => ev.preventDefault()}>
-        <Flex justify="between" align="center">
-          <Dialog.Title mb="0">Edit</Dialog.Title>
-          <Tooltip content="Fill in missing fields from Beatport, Traxsource, and Volumo">
-            <Button
-              variant="soft"
-              size="1"
-              onClick={fixup}
-              disabled={isFixingUp}
-            >
-              <MagicWandIcon />
-              Fixup
-            </Button>
-          </Tooltip>
-        </Flex>
-
-        <Dialog.Description>Edit track meta data</Dialog.Description>
-
-        <Flex
-          direction="column"
-          my="2"
-          gap="2"
-          className={
-            isValid
-              ? "edit-track valid"
-              : isValid === null
-                ? "edit-track"
-                : "edit-track invalid"
+      <Dialog isOpen={dialogOpen} onOpenChange={setDialogOpen} purpose="form">
+        <Layout
+          header={
+            <DialogHeader
+              title="Edit"
+              subtitle="Edit track meta data"
+              onOpenChange={closeDialog}
+              endContent={
+                <Tooltip content="Fill in missing fields from Beatport, Traxsource, and Volumo">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<MagicWandIcon />}
+                    label="Fixup"
+                    isLoading={isFixingUp}
+                    onClick={fixup}
+                  />
+                </Tooltip>
+              }
+            />
           }
-        >
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              YouTube video ID (primary key)
-            </Text>
-            <TextField.Root
-              value={value.yt_id}
-              onChange={(ev) => setValue({ ...value, yt_id: ev.target.value })}
-            >
-              <TextField.Slot>
-                <img
-                  src={`https://i.ytimg.com/vi/${value.yt_id}/default.jpg`}
-                  alt="YouTube Video Thumbnail"
-                  width="40"
+          content={
+            <LayoutContent>
+              <VStack
+                gap={2}
+                style={
+                  isValid === false
+                    ? { backgroundColor: "var(--color-error-muted)" }
+                    : undefined
+                }
+              >
+                <HStack gap={2} vAlign="end">
+                  <img
+                    src={`https://i.ytimg.com/vi/${value.yt_id}/default.jpg`}
+                    alt="YouTube Video Thumbnail"
+                    width="40"
+                  />
+                  <StackItem size="fill">
+                    <TextInput
+                      label="YouTube video ID (primary key)"
+                      value={value.yt_id}
+                      onChange={(v) => setValue({ ...value, yt_id: v })}
+                    />
+                  </StackItem>
+                </HStack>
+
+                <TextInput
+                  label="Title"
+                  value={value.title}
+                  onChange={(v) => setValue({ ...value, title: v })}
                 />
-              </TextField.Slot>
-            </TextField.Root>
-          </label>
 
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Title
-            </Text>
-            <TextField.Root
-              value={value.title}
-              onChange={(ev) => setValue({ ...value, title: ev.target.value })}
-            />
-          </label>
+                <TextInput
+                  label="Artists"
+                  value={value.artists.join(",")}
+                  onChange={(v) =>
+                    setValue({
+                      ...value,
+                      artists: v.split(",").map((s) => s.trim()),
+                    })
+                  }
+                />
 
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Artists
-            </Text>
-            <TextField.Root
-              value={value.artists.join(",")}
-              onChange={(ev) =>
-                setValue({
-                  ...value,
-                  artists: ev.target.value.split(",").map((s) => s.trim()),
-                })
-              }
-            />
-          </label>
+                <TextInput
+                  label="Release date"
+                  value={value.release_date ?? ""}
+                  onChange={(v) =>
+                    setValue({ ...value, release_date: v || undefined })
+                  }
+                />
 
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Release date
-            </Text>
-            <TextField.Root
-              value={value.release_date ?? ""}
-              onChange={(ev) =>
-                setValue({
-                  ...value,
-                  release_date: ev.target.value || undefined,
-                })
-              }
-            />
-          </label>
+                <TextInput
+                  label="Label"
+                  value={value.label ?? ""}
+                  onChange={(v) => setValue({ ...value, label: v })}
+                />
 
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Label
-            </Text>
-            <TextField.Root
-              value={value.label ?? ""}
-              onChange={(ev) => setValue({ ...value, label: ev.target.value })}
-            />
-          </label>
+                <TextInput
+                  label="Genre"
+                  value={value.genre ?? ""}
+                  onChange={(v) => setValue({ ...value, genre: v })}
+                />
 
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Genre
-            </Text>
-            <TextField.Root
-              value={value.genre ?? ""}
-              onChange={(ev) => setValue({ ...value, genre: ev.target.value })}
-            />
-          </label>
+                <TextInput
+                  label="BPM"
+                  value={value.bpm !== undefined ? `${value.bpm}` : ""}
+                  onChange={(v) =>
+                    setValue({
+                      ...value,
+                      bpm: v ? parseInt(v) : undefined,
+                    })
+                  }
+                />
 
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              BPM
-            </Text>
-            <TextField.Root
-              value={value.bpm ?? ""}
-              onChange={(ev) =>
-                setValue({
-                  ...value,
-                  bpm: ev.target.value ? parseInt(ev.target.value) : undefined,
-                })
-              }
-            />
-          </label>
+                <TextInput
+                  label="Key"
+                  value={value.key ?? ""}
+                  onChange={(v) => setValue({ ...value, key: v })}
+                />
 
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Key
-            </Text>
-            <TextField.Root
-              value={value.key ?? ""}
-              onChange={(ev) => setValue({ ...value, key: ev.target.value })}
-            />
-          </label>
+                <TextInput
+                  label="Beatport ID"
+                  value={value.bp_id !== undefined ? `${value.bp_id}` : ""}
+                  onChange={(v) =>
+                    setValue({
+                      ...value,
+                      bp_id: v ? parseInt(v) : undefined,
+                    })
+                  }
+                />
 
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Beatport ID
-            </Text>
-            <TextField.Root
-              value={value.bp_id ?? ""}
-              onChange={(ev) =>
-                setValue({
-                  ...value,
-                  bp_id: ev.target.value
-                    ? parseInt(ev.target.value)
-                    : undefined,
-                })
-              }
-            />
-          </label>
+                <TextInput
+                  label="Spotify ID"
+                  value={value.sp_id ?? ""}
+                  onChange={(v) =>
+                    setValue({ ...value, sp_id: v || undefined })
+                  }
+                  isLoading={spotifyIdStatus === "checking"}
+                  status={
+                    spotifyIdStatus === "valid"
+                      ? { type: "success", message: "Track exists on Spotify" }
+                      : spotifyIdStatus === "invalid"
+                        ? {
+                            type: "error",
+                            message: "No track with this ID on Spotify",
+                          }
+                        : undefined
+                  }
+                />
 
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Spotify ID
-            </Text>
-            <TextField.Root
-              value={value.sp_id ?? ""}
-              onChange={(ev) =>
-                setValue({ ...value, sp_id: ev.target.value || undefined })
-              }
-            >
-              {spotifyIdStatus !== "idle" && (
-                <TextField.Slot>
-                  {spotifyIdStatus === "checking" && <Spinner size="1" />}
-                  {spotifyIdStatus === "valid" && (
-                    <Tooltip content="Track exists on Spotify">
-                      <CheckCircledIcon color="green" />
-                    </Tooltip>
-                  )}
-                  {spotifyIdStatus === "invalid" && (
-                    <Tooltip content="No track with this ID on Spotify">
-                      <CrossCircledIcon color="red" />
-                    </Tooltip>
-                  )}
-                </TextField.Slot>
-              )}
-            </TextField.Root>
-          </label>
-
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Music Brainz ID
-            </Text>
-            <TextField.Root
-              value={value.mb_id ?? ""}
-              onChange={(ev) => setValue({ ...value, mb_id: ev.target.value })}
-            />
-          </label>
-        </Flex>
-
-        <Flex gap="3" mt="4" justify="end">
-          <Dialog.Close>
-            <Button variant="soft" color="gray" onClick={resetValue}>
-              Cancel
-            </Button>
-          </Dialog.Close>
-          <Dialog.Close>
-            <Button onClick={commit} disabled={!isValid} color="green">
-              Save
-            </Button>
-          </Dialog.Close>
-        </Flex>
-      </Dialog.Content>
-    </Dialog.Root>
+                <TextInput
+                  label="Music Brainz ID"
+                  value={value.mb_id ?? ""}
+                  onChange={(v) => setValue({ ...value, mb_id: v })}
+                />
+              </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack gap={2} hAlign="end">
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  onClick={() => {
+                    resetValue();
+                    closeDialog();
+                  }}
+                />
+                <Button
+                  label="Save"
+                  variant="primary"
+                  isDisabled={!isValid}
+                  onClick={() => {
+                    commit();
+                    closeDialog();
+                  }}
+                />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
+      </Dialog>
+    </>
   );
 }

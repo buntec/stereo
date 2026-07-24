@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Flex } from "@radix-ui/themes";
+import { HStack } from "@astryxdesign/core/Stack";
 
 interface RatingProps {
   enabled: boolean;
@@ -26,8 +26,8 @@ function Rating({ enabled, currentRating, updateRating }: RatingProps) {
   );
 
   return (
-    <Flex
-      align="center"
+    <HStack
+      vAlign="center"
       style={{
         cursor: enabled ? "pointer" : "not-allowed",
       }}
@@ -45,13 +45,16 @@ function Rating({ enabled, currentRating, updateRating }: RatingProps) {
             handleClick(-1); // reset rating
           }}
           style={{
-            color: i < (rating ?? 0) ? "var(--yellow-8)" : "var(--gray-8)",
+            color:
+              i < (rating ?? 0)
+                ? "var(--color-icon-yellow)"
+                : "var(--color-icon-gray)",
           }}
         >
           {i < (rating ?? 0) ? "★" : "☆"}
         </span>
       ))}
-    </Flex>
+    </HStack>
   );
 }
 

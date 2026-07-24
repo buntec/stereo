@@ -29,20 +29,16 @@ import {
   TrackPreviousIcon,
 } from "@radix-ui/react-icons";
 
-import { Toast } from "radix-ui";
-
-import {
-  Slider,
-  Tooltip,
-  Theme,
-  Skeleton,
-  Kbd,
-  IconButton,
-  Box,
-  Flex,
-  Text,
-  Separator,
-} from "@radix-ui/themes";
+import { Theme } from "@astryxdesign/core/theme";
+import { neutralTheme } from "@astryxdesign/theme-neutral";
+import { Slider } from "@astryxdesign/core/Slider";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { Skeleton } from "@astryxdesign/core/Skeleton";
+import { Kbd } from "@astryxdesign/core/Kbd";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
+import { Divider } from "@astryxdesign/core/Divider";
 
 import type {
   ITrack,
@@ -1491,565 +1487,564 @@ function App() {
   });
 
   return (
-    <Theme appearance={settings.appearance} accentColor="gray" grayColor="gray">
-      <Toast.Provider>
-        <Flex
-          ref={appShellRef}
-          className={`app-main ${settings.fullScreen ? "fullscreen" : ""}`}
-          direction="column"
-          align="center"
+    <Theme theme={neutralTheme} mode={settings.appearance}>
+      <VStack
+        ref={appShellRef}
+        className={`app-main ${settings.fullScreen ? "fullscreen" : ""}`}
+        hAlign="center"
+      >
+        <HStack vAlign="center" className="toolbar">
+          <HStack gap={2} vAlign="center" className="toolbar-left">
+            <CollectionSelector
+              isValid={state.collection_is_valid ?? true}
+              collections={state.collections ?? []}
+              value={settings.collectionPath}
+              setValue={(path) =>
+                setSettings({ ...settings, collectionPath: path })
+              }
+              onCreate={(name) => sendMsg({ type: "create-collection", name })}
+              repoVisible={repoVisible}
+              onToggleRepo={() => setRepoVisible((v) => !v)}
+            >
+              {state.collection_stats && (
+                <CollectionSummary
+                  stats={state.collection_stats}
+                  totalTracks={state.collection?.size}
+                  onArtistClick={handleArtistClick}
+                  onLabelClick={handleLabelClick}
+                />
+              )}
+            </CollectionSelector>
+            {repoVisible && (
+              <RepoSelector
+                repos={state.repos ?? []}
+                value={settings.repoPath}
+                setValue={(path) => {
+                  setSettings({ ...settings, repoPath: path });
+                  sendMsg({ type: "set-repo", path });
+                }}
+                onClone={(url) => {
+                  if (state.home_dir) {
+                    const name =
+                      url
+                        .replace(/\/$/, "")
+                        .replace(/\.git$/, "")
+                        .split("/")
+                        .pop() ?? "repo";
+                    const path = `${state.home_dir}/${name}`;
+                    setSettings({ ...settings, repoPath: path });
+                  }
+                  sendMsg({ type: "clone-repo", url });
+                }}
+              />
+            )}
+            <SpotifySessionDialog
+              requestReply={requestReply}
+              collectionOpen={!!state.collection}
+              backfillRunning={state.spotify_backfill_running}
+              backfillChecked={state.spotify_backfill_checked}
+              backfillMatched={state.spotify_backfill_matched}
+              backfillTotal={state.spotify_backfill_total}
+              onBackfill={backfillSpotifyIds}
+            />
+            <YouTubeSessionDialog
+              requestReply={requestReply}
+              connected={state.youtube_connected}
+              clientId={state.youtube_client_id ?? null}
+            />
+          </HStack>
+
+          <SearchBox
+            value={state.search_box_input ?? ""}
+            setValue={(value: string) =>
+              dispatch({ type: "search-box-input", input: value })
+            }
+            onSearch={handleSearch}
+            searchLimit={state.search_limit}
+            setSearchLimit={(limit: number) =>
+              dispatch({ type: "set-search-limit", limit })
+            }
+            searchKind={state.search_kind}
+            setSearchKind={(kind: SearchBoxKind) =>
+              dispatch({ type: "set-search-kind", kind })
+            }
+            searchSources={state.search_sources}
+            setSearchSources={(sources: TrackSource[]) =>
+              dispatch({ type: "set-search-sources", sources })
+            }
+            newReleasesDays={state.new_releases_days}
+            setNewReleasesDays={(days: number) =>
+              dispatch({ type: "set-new-releases-days", days })
+            }
+            searchBusy={
+              (state.search_kind === "new-releases" ||
+                !!state.search_box_input) &&
+              state.search_busy
+            }
+            errorMessage={state.search_error_message}
+          />
+
+          <HStack
+            gap={2}
+            vAlign="center"
+            hAlign="end"
+            className="toolbar-right"
+          >
+            {state.backend_version ? (
+              <Text type="body" className="version-string">
+                Stereo - {state.backend_version}
+              </Text>
+            ) : (
+              <Skeleton width={80} height={16} />
+            )}
+            <AppearanceSwitch
+              appearance={settings.appearance}
+              setAppearance={(appearance) =>
+                setSettings({ ...settings, appearance })
+              }
+            />
+          </HStack>
+        </HStack>
+        <div
+          className={`background-player ${state.show_player2 && settings.backgroundVideo ? "" : "hidden"}`}
         >
-          <Flex align="center" className="toolbar">
-            <Flex align="center" gap="2" className="toolbar-left">
-              <CollectionSelector
-                isValid={state.collection_is_valid ?? true}
-                collections={state.collections ?? []}
-                value={settings.collectionPath}
-                setValue={(path) =>
-                  setSettings({ ...settings, collectionPath: path })
-                }
-                onCreate={(name) =>
-                  sendMsg({ type: "create-collection", name })
-                }
-                repoVisible={repoVisible}
-                onToggleRepo={() => setRepoVisible((v) => !v)}
-              >
-                {state.collection_stats && (
-                  <CollectionSummary
-                    stats={state.collection_stats}
-                    totalTracks={state.collection?.size}
-                    onArtistClick={handleArtistClick}
-                    onLabelClick={handleLabelClick}
+          <div ref={player2Ref} />
+        </div>
+        <HStack width="100%" hAlign="center" vAlign="start" gap={6}>
+          <VStack hAlign="center" gap={2}>
+            {state.title && (
+              <HStack vAlign="center" gap={2}>
+                <Title
+                  title={state.title}
+                  artists={state.track_info?.artists}
+                  trackName={state.track_info?.title}
+                  label={state.track_info?.label}
+                  releaseDate={state.track_info?.release_date}
+                  onArtistClick={handleArtistClick}
+                  onLabelClick={handleLabelClick}
+                />
+                {state.track_info && (
+                  <NowPlayingMenu
+                    track={state.track_info}
+                    collections={state.collections ?? []}
+                    currentCollectionPath={settings.collectionPath}
+                    onCopyToCollection={(path) => {
+                      if (state.track_info) {
+                        sendMsg({
+                          type: "export-tracks-to-collection",
+                          tracks: [state.track_info],
+                          collection: path,
+                        });
+                      }
+                    }}
+                    onMoveToCollection={(path) => {
+                      if (state.track_info && state.current_id) {
+                        const idToDelete = state.current_id;
+                        sendMsg({
+                          type: "export-tracks-to-collection",
+                          tracks: [state.track_info],
+                          collection: path,
+                          source_collection: settings.collectionPath,
+                        });
+                        dispatch({ type: "play-next-track" });
+                        sendMsg({ type: "delete-tracks", ids: [idToDelete] });
+                      }
+                    }}
+                    onDeleteFromCollection={() => {
+                      if (state.current_id) {
+                        const idToDelete = state.current_id;
+                        dispatch({ type: "play-next-track" });
+                        sendMsg({ type: "delete-tracks", ids: [idToDelete] });
+                      }
+                    }}
                   />
                 )}
-              </CollectionSelector>
-              {repoVisible && (
-                <RepoSelector
-                  repos={state.repos ?? []}
-                  value={settings.repoPath}
-                  setValue={(path) => {
-                    setSettings({ ...settings, repoPath: path });
-                    sendMsg({ type: "set-repo", path });
-                  }}
-                  onClone={(url) => {
-                    if (state.home_dir) {
-                      const name =
-                        url
-                          .replace(/\/$/, "")
-                          .replace(/\.git$/, "")
-                          .split("/")
-                          .pop() ?? "repo";
-                      const path = `${state.home_dir}/${name}`;
-                      setSettings({ ...settings, repoPath: path });
-                    }
-                    sendMsg({ type: "clone-repo", url });
-                  }}
-                />
-              )}
-              <SpotifySessionDialog
-                requestReply={requestReply}
-                collectionOpen={!!state.collection}
-                backfillRunning={state.spotify_backfill_running}
-                backfillChecked={state.spotify_backfill_checked}
-                backfillMatched={state.spotify_backfill_matched}
-                backfillTotal={state.spotify_backfill_total}
-                onBackfill={backfillSpotifyIds}
-              />
-              <YouTubeSessionDialog
-                requestReply={requestReply}
-                connected={state.youtube_connected}
-                clientId={state.youtube_client_id ?? null}
-              />
-            </Flex>
+              </HStack>
+            )}
 
-            <SearchBox
-              value={state.search_box_input ?? ""}
-              setValue={(value: string) =>
-                dispatch({ type: "search-box-input", input: value })
-              }
-              onSearch={handleSearch}
-              searchLimit={state.search_limit}
-              setSearchLimit={(limit: number) =>
-                dispatch({ type: "set-search-limit", limit })
-              }
-              searchKind={state.search_kind}
-              setSearchKind={(kind: SearchBoxKind) =>
-                dispatch({ type: "set-search-kind", kind })
-              }
-              searchSources={state.search_sources}
-              setSearchSources={(sources: TrackSource[]) =>
-                dispatch({ type: "set-search-sources", sources })
-              }
-              newReleasesDays={state.new_releases_days}
-              setNewReleasesDays={(days: number) =>
-                dispatch({ type: "set-new-releases-days", days })
-              }
-              searchBusy={
-                (state.search_kind === "new-releases" ||
-                  !!state.search_box_input) &&
-                state.search_busy
-              }
-              errorMessage={state.search_error_message}
-            />
-
-            <Flex
-              align="center"
-              gap="2"
-              justify="end"
-              className="toolbar-right"
-            >
-              {state.backend_version ? (
-                <Text size="2" className="version-string">
-                  Stereo - {state.backend_version}
-                </Text>
-              ) : (
-                <Skeleton>Stereo</Skeleton>
-              )}
-              <AppearanceSwitch
-                appearance={settings.appearance}
-                setAppearance={(appearance) =>
-                  setSettings({ ...settings, appearance })
+            <VStack hAlign="center" gap={2} className="controls">
+              <Rating
+                enabled={state.current_id === state.track_info?.yt_id}
+                currentRating={
+                  state.current_id === state.track_info?.yt_id
+                    ? state.track_info?.rating
+                    : undefined
                 }
+                updateRating={updateCurrentRating}
               />
-            </Flex>
-          </Flex>
-          <div
-            className={`background-player ${state.show_player2 && settings.backgroundVideo ? "" : "hidden"}`}
-          >
-            <div ref={player2Ref} />
-          </div>
-          <Flex width="100%" justify="center" align="start" gap="6">
-            <Flex direction="column" align="center" gap="2">
-              {state.title && (
-                <Flex align="center" gap="2">
-                  <Title
-                    title={state.title}
-                    artists={state.track_info?.artists}
-                    trackName={state.track_info?.title}
-                    label={state.track_info?.label}
-                    releaseDate={state.track_info?.release_date}
-                    onArtistClick={handleArtistClick}
-                    onLabelClick={handleLabelClick}
-                  />
-                  {state.track_info && (
-                    <NowPlayingMenu
-                      track={state.track_info}
-                      collections={state.collections ?? []}
-                      currentCollectionPath={settings.collectionPath}
-                      onCopyToCollection={(path) => {
-                        if (state.track_info) {
-                          sendMsg({
-                            type: "export-tracks-to-collection",
-                            tracks: [state.track_info],
-                            collection: path,
-                          });
-                        }
-                      }}
-                      onMoveToCollection={(path) => {
-                        if (state.track_info && state.current_id) {
-                          const idToDelete = state.current_id;
-                          sendMsg({
-                            type: "export-tracks-to-collection",
-                            tracks: [state.track_info],
-                            collection: path,
-                            source_collection: settings.collectionPath,
-                          });
-                          dispatch({ type: "play-next-track" });
-                          sendMsg({ type: "delete-tracks", ids: [idToDelete] });
-                        }
-                      }}
-                      onDeleteFromCollection={() => {
-                        if (state.current_id) {
-                          const idToDelete = state.current_id;
-                          dispatch({ type: "play-next-track" });
-                          sendMsg({ type: "delete-tracks", ids: [idToDelete] });
-                        }
-                      }}
-                    />
-                  )}
-                </Flex>
-              )}
-
-              <Flex
-                direction="column"
-                align="center"
-                gap="2"
-                className="controls"
+              <HStack
+                className="progress-slider"
+                width="min(70vw, 900px)"
+                vAlign="center"
+                gap={2}
               >
-                <Rating
-                  enabled={state.current_id === state.track_info?.yt_id}
-                  currentRating={
-                    state.current_id === state.track_info?.yt_id
-                      ? state.track_info?.rating
-                      : undefined
-                  }
-                  updateRating={updateCurrentRating}
-                />
-                <Flex
-                  className="progress-slider"
-                  width="min(70vw, 900px)"
-                  align="center"
-                  gap="2"
-                >
-                  <Text>{formatDuration(state.current_time ?? 0)}</Text>
+                <Text>{formatDuration(state.current_time ?? 0)}</Text>
+                <StackItem size="fill">
                   <Slider
-                    color="pink"
-                    size="2"
-                    variant="soft"
-                    value={[state.playback_progress_pct ?? 0]}
-                    onValueChange={onSliderValueChange}
+                    label="Playback progress"
+                    isLabelHidden
+                    valueDisplay="none"
+                    value={state.playback_progress_pct ?? 0}
+                    onChange={(v: number) => onSliderValueChange([v])}
                   />
-                  <Text>
-                    {state.duration ? formatDuration(state.duration) : "--:--"}
-                  </Text>
-                </Flex>
-                <Flex direction="row" align="center" gap="2" m="2">
-                  <Tooltip
-                    content={
-                      <>
-                        Skip to previous track <Kbd>↑</Kbd>
-                      </>
-                    }
-                  >
-                    <IconButton variant="soft" size="4" onClick={prevTrack}>
-                      <TrackPreviousIcon />
-                    </IconButton>
-                  </Tooltip>
+                </StackItem>
+                <Text>
+                  {state.duration ? formatDuration(state.duration) : "--:--"}
+                </Text>
+              </HStack>
+              <HStack vAlign="center" gap={2} padding={2}>
+                <Tooltip
+                  content={
+                    <>
+                      Skip to previous track <Kbd keys="up" />
+                    </>
+                  }
+                >
+                  <IconButton
+                    variant="secondary"
+                    size="lg"
+                    label="Skip to previous track"
+                    icon={<TrackPreviousIcon />}
+                    onClick={prevTrack}
+                  />
+                </Tooltip>
 
-                  <Tooltip
-                    content={
-                      <>
-                        Play / pause <Kbd>Space</Kbd> / <Kbd>p</Kbd>
-                      </>
-                    }
-                  >
-                    <IconButton
-                      variant="soft"
-                      size="4"
-                      className="play-pause-button"
-                      onClick={togglePlayback}
-                    >
-                      {state.player_state === YTPlayerState.PLAYING ? (
+                <Tooltip
+                  content={
+                    <>
+                      Play / pause <Kbd keys="Space" /> / <Kbd keys="p" />
+                    </>
+                  }
+                >
+                  <IconButton
+                    variant="secondary"
+                    size="lg"
+                    className="play-pause-button"
+                    label="Play / pause"
+                    icon={
+                      state.player_state === YTPlayerState.PLAYING ? (
                         <PauseIcon />
                       ) : (
                         <PlayIcon />
-                      )}
-                    </IconButton>
-                  </Tooltip>
-
-                  <Tooltip
-                    content={
-                      <>
-                        Skip to next track <Kbd>↓</Kbd>
-                      </>
+                      )
                     }
-                  >
-                    <IconButton variant="soft" size="4" onClick={nextTrack}>
-                      <TrackNextIcon />
-                    </IconButton>
-                  </Tooltip>
+                    onClick={togglePlayback}
+                  />
+                </Tooltip>
 
-                  <Separator orientation="vertical" size="2" />
+                <Tooltip
+                  content={
+                    <>
+                      Skip to next track <Kbd keys="down" />
+                    </>
+                  }
+                >
+                  <IconButton
+                    variant="secondary"
+                    size="lg"
+                    label="Skip to next track"
+                    icon={<TrackNextIcon />}
+                    onClick={nextTrack}
+                  />
+                </Tooltip>
 
-                  <Tooltip
-                    content={
-                      <>
-                        Toggle shuffle play <Kbd>s</Kbd>
-                      </>
-                    }
-                  >
-                    <IconButton
-                      color={settings.shufflePlay ? "cyan" : "gray"}
-                      variant="soft"
-                      size="4"
-                      onClick={toggleShuffle}
-                    >
-                      <ShuffleIcon />
-                    </IconButton>
-                  </Tooltip>
+                <Divider orientation="vertical" />
 
-                  <Tooltip
-                    content={
-                      <>
-                        Toggle background video <Kbd>b</Kbd>
-                      </>
-                    }
-                  >
-                    <IconButton
-                      color={settings.backgroundVideo ? "cyan" : "gray"}
-                      variant="soft"
-                      size="4"
-                      onClick={toggleBackgroundVideo}
-                    >
-                      <MagicWandIcon />
-                    </IconButton>
-                  </Tooltip>
+                <Tooltip
+                  content={
+                    <>
+                      Toggle shuffle play <Kbd keys="s" />
+                    </>
+                  }
+                >
+                  <IconButton
+                    variant={settings.shufflePlay ? "primary" : "secondary"}
+                    size="lg"
+                    label="Toggle shuffle play"
+                    icon={<ShuffleIcon />}
+                    onClick={toggleShuffle}
+                  />
+                </Tooltip>
 
-                  <Separator orientation="vertical" size="2" />
+                <Tooltip
+                  content={
+                    <>
+                      Toggle background video <Kbd keys="b" />
+                    </>
+                  }
+                >
+                  <IconButton
+                    variant={settings.backgroundVideo ? "primary" : "secondary"}
+                    size="lg"
+                    label="Toggle background video"
+                    icon={<MagicWandIcon />}
+                    onClick={toggleBackgroundVideo}
+                  />
+                </Tooltip>
 
-                  <Tooltip
-                    content={
-                      <>
-                        Toggle video <Kbd>v</Kbd>
-                      </>
-                    }
-                  >
-                    <IconButton
-                      className="toggle-video-button"
-                      color={settings.video ? "cyan" : "gray"}
-                      variant="soft"
-                      size="4"
-                      onClick={toggleVideo}
-                    >
-                      <VideoIcon />
-                    </IconButton>
-                  </Tooltip>
+                <Divider orientation="vertical" />
 
-                  <Tooltip
-                    content={
-                      <>
-                        Toggle fullscreen mode <Kbd>f</Kbd>
-                      </>
-                    }
-                  >
-                    <IconButton
-                      variant="soft"
-                      size="4"
-                      onClick={toggleFullscreen}
-                    >
-                      {settings.fullScreen ? (
+                <Tooltip
+                  content={
+                    <>
+                      Toggle video <Kbd keys="v" />
+                    </>
+                  }
+                >
+                  <IconButton
+                    className="toggle-video-button"
+                    variant={settings.video ? "primary" : "secondary"}
+                    size="lg"
+                    label="Toggle video"
+                    icon={<VideoIcon />}
+                    onClick={toggleVideo}
+                  />
+                </Tooltip>
+
+                <Tooltip
+                  content={
+                    <>
+                      Toggle fullscreen mode <Kbd keys="f" />
+                    </>
+                  }
+                >
+                  <IconButton
+                    variant="secondary"
+                    size="lg"
+                    label="Toggle fullscreen mode"
+                    icon={
+                      settings.fullScreen ? (
                         <ExitFullScreenIcon />
                       ) : (
                         <EnterFullScreenIcon />
-                      )}
-                    </IconButton>
-                  </Tooltip>
-                </Flex>
-              </Flex>
-            </Flex>
-          </Flex>
+                      )
+                    }
+                    onClick={toggleFullscreen}
+                  />
+                </Tooltip>
+              </HStack>
+            </VStack>
+          </VStack>
+        </HStack>
 
-          <div
-            className={`player ${settings.video || settings.fullScreen ? "" : "hidden"}`}
-          >
-            <div ref={playerRef} />
-          </div>
+        <div
+          className={`player ${settings.video || settings.fullScreen ? "" : "hidden"}`}
+        >
+          <div ref={playerRef} />
+        </div>
+        {(state.search_results !== undefined || state.search_busy) &&
+        (state.search_kind === "new-releases" || !!state.search_box_input) ? (
+          <HStack width="100%" gap={2} padding={2}>
+            <IconButton
+              variant="primary"
+              label="Add selected tracks (don't overwrite existing)"
+              tooltip="Add selected tracks (don't overwrite existing)"
+              icon={<PlusIcon />}
+              onClick={() => addSelectedTracks(false)}
+              isDisabled={
+                !(
+                  state.search_results_selection &&
+                  state.search_results_selection.length > 0
+                )
+              }
+            />
+            <IconButton
+              variant="secondary"
+              label="Add selected tracks (overwrite existing)"
+              tooltip="Add selected tracks (overwrite existing)"
+              icon={<PlusIcon />}
+              onClick={() => addSelectedTracks(true)}
+              isDisabled={
+                !(
+                  state.search_results_selection &&
+                  state.search_results_selection.length > 0
+                )
+              }
+            />
+
+            {state.search_results !== undefined && (
+              <Tooltip content={`${state.search_results.length} results`}>
+                <HStack
+                  vAlign="center"
+                  gap={1}
+                  paddingInline={2}
+                  className="row-count"
+                >
+                  <Text weight="bold" color="secondary">
+                    {state.search_results.length}
+                  </Text>
+                  <Text color="secondary">results</Text>
+                </HStack>
+              </Tooltip>
+            )}
+          </HStack>
+        ) : (
+          <HStack width="100%" gap={2} padding={2} className="grid-controls">
+            <IconButton
+              variant="secondary"
+              label="Deselect all"
+              tooltip="Deselect all"
+              icon={<Cross2Icon />}
+              onClick={deselectAll}
+              isDisabled={state.track_selection.length === 0}
+            />
+
+            <IconButton
+              variant="destructive"
+              label="Delete selected tracks"
+              tooltip="Delete selected tracks"
+              icon={<TrashIcon />}
+              onClick={deleteSelectedTracks}
+              isDisabled={state.track_selection.length === 0}
+            />
+
+            <ExportDropDown
+              selectionCount={state.track_selection.length}
+              collections={state.collections ?? []}
+              exportToCollection={exportSelectedTracksToCollection}
+              exportSelectionToYTM={openSelectedTracksAsYTMPlaylist}
+              exportSelectionToYTSavedPlaylist={
+                openSelectedTracksAsYTSavedPlaylist
+              }
+              exportTop50ToYTM={openTopTracksAsYTMPlaylist}
+              exportAllToYTSavedPlaylist={openAllTracksAsYTSavedPlaylist}
+              exportSelectionToSpotifyPlaylist={
+                exportSelectionToSpotifyPlaylist
+              }
+              exportAllToSpotifyPlaylist={exportAllToSpotifyPlaylist}
+            />
+
+            <ImportDialog
+              setImportFrom={(path: string) =>
+                dispatch({ type: "set-import-from", path })
+              }
+              keepUserData={state.import_from_keep_user_data ?? false}
+              setKeepUserData={(keep: boolean) =>
+                dispatch({ type: "set-import-keep-user-data", keep })
+              }
+              importFrom={state.import_from ?? ""}
+              doImport={() => {
+                if (state.import_from) {
+                  sendMsg({
+                    type: "import-from",
+                    path: state.import_from,
+                    keep_user_data: state.import_from_keep_user_data ?? false,
+                  });
+                }
+              }}
+              isValidImportFrom={state.import_from_is_valid}
+            />
+
+            <ColumnsMenu gridRef={gridRef} />
+
+            <IconButton
+              variant="secondary"
+              label="Reset columns"
+              tooltip="Reset columns"
+              icon={<ResetIcon />}
+              onClick={resetColumnState}
+            />
+
+            {filteredRowCount !== undefined && (
+              <Tooltip
+                content={
+                  filteredRowCount !== state.collection?.size
+                    ? `${filteredRowCount} of ${state.collection?.size} tracks match active filters`
+                    : `${filteredRowCount} tracks`
+                }
+              >
+                <HStack
+                  vAlign="center"
+                  gap={1}
+                  paddingInline={2}
+                  className="row-count"
+                >
+                  <Text
+                    weight="bold"
+                    color={
+                      filteredRowCount !== state.collection?.size
+                        ? "accent"
+                        : "secondary"
+                    }
+                  >
+                    {filteredRowCount}
+                  </Text>
+                  {filteredRowCount !== state.collection?.size &&
+                    state.collection?.size !== undefined && (
+                      <Text color="secondary">/ {state.collection.size}</Text>
+                    )}
+                  <Text color="secondary">tracks</Text>
+                </HStack>
+              </Tooltip>
+            )}
+          </HStack>
+        )}
+        <StackItem size="fill" className="grid-container">
           {(state.search_results !== undefined || state.search_busy) &&
           (state.search_kind === "new-releases" || !!state.search_box_input) ? (
-            <Flex width="100%" gap="2" p="2">
-              <Tooltip content="Add selected tracks (don't overwrite existing)">
-                <IconButton
-                  color="green"
-                  onClick={() => addSelectedTracks(false)}
-                  disabled={
-                    !(
-                      state.search_results_selection &&
-                      state.search_results_selection.length > 0
-                    )
-                  }
-                >
-                  <PlusIcon />
-                </IconButton>
-              </Tooltip>
-              <Tooltip content="Add selected tracks (overwrite existing)">
-                <IconButton
-                  color="orange"
-                  onClick={() => addSelectedTracks(true)}
-                  disabled={
-                    !(
-                      state.search_results_selection &&
-                      state.search_results_selection.length > 0
-                    )
-                  }
-                >
-                  <PlusIcon />
-                </IconButton>
-              </Tooltip>
-
-              {state.search_results !== undefined && (
-                <Tooltip content={`${state.search_results.length} results`}>
-                  <Flex align="center" gap="1" px="2" className="row-count">
-                    <Text size="2" color="gray" weight="bold">
-                      {state.search_results.length}
-                    </Text>
-                    <Text size="2" color="gray">
-                      results
-                    </Text>
-                  </Flex>
-                </Tooltip>
-              )}
-            </Flex>
+            <SearchResultsGrid
+              gridRef={searchGridRef}
+              currentId={state.current_id}
+              playId={playId}
+              requestReply={requestReply}
+              dispatch={dispatch}
+              tracks={state.search_results}
+              lastCollectionUpdate={state.collection_last_update}
+              onArtistClick={handleArtistClick}
+              onLabelClick={handleLabelClick}
+            />
           ) : (
-            <Flex width="100%" gap="2" p="2" className="grid-controls">
-              <Tooltip content="Deselect all">
-                <IconButton
-                  variant="soft"
-                  onClick={deselectAll}
-                  disabled={state.track_selection.length === 0}
-                >
-                  <Cross2Icon />
-                </IconButton>
-              </Tooltip>
-
-              <Tooltip content="Delete selected tracks">
-                <IconButton
-                  color="red"
-                  variant="soft"
-                  onClick={deleteSelectedTracks}
-                  disabled={state.track_selection.length === 0}
-                >
-                  <TrashIcon />
-                </IconButton>
-              </Tooltip>
-
-              <ExportDropDown
-                selectionCount={state.track_selection.length}
-                collections={state.collections ?? []}
-                exportToCollection={exportSelectedTracksToCollection}
-                exportSelectionToYTM={openSelectedTracksAsYTMPlaylist}
-                exportSelectionToYTSavedPlaylist={
-                  openSelectedTracksAsYTSavedPlaylist
-                }
-                exportTop50ToYTM={openTopTracksAsYTMPlaylist}
-                exportAllToYTSavedPlaylist={openAllTracksAsYTSavedPlaylist}
-                exportSelectionToSpotifyPlaylist={
-                  exportSelectionToSpotifyPlaylist
-                }
-                exportAllToSpotifyPlaylist={exportAllToSpotifyPlaylist}
-              />
-
-              <ImportDialog
-                setImportFrom={(path: string) =>
-                  dispatch({ type: "set-import-from", path })
-                }
-                keepUserData={state.import_from_keep_user_data ?? false}
-                setKeepUserData={(keep: boolean) =>
-                  dispatch({ type: "set-import-keep-user-data", keep })
-                }
-                importFrom={state.import_from ?? ""}
-                doImport={() => {
-                  if (state.import_from) {
-                    sendMsg({
-                      type: "import-from",
-                      path: state.import_from,
-                      keep_user_data: state.import_from_keep_user_data ?? false,
-                    });
-                  }
-                }}
-                isValidImportFrom={state.import_from_is_valid}
-              />
-
-              <ColumnsMenu gridRef={gridRef} />
-
-              <Tooltip content="Reset columns">
-                <IconButton variant="soft" onClick={resetColumnState}>
-                  <ResetIcon />
-                </IconButton>
-              </Tooltip>
-
-              {filteredRowCount !== undefined && (
-                <Tooltip
-                  content={
-                    filteredRowCount !== state.collection?.size
-                      ? `${filteredRowCount} of ${state.collection?.size} tracks match active filters`
-                      : `${filteredRowCount} tracks`
-                  }
-                >
-                  <Flex align="center" gap="1" px="2" className="row-count">
-                    <Text
-                      size="2"
-                      color={
-                        filteredRowCount !== state.collection?.size
-                          ? "blue"
-                          : "gray"
-                      }
-                      weight="bold"
-                    >
-                      {filteredRowCount}
-                    </Text>
-                    {filteredRowCount !== state.collection?.size &&
-                      state.collection?.size !== undefined && (
-                        <Text size="2" color="gray">
-                          / {state.collection.size}
-                        </Text>
-                      )}
-                    <Text size="2" color="gray">
-                      tracks
-                    </Text>
-                  </Flex>
-                </Tooltip>
-              )}
-            </Flex>
+            <TracksGrid
+              gridRef={gridRef}
+              currentId={state.current_id}
+              playId={playIdForGrid}
+              updateRating={updateRating}
+              requestReply={requestReply}
+              dispatch={dispatch}
+              sendMsg={sendMsg}
+              setGridReady={setGridReady}
+              initialState={gridState}
+              onStateUpdate={onTrackGridStateUpdate}
+              onRowCountChange={setFilteredRowCount}
+              onArtistClick={handleArtistClick}
+              onLabelClick={handleLabelClick}
+            />
           )}
-          <Box className="grid-container">
-            {(state.search_results !== undefined || state.search_busy) &&
-            (state.search_kind === "new-releases" ||
-              !!state.search_box_input) ? (
-              <SearchResultsGrid
-                gridRef={searchGridRef}
-                currentId={state.current_id}
-                playId={playId}
-                requestReply={requestReply}
-                dispatch={dispatch}
-                tracks={state.search_results}
-                lastCollectionUpdate={state.collection_last_update}
-                onArtistClick={handleArtistClick}
-                onLabelClick={handleLabelClick}
-              />
-            ) : (
-              <TracksGrid
-                gridRef={gridRef}
-                currentId={state.current_id}
-                playId={playIdForGrid}
-                updateRating={updateRating}
-                requestReply={requestReply}
-                dispatch={dispatch}
-                sendMsg={sendMsg}
-                setGridReady={setGridReady}
-                initialState={gridState}
-                onStateUpdate={onTrackGridStateUpdate}
-                onRowCountChange={setFilteredRowCount}
-                onArtistClick={handleArtistClick}
-                onLabelClick={handleLabelClick}
-              />
-            )}
-          </Box>
-        </Flex>
-        <Toast.Viewport className="ToastViewport" />
-        <Notification
-          open={state.notification_show}
-          setOpen={(open: boolean) =>
-            dispatch({ type: "set-notification-show", show: open })
-          }
-          message={state.notification_msg}
-          kind={state.notification_kind}
-        />
-        <YouTubePlaylistDialog
-          open={ytPlaylistOpen}
-          trackCount={ytPlaylistYtIds.length}
-          onOpenChange={setYtPlaylistOpen}
-          onCreate={createYouTubePlaylist}
-        />
-        <YouTubePlaylistProgressDialog
-          running={state.youtube_playlist_running}
-          current={state.youtube_playlist_current ?? 0}
-          total={state.youtube_playlist_total ?? 0}
-          onCancel={cancelYouTubePlaylist}
-        />
-        <SpotifyPlaylistDialog
-          open={spotifyPlaylistOpen}
-          trackCount={spotifyPlaylistTracks.length}
-          requestReply={requestReply}
-          onOpenChange={setSpotifyPlaylistOpen}
-          onCreate={createSpotifyPlaylist}
-        />
-        <SpotifyPlaylistProgressDialog
-          running={state.spotify_playlist_running}
-          checked={state.spotify_playlist_checked ?? 0}
-          matched={state.spotify_playlist_matched ?? 0}
-          total={state.spotify_playlist_total ?? 0}
-        />
-      </Toast.Provider>
+        </StackItem>
+      </VStack>
+      <Notification
+        open={state.notification_show}
+        setOpen={(open: boolean) =>
+          dispatch({ type: "set-notification-show", show: open })
+        }
+        message={state.notification_msg}
+        kind={state.notification_kind}
+      />
+      <YouTubePlaylistDialog
+        open={ytPlaylistOpen}
+        trackCount={ytPlaylistYtIds.length}
+        onOpenChange={setYtPlaylistOpen}
+        onCreate={createYouTubePlaylist}
+      />
+      <YouTubePlaylistProgressDialog
+        running={state.youtube_playlist_running}
+        current={state.youtube_playlist_current ?? 0}
+        total={state.youtube_playlist_total ?? 0}
+        onCancel={cancelYouTubePlaylist}
+      />
+      <SpotifyPlaylistDialog
+        open={spotifyPlaylistOpen}
+        trackCount={spotifyPlaylistTracks.length}
+        requestReply={requestReply}
+        onOpenChange={setSpotifyPlaylistOpen}
+        onCreate={createSpotifyPlaylist}
+      />
+      <SpotifyPlaylistProgressDialog
+        running={state.spotify_playlist_running}
+        checked={state.spotify_playlist_checked ?? 0}
+        matched={state.spotify_playlist_matched ?? 0}
+        total={state.spotify_playlist_total ?? 0}
+      />
     </Theme>
   );
 }

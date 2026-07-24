@@ -1,5 +1,5 @@
-import { DropdownMenu, IconButton, Tooltip } from "@radix-ui/themes";
-import { DotsHorizontalIcon } from "@radix-ui/react-icons";
+import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
+import { DotsHorizontalIcon, TrashIcon } from "@radix-ui/react-icons";
 import { collectionLabel } from "./CollectionSelector.tsx";
 import type { ICollection, ITrack } from "./Types.tsx";
 
@@ -24,51 +24,41 @@ function NowPlayingMenu({
   );
 
   return (
-    <DropdownMenu.Root>
-      <Tooltip content="Track options">
-        <DropdownMenu.Trigger>
-          <IconButton variant="soft" size="1">
-            <DotsHorizontalIcon />
-          </IconButton>
-        </DropdownMenu.Trigger>
-      </Tooltip>
-      <DropdownMenu.Content>
-        <DropdownMenu.Sub>
-          <DropdownMenu.SubTrigger disabled={collections.length === 0}>
-            Copy to collection
-          </DropdownMenu.SubTrigger>
-          <DropdownMenu.SubContent>
-            {collections.map((c) => (
-              <DropdownMenu.Item
-                key={c.path}
-                onSelect={() => onCopyToCollection(c.path)}
-              >
-                {collectionLabel(c.path)}
-              </DropdownMenu.Item>
-            ))}
-          </DropdownMenu.SubContent>
-        </DropdownMenu.Sub>
-        <DropdownMenu.Sub>
-          <DropdownMenu.SubTrigger disabled={otherCollections.length === 0}>
-            Move to collection
-          </DropdownMenu.SubTrigger>
-          <DropdownMenu.SubContent>
-            {otherCollections.map((c) => (
-              <DropdownMenu.Item
-                key={c.path}
-                onSelect={() => onMoveToCollection(c.path)}
-              >
-                {collectionLabel(c.path)}
-              </DropdownMenu.Item>
-            ))}
-          </DropdownMenu.SubContent>
-        </DropdownMenu.Sub>
-        <DropdownMenu.Separator />
-        <DropdownMenu.Item color="red" onSelect={onDeleteFromCollection}>
-          Delete from current collection
-        </DropdownMenu.Item>
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
+    <DropdownMenu
+      hasChevron={false}
+      button={{
+        label: "Track options",
+        icon: <DotsHorizontalIcon />,
+        isIconOnly: true,
+        variant: "secondary",
+        size: "sm",
+        tooltip: "Track options",
+      }}
+      items={[
+        {
+          type: "section",
+          title: "Copy to collection",
+          items: collections.map((c) => ({
+            label: collectionLabel(c.path),
+            onClick: () => onCopyToCollection(c.path),
+          })),
+        },
+        {
+          type: "section",
+          title: "Move to collection",
+          items: otherCollections.map((c) => ({
+            label: collectionLabel(c.path),
+            onClick: () => onMoveToCollection(c.path),
+          })),
+        },
+        { type: "divider" },
+        {
+          label: "Delete from current collection",
+          icon: <TrashIcon />,
+          onClick: onDeleteFromCollection,
+        },
+      ]}
+    />
   );
 }
 

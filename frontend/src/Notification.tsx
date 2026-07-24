@@ -1,12 +1,7 @@
 import { useMemo } from "react";
 import "./App.css";
-import {
-  ExclamationTriangleIcon,
-  InfoCircledIcon,
-} from "@radix-ui/react-icons";
-import { Toast } from "radix-ui";
-
-import { Callout } from "@radix-ui/themes";
+import { Toast } from "@astryxdesign/core/Toast";
+import { VStack } from "@astryxdesign/core/Stack";
 
 type NotificationProps = {
   open: boolean;
@@ -16,38 +11,29 @@ type NotificationProps = {
 };
 
 function Notification({ open, setOpen, message, kind }: NotificationProps) {
-  const color = useMemo(() => {
+  const type = useMemo<"info" | "error">(() => {
     switch (kind) {
-      case "info":
-        return "blue";
       case "warn":
       case "warning":
-        return "orange";
       case "error":
-        return "red";
+        return "error";
+      default:
+        return "info";
     }
   }, [kind]);
 
-  const icon = useMemo(() => {
-    switch (kind) {
-      case "info":
-        return <InfoCircledIcon />;
-      case "warn":
-      case "warning":
-      case "error":
-        return <ExclamationTriangleIcon />;
-    }
-  }, [kind]);
+  if (!open || !message) return null;
 
   return (
-    <Toast.Root className="ToastRoot" open={open} onOpenChange={setOpen}>
-      <Toast.Description asChild>
-        <Callout.Root variant="surface" color={color}>
-          <Callout.Icon>{icon}</Callout.Icon>
-          <Callout.Text>{message}</Callout.Text>
-        </Callout.Root>
-      </Toast.Description>
-    </Toast.Root>
+    <VStack className="ToastViewport">
+      <Toast
+        body={message}
+        type={type}
+        isAutoHide={type === "info"}
+        autoHideDuration={5000}
+        onDismiss={() => setOpen(false)}
+      />
+    </VStack>
   );
 }
 

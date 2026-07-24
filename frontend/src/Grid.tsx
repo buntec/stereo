@@ -8,7 +8,10 @@ import type {
 
 import { type CustomCellRendererProps } from "ag-grid-react";
 
-import { IconButton, Tooltip, Flex, DropdownMenu } from "@radix-ui/themes";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { HStack } from "@astryxdesign/core/Stack";
+import { MultiSelector } from "@astryxdesign/core/MultiSelector";
 
 import { AgGridReact } from "ag-grid-react";
 
@@ -38,7 +41,7 @@ import {
   type Dispatch,
 } from "react";
 
-import { CheckCircledIcon, PlayIcon, ColumnsIcon } from "@radix-ui/react-icons";
+import { CheckCircledIcon, PlayIcon } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import logger from "./logger.tsx";
@@ -114,7 +117,7 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
   };
 
   return (
-    <div className="rating-stars">
+    <HStack className="rating-stars">
       {[...Array(5)].map((_, i) => (
         <span
           key={i}
@@ -128,13 +131,16 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
             handleClick(-1); // reset rating
           }}
           style={{
-            color: i < (rating ?? 0) ? "var(--yellow-8)" : "var(--gray-8)",
+            color:
+              i < (rating ?? 0)
+                ? "var(--color-icon-yellow)"
+                : "var(--color-icon-gray)",
           }}
         >
           {i < (rating ?? 0) ? "★" : "☆"}
         </span>
       ))}
-    </div>
+    </HStack>
   );
 };
 
@@ -176,7 +182,7 @@ const PlayControlRenderer: React.FC<
   if (!data || !value) return null;
 
   return (
-    <Flex gap="3" align="center" className="track-control-cell">
+    <HStack gap={3} vAlign="center" className="track-control-cell">
       <Tooltip content="Open in YouTube">
         <a
           className="yt-thumbnail-link"
@@ -191,16 +197,14 @@ const PlayControlRenderer: React.FC<
           />
         </a>
       </Tooltip>
-      <Tooltip content="Play">
-        <IconButton
-          variant="ghost"
-          size="1"
-          onClick={handlePlay}
-          aria-label="Play"
-        >
-          <PlayIcon />
-        </IconButton>
-      </Tooltip>
+      <IconButton
+        variant="ghost"
+        size="sm"
+        onClick={handlePlay}
+        label="Play"
+        tooltip="Play"
+        icon={<PlayIcon />}
+      />
 
       <EditTrackDialog
         isValid={isValid}
@@ -210,7 +214,7 @@ const PlayControlRenderer: React.FC<
         resetValue={resetValue}
         requestReply={context.requestReply}
       />
-    </Flex>
+    </HStack>
   );
 };
 
@@ -254,28 +258,26 @@ const SearchPlayControlRenderer: React.FC<
   if (!data) return null;
 
   return (
-    <Flex gap="2" align="center">
+    <HStack gap={2} vAlign="center">
       <img
         src={`https://i.ytimg.com/vi/${data.yt_id}/default.jpg`}
         alt="YouTube Video Thumbnail"
         width="40"
       />
-      <Tooltip content="Play">
-        <IconButton
-          variant="soft"
-          size="1"
-          onClick={handlePlay}
-          aria-label="Play"
-        >
-          <PlayIcon />
-        </IconButton>
-      </Tooltip>
+      <IconButton
+        variant="secondary"
+        size="sm"
+        onClick={handlePlay}
+        label="Play"
+        tooltip="Play"
+        icon={<PlayIcon />}
+      />
       {exists ? (
         <Tooltip content="Track exists in collection">
           <CheckCircledIcon color="green" />
         </Tooltip>
       ) : null}
-    </Flex>
+    </HStack>
   );
 };
 
@@ -531,36 +533,47 @@ export const ColumnsMenu = ({ gridRef }: ColumnsMenuProps) => {
     );
   }, [gridRef]);
 
-  const toggleColumn = useCallback(
-    (colId: string, visible: boolean) => {
-      gridRef.current?.api.setColumnsVisible([colId], visible);
+  useEffect(() => {
+    refreshColumns();
+  }, [refreshColumns]);
+
+  const options = useMemo(
+    () => columns.map((c) => ({ value: c.colId, label: c.headerName })),
+    [columns],
+  );
+
+  const value = useMemo(
+    () => columns.filter((c) => c.visible).map((c) => c.colId),
+    [columns],
+  );
+
+  const handleChange = useCallback(
+    (next: string[]) => {
+      const api = gridRef.current?.api;
+      if (!api) return;
+      const shown = columns
+        .filter((c) => next.includes(c.colId))
+        .map((c) => c.colId);
+      const hidden = columns
+        .filter((c) => !next.includes(c.colId))
+        .map((c) => c.colId);
+      if (shown.length) api.setColumnsVisible(shown, true);
+      if (hidden.length) api.setColumnsVisible(hidden, false);
       refreshColumns();
     },
-    [gridRef, refreshColumns],
+    [columns, gridRef, refreshColumns],
   );
 
   return (
-    <DropdownMenu.Root onOpenChange={(open) => open && refreshColumns()}>
-      <Tooltip content="Show/hide columns">
-        <DropdownMenu.Trigger>
-          <IconButton variant="soft">
-            <ColumnsIcon />
-          </IconButton>
-        </DropdownMenu.Trigger>
-      </Tooltip>
-      <DropdownMenu.Content>
-        {columns.map((c) => (
-          <DropdownMenu.CheckboxItem
-            key={c.colId}
-            checked={c.visible}
-            onSelect={(e) => e.preventDefault()}
-            onCheckedChange={(checked) => toggleColumn(c.colId, checked)}
-          >
-            {c.headerName}
-          </DropdownMenu.CheckboxItem>
-        ))}
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
+    <MultiSelector
+      label="Show/hide columns"
+      isLabelHidden
+      placeholder="Columns"
+      size="sm"
+      options={options}
+      value={value}
+      onChange={handleChange}
+    />
   );
 };
 

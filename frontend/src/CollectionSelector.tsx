@@ -1,17 +1,16 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import {
-  Select,
-  Dialog,
-  Button,
-  IconButton,
-  TextField,
-  Separator,
-  Flex,
-  Text,
-  Tooltip,
-  Code,
-} from "@radix-ui/themes";
+import { InputGroup } from "@astryxdesign/core/InputGroup";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Divider } from "@astryxdesign/core/Divider";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { Button } from "@astryxdesign/core/Button";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
+import { Code } from "@astryxdesign/core/Code";
 import { CubeIcon, PlusCircledIcon, Link2Icon } from "@radix-ui/react-icons";
 import type { ICollection } from "./Types.tsx";
 
@@ -47,95 +46,104 @@ function CollectionSelector({
     ? value
     : undefined;
 
+  const closeDialog = () => {
+    setDialogOpen(false);
+    setNewName("");
+  };
+
   return (
-    <div className="rt-TextFieldRoot rt-r-size-2 rt-variant-soft collection-selector-box">
-      <TextField.Slot>
-        <CubeIcon color={isValid ? "green" : "red"} height="14" width="14" />
-      </TextField.Slot>
+    <HStack className="collection-selector-box" gap={0} vAlign="center">
+      <InputGroup label="Collection" isLabelHidden>
+        <CubeIcon color={isValid ? "green" : "red"} height={14} width={14} />
+        <Selector
+          label="Collection"
+          isLabelHidden
+          placeholder="Select collection…"
+          options={collections.map((c) => ({
+            value: c.path,
+            label: collectionLabel(c.path),
+          }))}
+          value={selectedValue}
+          onChange={setValue}
+        />
+      </InputGroup>
 
-      <Select.Root value={selectedValue} onValueChange={setValue}>
-        <Select.Trigger variant="ghost" placeholder="Select collection…" />
-        <Select.Content>
-          {collections.map((c) => (
-            <Select.Item key={c.path} value={c.path}>
-              {collectionLabel(c.path)}
-            </Select.Item>
-          ))}
-        </Select.Content>
-      </Select.Root>
+      <HStack className="collection-selector-actions" gap={2} vAlign="center">
+        <Divider orientation="vertical" style={{ height: "14px" }} />
 
-      <TextField.Slot side="right" className="collection-selector-actions">
-        <Separator orientation="vertical" style={{ height: "14px" }} />
+        <IconButton
+          variant="ghost"
+          size="sm"
+          label="Create new collection"
+          tooltip="Create new collection"
+          icon={<PlusCircledIcon />}
+          onClick={() => setDialogOpen(true)}
+        />
 
-        <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
-          <Tooltip content="Create new collection">
-            <Dialog.Trigger>
-              <IconButton variant="ghost" size="1" color="gray">
-                <PlusCircledIcon />
-              </IconButton>
-            </Dialog.Trigger>
-          </Tooltip>
-
-          <Dialog.Content maxWidth="380px">
-            <Dialog.Title>New Collection</Dialog.Title>
-            <Dialog.Description size="2" mb="4">
-              Enter a name for the new collection. It will be created as{" "}
-              <Code>{newName || "name"}.db</Code> in the current repo.
-            </Dialog.Description>
-
-            <label>
-              <Text as="div" size="2" mb="1" weight="bold">
-                Collection name
-              </Text>
-              <TextField.Root
-                value={newName}
-                placeholder="my-sets"
-                onChange={(ev) =>
-                  setNewName(ev.target.value.replace(/[/\\]/g, ""))
-                }
+        <Dialog
+          isOpen={dialogOpen}
+          onOpenChange={(open) => (open ? setDialogOpen(true) : closeDialog())}
+          purpose="form"
+          width={380}
+        >
+          <Layout
+            header={
+              <DialogHeader
+                title="New Collection"
+                onOpenChange={() => closeDialog()}
               />
-            </label>
+            }
+            content={
+              <LayoutContent>
+                <VStack gap={3}>
+                  <Text as="div" type="body">
+                    Enter a name for the new collection. It will be created as{" "}
+                    <Code>{newName || "name"}.db</Code> in the current repo.
+                  </Text>
+                  <TextInput
+                    label="Collection name"
+                    value={newName}
+                    placeholder="my-sets"
+                    onChange={(v) => setNewName(v.replace(/[/\\]/g, ""))}
+                  />
+                </VStack>
+              </LayoutContent>
+            }
+            footer={
+              <LayoutFooter>
+                <HStack gap={2} hAlign="end">
+                  <Button
+                    label="Cancel"
+                    variant="secondary"
+                    onClick={closeDialog}
+                  />
+                  <Button
+                    label="Create"
+                    variant="primary"
+                    isDisabled={!newName.trim()}
+                    onClick={() => {
+                      onCreate(newName.trim());
+                      closeDialog();
+                    }}
+                  />
+                </HStack>
+              </LayoutFooter>
+            }
+          />
+        </Dialog>
 
-            <Flex gap="3" mt="4" justify="end">
-              <Dialog.Close>
-                <Button
-                  variant="soft"
-                  color="gray"
-                  onClick={() => setNewName("")}
-                >
-                  Cancel
-                </Button>
-              </Dialog.Close>
-              <Dialog.Close>
-                <Button
-                  color="green"
-                  disabled={!newName.trim()}
-                  onClick={() => {
-                    onCreate(newName.trim());
-                    setNewName("");
-                  }}
-                >
-                  Create
-                </Button>
-              </Dialog.Close>
-            </Flex>
-          </Dialog.Content>
-        </Dialog.Root>
-
-        <Tooltip content="Git repository">
-          <IconButton
-            variant="ghost"
-            size="1"
-            color={repoVisible ? "cyan" : "gray"}
-            onClick={onToggleRepo}
-          >
-            <Link2Icon />
-          </IconButton>
-        </Tooltip>
+        <IconButton
+          variant={repoVisible ? "secondary" : "ghost"}
+          size="sm"
+          label="Git repository"
+          tooltip="Git repository"
+          icon={<Link2Icon />}
+          onClick={onToggleRepo}
+        />
 
         {children}
-      </TextField.Slot>
-    </div>
+      </HStack>
+    </HStack>
   );
 }
 

@@ -1,18 +1,13 @@
-import {
-  Select,
-  IconButton,
-  Spinner,
-  TextField,
-  Flex,
-  Tooltip,
-  Text,
-  DropdownMenu,
-} from "@radix-ui/themes";
-import {
-  Cross1Icon,
-  MagnifyingGlassIcon,
-  MixerHorizontalIcon,
-} from "@radix-ui/react-icons";
+import { Toolbar } from "@astryxdesign/core/Toolbar";
+import { Selector } from "@astryxdesign/core/Selector";
+import { MultiSelector } from "@astryxdesign/core/MultiSelector";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { Spinner } from "@astryxdesign/core/Spinner";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { HStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
+import { MagnifyingGlassIcon } from "@radix-ui/react-icons";
 
 import { type SearchBoxKind, type TrackSource } from "./Types.tsx";
 
@@ -31,6 +26,15 @@ export interface ISearchBoxProps {
   searchBusy: boolean;
   errorMessage?: string;
 }
+
+const SEARCH_KIND_OPTIONS = [
+  { value: "fuzzy", label: "Fuzzy" },
+  { value: "by-label", label: "Label" },
+  { value: "by-artist", label: "Artist" },
+  { value: "new-releases", label: "Latest releases" },
+];
+
+const LIMIT_OPTIONS = ["10", "25", "50", "100", "500", "1000"];
 
 const ALL_SEARCH_SOURCES: { value: TrackSource; label: string }[] = [
   { value: "beatport", label: "Beatport" },
@@ -72,152 +76,112 @@ function SearchBox({
   searchBusy,
   errorMessage,
 }: ISearchBoxProps) {
-  const toggleSource = (source: TrackSource) => {
-    if (searchSources.includes(source)) {
-      setSearchSources(searchSources.filter((s) => s !== source));
-    } else {
-      setSearchSources([...searchSources, source]);
-    }
-  };
-
   const isNewReleases = searchKind === "new-releases";
 
   const kindSelect = (
-    <Select.Root
-      defaultValue="fuzzy"
+    <Selector
+      label="Search kind"
+      isLabelHidden
+      options={SEARCH_KIND_OPTIONS}
       value={searchKind}
-      onValueChange={(value: string) => setSearchKind(toSearchKind(value))}
-    >
-      <Select.Trigger variant="soft" />
-      <Select.Content>
-        <Select.Item value="fuzzy">Fuzzy</Select.Item>
-        <Select.Item value="by-label">Label</Select.Item>
-        <Select.Item value="by-artist">Artist</Select.Item>
-        <Select.Item value="new-releases">Latest releases</Select.Item>
-      </Select.Content>
-    </Select.Root>
+      onChange={(v) => setSearchKind(toSearchKind(v))}
+    />
   );
 
   const limitSelect = (
-    <Select.Root
-      defaultValue="100"
+    <Selector
+      label="Result limit"
+      isLabelHidden
+      options={LIMIT_OPTIONS}
       value={`${searchLimit}`}
-      onValueChange={(value: string) => setSearchLimit(parseInt(value))}
-    >
-      <Select.Trigger variant="ghost" />
-      <Select.Content>
-        <Select.Item value="10">10</Select.Item>
-        <Select.Item value="25">25</Select.Item>
-        <Select.Item value="50">50</Select.Item>
-        <Select.Item value="100">100</Select.Item>
-        <Select.Item value="500">500</Select.Item>
-        <Select.Item value="1000">1000</Select.Item>
-      </Select.Content>
-    </Select.Root>
+      onChange={(v) => setSearchLimit(parseInt(v))}
+    />
   );
 
   const sourcesMenu = (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger>
-        <IconButton variant="ghost">
-          <MixerHorizontalIcon height="16" width="16" />
-        </IconButton>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content>
-        {ALL_SEARCH_SOURCES.map(({ value: source, label }) => (
-          <DropdownMenu.CheckboxItem
-            key={source}
-            checked={searchSources.includes(source)}
-            onSelect={(ev) => ev.preventDefault()}
-            onCheckedChange={() => toggleSource(source)}
-          >
-            {label}
-          </DropdownMenu.CheckboxItem>
-        ))}
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
+    <MultiSelector
+      label="Search sources"
+      isLabelHidden
+      placeholder="Sources"
+      triggerDisplay="count"
+      options={ALL_SEARCH_SOURCES}
+      value={searchSources}
+      onChange={(v) => setSearchSources(v as TrackSource[])}
+    />
   );
 
   return (
-    <Flex className="search-box" align="center" gap="2" m="2">
-      <Tooltip content="Search by label, by artist, fuzzy, or latest releases">
-        {kindSelect}
-      </Tooltip>
-      {isNewReleases ? (
-        <Flex className="search-box-text-field" align="center" gap="2" px="2">
-          <MagnifyingGlassIcon height="16" width="16" />
-          {searchBusy ? <Spinner size="2" /> : null}
-          <Select.Root
-            value={`${newReleasesDays}`}
-            onValueChange={(value: string) =>
-              setNewReleasesDays(parseInt(value))
-            }
-          >
-            <Select.Trigger variant="soft" style={{ flexGrow: 1 }} />
-            <Select.Content>
-              {DAY_OPTIONS.map((d) => (
-                <Select.Item key={d} value={`${d}`}>
-                  Last {d} day{d === 1 ? "" : "s"}
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Root>
-          <Tooltip content="Limit number of search results">
-            {limitSelect}
+    <Toolbar
+      className="search-box"
+      label="Search"
+      size="sm"
+      startContent={
+        <>
+          <Tooltip content="Search by label, by artist, fuzzy, or latest releases">
+            {kindSelect}
           </Tooltip>
-          <Tooltip content="Search sources">{sourcesMenu}</Tooltip>
-        </Flex>
-      ) : (
-        <TextField.Root
-          className="search-box-text-field"
-          size="2"
-          variant="soft"
-          value={value}
-          onChange={(ev) => setValue(ev.target.value)}
-          onKeyDown={(ev) => {
-            if (ev.key === "Enter") onSearch();
-          }}
-        >
-          <TextField.Slot>
-            <MagnifyingGlassIcon height="16" width="16" />
-          </TextField.Slot>
-          <TextField.Slot>
-            {searchBusy ? <Spinner size="2" /> : null}
-          </TextField.Slot>
-
-          <Tooltip content="Limit number of search results">
-            <TextField.Slot side="right">{limitSelect}</TextField.Slot>
-          </Tooltip>
-          <Tooltip content="Search sources">
-            <TextField.Slot side="right">{sourcesMenu}</TextField.Slot>
-          </Tooltip>
-
-          {value.length > 0 && (
-            <Tooltip content="Cancel search">
-              <TextField.Slot side="right">
-                <IconButton variant="ghost">
-                  <Cross1Icon
-                    onClick={() => setValue("")}
-                    height="16"
-                    width="16"
-                  />
-                </IconButton>
-              </TextField.Slot>
-            </Tooltip>
+          {isNewReleases ? (
+            <HStack
+              className="search-box-text-field"
+              gap={2}
+              vAlign="center"
+              paddingInline={2}
+            >
+              {searchBusy ? <Spinner size="sm" label="Searching" /> : null}
+              <Selector
+                label="Days"
+                isLabelHidden
+                options={DAY_OPTIONS.map((d) => ({
+                  value: `${d}`,
+                  label: `Last ${d} day${d === 1 ? "" : "s"}`,
+                }))}
+                value={`${newReleasesDays}`}
+                onChange={(v) => setNewReleasesDays(parseInt(v))}
+              />
+              <Tooltip content="Limit number of search results">
+                {limitSelect}
+              </Tooltip>
+              <Tooltip content="Search sources">{sourcesMenu}</Tooltip>
+            </HStack>
+          ) : (
+            <>
+              <TextInput
+                className="search-box-text-field"
+                label="Search"
+                isLabelHidden
+                startIcon="search"
+                hasClear
+                isLoading={searchBusy}
+                value={value}
+                onChange={setValue}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter") onSearch();
+                }}
+              />
+              <Tooltip content="Limit number of search results">
+                {limitSelect}
+              </Tooltip>
+              <Tooltip content="Search sources">{sourcesMenu}</Tooltip>
+            </>
           )}
-        </TextField.Root>
-      )}
-      <Tooltip content="Search">
-        <IconButton
-          variant="soft"
-          disabled={!isNewReleases && value.trim().length === 0}
-          onClick={onSearch}
-        >
-          <MagnifyingGlassIcon height="16" width="16" />
-        </IconButton>
-      </Tooltip>
-      {errorMessage ? <Text color="red">{errorMessage}</Text> : null}
-    </Flex>
+        </>
+      }
+      endContent={
+        <>
+          <IconButton
+            variant="primary"
+            label="Search"
+            tooltip="Search"
+            icon={<MagnifyingGlassIcon />}
+            isDisabled={!isNewReleases && value.trim().length === 0}
+            onClick={onSearch}
+          />
+          {errorMessage ? (
+            <Text style={{ color: "var(--color-error)" }}>{errorMessage}</Text>
+          ) : null}
+        </>
+      }
+    />
   );
 }
 

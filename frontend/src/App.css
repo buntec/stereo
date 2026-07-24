@@ -265,7 +265,7 @@
 }
 
 .ToastViewport {
-  margin: var(--space-4);
+  margin: var(--spacing-4);
   position: fixed;
   top: 0;
   right: 0;
@@ -276,54 +276,6 @@
   list-style: none;
   z-index: 100;
   outline: none;
-}
-
-.ToastRoot {
-  padding: var(--space-2);
-}
-
-.ToastRoot[data-state="open"] {
-  animation: slideIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.ToastRoot[data-state="closed"] {
-  animation: hide 100ms ease-in;
-}
-.ToastRoot[data-swipe="move"] {
-  transform: translateX(var(--radix-toast-swipe-move-x));
-}
-.ToastRoot[data-swipe="cancel"] {
-  transform: translateX(0);
-  transition: transform 200ms ease-out;
-}
-.ToastRoot[data-swipe="end"] {
-  animation: swipeOut 100ms ease-out;
-}
-
-@keyframes hide {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes slideIn {
-  from {
-    transform: translateX(calc(100% + var(--viewport-padding)));
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-
-@keyframes swipeOut {
-  from {
-    transform: translateX(var(--radix-toast-swipe-end-x));
-  }
-  to {
-    transform: translateX(calc(100% + var(--viewport-padding)));
-  }
 }
 
 @keyframes player-filter {

@@ -1,14 +1,12 @@
 import { useState } from "react";
-import {
-  Select,
-  Dialog,
-  Button,
-  IconButton,
-  TextField,
-  Flex,
-  Text,
-  Tooltip,
-} from "@radix-ui/themes";
+import { Selector } from "@astryxdesign/core/Selector";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { Button } from "@astryxdesign/core/Button";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
 import { PlusCircledIcon } from "@radix-ui/react-icons";
 import type { IRepo } from "./Types.tsx";
 
@@ -29,80 +27,91 @@ function RepoSelector({ repos, value, setValue, onClone }: RepoSelectorProps) {
 
   const selectedValue = repos.some((r) => r.path === value) ? value : undefined;
 
+  const closeDialog = () => {
+    setDialogOpen(false);
+    setUrl("");
+  };
+
   return (
-    <Flex align="center" gap="2" m="2">
-      <Select.Root value={selectedValue} onValueChange={setValue}>
-        <Select.Trigger
-          variant="soft"
-          placeholder={
-            repos.length === 0 ? "No repos — clone one →" : "Select repo…"
+    <HStack vAlign="center" gap={2} padding={2}>
+      <Selector
+        label="Repository"
+        isLabelHidden
+        placeholder={
+          repos.length === 0 ? "No repos — clone one →" : "Select repo…"
+        }
+        options={repos.map((r) => ({ value: r.path, label: repoLabel(r) }))}
+        value={selectedValue}
+        onChange={setValue}
+      />
+
+      <IconButton
+        variant="secondary"
+        label="Clone a git repository"
+        tooltip="Clone a git repository"
+        icon={<PlusCircledIcon />}
+        onClick={() => setDialogOpen(true)}
+      />
+
+      <Dialog
+        isOpen={dialogOpen}
+        onOpenChange={(open) => (open ? setDialogOpen(true) : closeDialog())}
+        purpose="form"
+        width={440}
+      >
+        <Layout
+          header={
+            <DialogHeader
+              title="Clone a repository"
+              onOpenChange={() => closeDialog()}
+            />
+          }
+          content={
+            <LayoutContent>
+              <VStack gap={3}>
+                <Text as="div" type="body">
+                  Enter a git URL. The repository will be cloned into the stereo
+                  home directory and its collections will appear in the
+                  dropdown.
+                </Text>
+                <TextInput
+                  label="Git URL"
+                  value={url}
+                  placeholder="https://github.com/user/my-sets.git"
+                  onChange={(v) => setUrl(v.trim())}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter" && url) {
+                      onClone(url);
+                      closeDialog();
+                    }
+                  }}
+                />
+              </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack gap={2} hAlign="end">
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  onClick={closeDialog}
+                />
+                <Button
+                  label="Clone"
+                  variant="primary"
+                  isDisabled={!url}
+                  onClick={() => {
+                    onClone(url);
+                    closeDialog();
+                  }}
+                />
+              </HStack>
+            </LayoutFooter>
           }
         />
-        <Select.Content>
-          {repos.map((r) => (
-            <Select.Item key={r.path} value={r.path}>
-              {repoLabel(r)}
-            </Select.Item>
-          ))}
-        </Select.Content>
-      </Select.Root>
-
-      <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
-        <Tooltip content="Clone a git repository">
-          <Dialog.Trigger>
-            <IconButton variant="soft">
-              <PlusCircledIcon />
-            </IconButton>
-          </Dialog.Trigger>
-        </Tooltip>
-
-        <Dialog.Content maxWidth="440px">
-          <Dialog.Title>Clone a repository</Dialog.Title>
-          <Dialog.Description size="2" mb="4">
-            Enter a git URL. The repository will be cloned into the stereo home
-            directory and its collections will appear in the dropdown.
-          </Dialog.Description>
-
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Git URL
-            </Text>
-            <TextField.Root
-              value={url}
-              placeholder="https://github.com/user/my-sets.git"
-              onChange={(ev) => setUrl(ev.target.value.trim())}
-              onKeyDown={(ev) => {
-                if (ev.key === "Enter" && url) {
-                  onClone(url);
-                  setUrl("");
-                  setDialogOpen(false);
-                }
-              }}
-            />
-          </label>
-
-          <Flex gap="3" mt="4" justify="end">
-            <Dialog.Close>
-              <Button variant="soft" color="gray" onClick={() => setUrl("")}>
-                Cancel
-              </Button>
-            </Dialog.Close>
-            <Dialog.Close>
-              <Button
-                color="green"
-                disabled={!url}
-                onClick={() => {
-                  onClone(url);
-                  setUrl("");
-                }}
-              >
-                Clone
-              </Button>
-            </Dialog.Close>
-          </Flex>
-        </Dialog.Content>
-      </Dialog.Root>
-    </Flex>
+      </Dialog>
+    </HStack>
   );
 }
 

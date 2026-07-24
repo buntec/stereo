@@ -1,14 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import {
-  Text,
-  Button,
-  Dialog,
-  TextField,
-  Flex,
-  Progress,
-  RadioGroup,
-  Spinner,
-} from "@radix-ui/themes";
+import { Text } from "@astryxdesign/core/Text";
+import { Button } from "@astryxdesign/core/Button";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import type { RequestReply } from "./Types";
 
 const PLAYLIST_LOOKUP_DEBOUNCE_MS = 500;
@@ -78,94 +76,103 @@ function SpotifyPlaylistDialog({
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Content maxWidth="440px">
-        <Dialog.Title>Export to Spotify playlist</Dialog.Title>
-        <Dialog.Description size="2" mb="4">
-          Exports up to {trackCount} track{trackCount !== 1 ? "s" : ""} to
-          Spotify. Tracks are matched by artist/title, so some may not be found.
-        </Dialog.Description>
+    <Dialog
+      isOpen={open}
+      onOpenChange={onOpenChange}
+      purpose="form"
+      width={440}
+    >
+      <Layout
+        header={
+          <DialogHeader
+            title="Export to Spotify playlist"
+            subtitle={`Exports up to ${trackCount} track${trackCount !== 1 ? "s" : ""} to Spotify. Tracks are matched by artist/title, so some may not be found.`}
+            onOpenChange={() => onOpenChange(false)}
+          />
+        }
+        content={
+          <LayoutContent>
+            <VStack gap={3}>
+              <RadioList
+                label="Playlist target"
+                isLabelHidden
+                value={mode}
+                onChange={(v) => setMode(v as "new" | "existing")}
+              >
+                <RadioListItem value="new" label="Create a new playlist" />
+                <RadioListItem
+                  value="existing"
+                  label="Replace tracks in an existing playlist"
+                />
+              </RadioList>
 
-        <RadioGroup.Root
-          value={mode}
-          onValueChange={(v) => setMode(v as "new" | "existing")}
-        >
-          <Flex direction="column" gap="3">
-            <label>
-              <Flex gap="2" align="center">
-                <RadioGroup.Item value="new" />
-                <Text size="2" weight="bold">
-                  Create a new playlist
-                </Text>
-              </Flex>
-            </label>
-            {mode === "new" && (
-              <TextField.Root
-                ml="5"
-                value={name}
-                onChange={(ev) => setName(ev.target.value)}
-                placeholder="stereo"
-                onKeyDown={(ev) => {
-                  if (ev.key === "Enter") submit();
-                }}
-              />
-            )}
-
-            <label>
-              <Flex gap="2" align="center">
-                <RadioGroup.Item value="existing" />
-                <Text size="2" weight="bold">
-                  Replace tracks in an existing playlist
-                </Text>
-              </Flex>
-            </label>
-            {mode === "existing" && (
-              <Flex direction="column" gap="2" ml="5">
-                <TextField.Root
-                  value={existingUrl}
-                  onChange={(ev) => setExistingUrl(ev.target.value)}
-                  placeholder="Spotify playlist link"
+              {mode === "new" && (
+                <TextInput
+                  label="Playlist name"
+                  isLabelHidden
+                  value={name}
+                  onChange={setName}
+                  placeholder="stereo"
                   onKeyDown={(ev) => {
                     if (ev.key === "Enter") submit();
                   }}
                 />
-                {lookupStatus === "checking" && (
-                  <Flex gap="2" align="center">
-                    <Spinner size="1" />
-                    <Text size="1" color="gray">
-                      Looking up playlist…
-                    </Text>
-                  </Flex>
-                )}
-                {lookupStatus === "found" && (
-                  <Text size="1" color="amber">
-                    This will remove all existing tracks from “{lookupName}” and
-                    replace them with this export. Its link stays the same.
-                  </Text>
-                )}
-                {lookupStatus === "not-found" && (
-                  <Text size="1" color="red">
-                    Couldn't find that playlist. Paste the playlist's share link
-                    or its spotify:playlist:... URI.
-                  </Text>
-                )}
-              </Flex>
-            )}
-          </Flex>
-        </RadioGroup.Root>
+              )}
 
-        <Flex gap="3" mt="4" justify="end">
-          <Dialog.Close>
-            <Button variant="soft" color="gray">
-              Cancel
-            </Button>
-          </Dialog.Close>
-          <Button color="green" disabled={!canCreate} onClick={submit}>
-            {mode === "new" ? "Create" : "Replace"}
-          </Button>
-        </Flex>
-      </Dialog.Content>
-    </Dialog.Root>
+              {mode === "existing" && (
+                <VStack gap={2}>
+                  <TextInput
+                    label="Existing playlist"
+                    isLabelHidden
+                    value={existingUrl}
+                    onChange={setExistingUrl}
+                    placeholder="Spotify playlist link"
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter") submit();
+                    }}
+                    isLoading={lookupStatus === "checking"}
+                    status={
+                      lookupStatus === "found"
+                        ? {
+                            type: "warning",
+                            message: `This will remove all existing tracks from "${lookupName}" and replace them with this export. Its link stays the same.`,
+                          }
+                        : lookupStatus === "not-found"
+                          ? {
+                              type: "error",
+                              message:
+                                "Couldn't find that playlist. Paste the playlist's share link or its spotify:playlist:... URI.",
+                            }
+                          : undefined
+                    }
+                  />
+                  {lookupStatus === "checking" && (
+                    <Text type="supporting">Looking up playlist…</Text>
+                  )}
+                </VStack>
+              )}
+            </VStack>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack gap={2} hAlign="end">
+              <Button
+                label="Cancel"
+                variant="secondary"
+                onClick={() => onOpenChange(false)}
+              />
+              <Button
+                label={mode === "new" ? "Create" : "Replace"}
+                variant="primary"
+                isDisabled={!canCreate}
+                onClick={submit}
+              />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
   );
 }
 
@@ -182,24 +189,37 @@ export function SpotifyPlaylistProgressDialog({
   matched,
   total,
 }: SpotifyPlaylistProgressDialogProps) {
-  const progressValue =
-    total > 0 ? Math.round((checked / total) * 100) : undefined;
+  const progressValue = total > 0 ? Math.round((checked / total) * 100) : 0;
 
   return (
-    <Dialog.Root open={running}>
-      <Dialog.Content maxWidth="400px">
-        <Dialog.Title>Creating Spotify playlist</Dialog.Title>
-        <Flex direction="column" gap="3" mt="2">
-          <Text size="2">
-            Matching tracks… ({checked} / {total})
-          </Text>
-          <Progress value={progressValue} size="2" />
-          <Text size="1" color="gray">
-            {matched} of {checked} checked tracks matched
-          </Text>
-        </Flex>
-      </Dialog.Content>
-    </Dialog.Root>
+    <Dialog
+      isOpen={running}
+      onOpenChange={() => {}}
+      purpose="required"
+      width={400}
+    >
+      <Layout
+        header={<DialogHeader title="Creating Spotify playlist" />}
+        content={
+          <LayoutContent>
+            <VStack gap={3}>
+              <Text type="body">
+                Matching tracks… ({checked} / {total})
+              </Text>
+              <ProgressBar
+                label="Matching tracks"
+                isLabelHidden
+                value={progressValue}
+                isIndeterminate={total === 0}
+              />
+              <Text type="supporting">
+                {matched} of {checked} checked tracks matched
+              </Text>
+            </VStack>
+          </LayoutContent>
+        }
+      />
+    </Dialog>
   );
 }
 

@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text } from "@radix-ui/themes";
+import { VStack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
 
 function Title({
   title,
@@ -62,16 +63,16 @@ function Title({
   }
 
   return (
-    <Box className="title" style={{ textAlign: "center" }}>
-      <Text size="7" weight="light" as="div">
+    <VStack className="title" hAlign="center">
+      <Text as="div" type="display-2" weight="normal" justify="center">
         {trackName ?? title}
       </Text>
       {parts.length > 0 && (
-        <Text size="4" color="gray" as="div">
+        <Text as="div" type="supporting" justify="center">
           {parts}
         </Text>
       )}
-    </Box>
+    </VStack>
   );
 }
 

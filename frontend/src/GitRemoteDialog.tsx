@@ -1,14 +1,12 @@
 import { useState, useEffect } from "react";
-import {
-  Text,
-  Button,
-  Dialog,
-  IconButton,
-  Tooltip,
-  TextField,
-  Flex,
-  Code,
-} from "@radix-ui/themes";
+import { Text } from "@astryxdesign/core/Text";
+import { Button } from "@astryxdesign/core/Button";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { Code } from "@astryxdesign/core/Code";
 import { GitHubLogoIcon } from "@radix-ui/react-icons";
 
 type GitRemoteDialogProps = {
@@ -22,76 +20,96 @@ function GitRemoteDialog({
   onOpen,
   onSave,
 }: GitRemoteDialogProps) {
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [value, setValue] = useState("");
 
   useEffect(() => {
     setValue(currentRemote ?? "");
   }, [currentRemote]);
 
+  const closeDialog = () => setDialogOpen(false);
+
   return (
-    <Dialog.Root
-      onOpenChange={(open) => {
-        if (open) onOpen();
-      }}
-    >
-      <Tooltip content="Configure git remote for collection backups">
-        <Dialog.Trigger>
-          <IconButton
-            variant={currentRemote ? "solid" : "soft"}
-            color={currentRemote ? "green" : "gray"}
-          >
-            <GitHubLogoIcon />
-          </IconButton>
-        </Dialog.Trigger>
-      </Tooltip>
+    <>
+      <IconButton
+        variant={currentRemote ? "primary" : "secondary"}
+        label="Configure git remote for collection backups"
+        tooltip="Configure git remote for collection backups"
+        icon={<GitHubLogoIcon />}
+        onClick={() => {
+          setDialogOpen(true);
+          onOpen();
+        }}
+      />
 
-      <Dialog.Content maxWidth="480px">
-        <Dialog.Title>Git Remote</Dialog.Title>
-        <Dialog.Description size="2" mb="4">
-          Set a remote URL to automatically push collection snapshots after each
-          change. Create an empty repo on GitHub or GitLab first, then paste its
-          URL here. Example:{" "}
-          <Code>git@github.com:you/stereo-collections.git</Code>
-        </Dialog.Description>
-
-        <Flex direction="column" gap="3">
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Remote URL (origin)
-            </Text>
-            <TextField.Root
-              placeholder="git@github.com:you/stereo-collections.git"
-              value={value}
-              onChange={(ev) => setValue(ev.target.value)}
-            />
-          </label>
-        </Flex>
-
-        <Flex gap="3" mt="4" justify="end">
-          {currentRemote && (
-            <Dialog.Close>
-              <Button variant="soft" color="red" onClick={() => onSave(null)}>
-                Remove
-              </Button>
-            </Dialog.Close>
-          )}
-          <Dialog.Close>
-            <Button variant="soft" color="gray">
-              Cancel
-            </Button>
-          </Dialog.Close>
-          <Dialog.Close>
-            <Button
-              color="green"
-              onClick={() => onSave(value.trim() || null)}
-              disabled={value.trim() === (currentRemote ?? "")}
-            >
-              Save
-            </Button>
-          </Dialog.Close>
-        </Flex>
-      </Dialog.Content>
-    </Dialog.Root>
+      <Dialog
+        isOpen={dialogOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setDialogOpen(true);
+            onOpen();
+          } else {
+            closeDialog();
+          }
+        }}
+        purpose="form"
+        width={480}
+      >
+        <Layout
+          header={
+            <DialogHeader title="Git Remote" onOpenChange={closeDialog} />
+          }
+          content={
+            <LayoutContent>
+              <VStack gap={3}>
+                <Text as="div" type="body">
+                  Set a remote URL to automatically push collection snapshots
+                  after each change. Create an empty repo on GitHub or GitLab
+                  first, then paste its URL here. Example:{" "}
+                  <Code>git@github.com:you/stereo-collections.git</Code>
+                </Text>
+                <TextInput
+                  label="Remote URL (origin)"
+                  placeholder="git@github.com:you/stereo-collections.git"
+                  value={value}
+                  onChange={setValue}
+                />
+              </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack gap={2} hAlign="end">
+                {currentRemote && (
+                  <Button
+                    label="Remove"
+                    variant="destructive"
+                    onClick={() => {
+                      onSave(null);
+                      closeDialog();
+                    }}
+                  />
+                )}
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  onClick={closeDialog}
+                />
+                <Button
+                  label="Save"
+                  variant="primary"
+                  isDisabled={value.trim() === (currentRemote ?? "")}
+                  onClick={() => {
+                    onSave(value.trim() || null);
+                    closeDialog();
+                  }}
+                />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
+      </Dialog>
+    </>
   );
 }
 

@@ -1,14 +1,13 @@
-import {
-  Text,
-  Code,
-  Button,
-  Dialog,
-  IconButton,
-  Tooltip,
-  Checkbox,
-  TextField,
-  Flex,
-} from "@radix-ui/themes";
+import { useState } from "react";
+import { Text } from "@astryxdesign/core/Text";
+import { Code } from "@astryxdesign/core/Code";
+import { Button } from "@astryxdesign/core/Button";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { IconButton } from "@astryxdesign/core/IconButton";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
 
 import { DownloadIcon } from "@radix-ui/react-icons";
 
@@ -29,72 +28,83 @@ function ImportDialog({
   doImport,
   isValidImportFrom,
 }: ImportDialogProps) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const closeDialog = () => setDialogOpen(false);
+
+  const status =
+    isValidImportFrom === undefined || !importFrom
+      ? undefined
+      : isValidImportFrom
+        ? ({ type: "success" } as const)
+        : ({ type: "warning" } as const);
+
   return (
-    <Dialog.Root>
-      <Tooltip content="Import tracks from another collection">
-        <Dialog.Trigger>
-          <IconButton variant="soft">
-            <DownloadIcon />
-          </IconButton>
-        </Dialog.Trigger>
-      </Tooltip>
+    <>
+      <IconButton
+        variant="secondary"
+        label="Import tracks from another collection"
+        tooltip="Import tracks from another collection"
+        icon={<DownloadIcon />}
+        onClick={() => setDialogOpen(true)}
+      />
 
-      <Dialog.Content maxWidth="450px">
-        <Dialog.Title>Import</Dialog.Title>
-        <Dialog.Description size="2" mb="4">
-          Import tracks from another collection. You can use an absolute file
-          path like <Code>/path/to/collection.db</Code> or a URL like
-          <Code>https://example.com/collection.db</Code>. In any case, the
-          import source is validated before the import button is enabled.
-        </Dialog.Description>
+      <Dialog
+        isOpen={dialogOpen}
+        onOpenChange={setDialogOpen}
+        purpose="form"
+        width={450}
+      >
+        <Layout
+          header={<DialogHeader title="Import" onOpenChange={closeDialog} />}
+          content={
+            <LayoutContent>
+              <VStack gap={3}>
+                <Text as="div" type="body">
+                  Import tracks from another collection. You can use an absolute
+                  file path like <Code>/path/to/collection.db</Code> or a URL
+                  like <Code>https://example.com/collection.db</Code>. In any
+                  case, the import source is validated before the import button
+                  is enabled.
+                </Text>
 
-        <Flex direction="column" gap="3">
-          <label>
-            <Text as="div" size="2" mb="1" weight="bold">
-              Import from
-            </Text>
-            <TextField.Root
-              color={
-                isValidImportFrom === undefined || !importFrom
-                  ? "gray"
-                  : isValidImportFrom
-                    ? "green"
-                    : "orange"
-              }
-              onChange={(ev) => setImportFrom(ev.target.value)}
-              value={importFrom}
-            />
-          </label>
+                <TextInput
+                  label="Import from"
+                  value={importFrom}
+                  onChange={setImportFrom}
+                  status={status}
+                />
 
-          <Text as="label" size="2">
-            <Flex gap="2">
-              <Checkbox
-                checked={keepUserData}
-                onCheckedChange={(ev) => setKeepUserData(Boolean(ev))}
-              />
-              Keep user data (ratings, play count, etc.)
-            </Flex>
-          </Text>
-        </Flex>
-
-        <Flex gap="3" mt="4" justify="end">
-          <Dialog.Close>
-            <Button variant="soft" color="gray">
-              Cancel
-            </Button>
-          </Dialog.Close>
-          <Dialog.Close>
-            <Button
-              color="green"
-              onClick={doImport}
-              disabled={!isValidImportFrom}
-            >
-              Import
-            </Button>
-          </Dialog.Close>
-        </Flex>
-      </Dialog.Content>
-    </Dialog.Root>
+                <CheckboxInput
+                  label="Keep user data (ratings, play count, etc.)"
+                  value={keepUserData}
+                  onChange={setKeepUserData}
+                />
+              </VStack>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack gap={2} hAlign="end">
+                <Button
+                  label="Cancel"
+                  variant="secondary"
+                  onClick={closeDialog}
+                />
+                <Button
+                  label="Import"
+                  variant="primary"
+                  isDisabled={!isValidImportFrom}
+                  onClick={() => {
+                    doImport();
+                    closeDialog();
+                  }}
+                />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
+      </Dialog>
+    </>
   );
 }
 
