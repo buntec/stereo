@@ -307,7 +307,7 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, search_results_selection: action.selected };
 
     case "clear-search-results":
-      return { ...state, search_results: undefined };
+      return { ...state, search_results: undefined, search_busy: false };
 
     case "search-result": {
       const track = { ...action.track, source: action.source };
@@ -978,6 +978,12 @@ function App() {
     state.search_sources,
     state.new_releases_days,
   ]);
+
+  const handleExitSearch = useCallback(() => {
+    dispatch({ type: "search-box-input", input: "" });
+    dispatch({ type: "clear-search-results" });
+    sendMsg({ type: "search-cancel-all" });
+  }, [dispatch, sendMsg]);
 
   useEffect(() => {
     let t = null;
@@ -1878,6 +1884,14 @@ function App() {
                 </HStack>
               </Tooltip>
             )}
+
+            <IconButton
+              variant="secondary"
+              label="Exit search"
+              tooltip="Exit search"
+              icon={<Cross2Icon />}
+              onClick={handleExitSearch}
+            />
           </HStack>
         ) : (
           <HStack width="100%" gap={2} padding={2} className="grid-controls">

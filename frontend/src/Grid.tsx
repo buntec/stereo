@@ -482,7 +482,7 @@ export const SearchResultsGrid = ({
   return (
     <div
       key="search-results-grid"
-      className="grid search-results"
+      className="grid"
       style={{ flex: "1 1 auto", minHeight: 0, width: "100%" }}
     >
       <AgGridReact<ITrack>

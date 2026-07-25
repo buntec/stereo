@@ -50,10 +50,6 @@
   background-color: rgb(from var(--color-accent) r g b / 0.15);
 }
 
-.search-results {
-  --ag-background-color: rgb(from var(--color-background-purple) r g b / 0.25);
-}
-
 .ag-menu {
   backdrop-filter: blur(8px);
 }
