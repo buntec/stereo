@@ -11,7 +11,10 @@ import { type CustomCellRendererProps } from "ag-grid-react";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { HStack } from "@astryxdesign/core/Stack";
-import { MultiSelector } from "@astryxdesign/core/MultiSelector";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+} from "@astryxdesign/core/DropdownMenu";
 
 import { AgGridReact } from "ag-grid-react";
 
@@ -42,7 +45,7 @@ import {
   type Dispatch,
 } from "react";
 
-import { CheckCircledIcon, PlayIcon } from "@radix-ui/react-icons";
+import { CheckCircledIcon, PlayIcon, ColumnsIcon } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import logger from "./logger.tsx";
@@ -512,11 +515,11 @@ type ToggleableColumn = {
 
 type ColumnsMenuProps = {
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
-  gridReady: boolean;
 };
 
-export const ColumnsMenu = ({ gridRef, gridReady }: ColumnsMenuProps) => {
+export const ColumnsMenu = ({ gridRef }: ColumnsMenuProps) => {
   const [columns, setColumns] = useState<ToggleableColumn[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
 
   const refreshColumns = useCallback(() => {
     const api = gridRef.current?.api;
@@ -539,47 +542,46 @@ export const ColumnsMenu = ({ gridRef, gridReady }: ColumnsMenuProps) => {
     );
   }, [gridRef]);
 
-  useEffect(() => {
-    if (gridReady) refreshColumns();
-  }, [gridReady, refreshColumns]);
-
-  const options = useMemo(
-    () => columns.map((c) => ({ value: c.colId, label: c.headerName })),
-    [columns],
-  );
-
-  const value = useMemo(
-    () => columns.filter((c) => c.visible).map((c) => c.colId),
-    [columns],
-  );
-
-  const handleChange = useCallback(
-    (next: string[]) => {
-      const api = gridRef.current?.api;
-      if (!api) return;
-      const shown = columns
-        .filter((c) => next.includes(c.colId))
-        .map((c) => c.colId);
-      const hidden = columns
-        .filter((c) => !next.includes(c.colId))
-        .map((c) => c.colId);
-      if (shown.length) api.setColumnsVisible(shown, true);
-      if (hidden.length) api.setColumnsVisible(hidden, false);
+  const toggleColumn = useCallback(
+    (colId: string, visible: boolean) => {
+      gridRef.current?.api.setColumnsVisible([colId], visible);
       refreshColumns();
     },
-    [columns, gridRef, refreshColumns],
+    [gridRef, refreshColumns],
+  );
+
+  // DropdownMenu only fires onOpenChange when its open state is controlled,
+  // so keep it controlled to re-read column state each time the menu opens.
+  const handleOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) refreshColumns();
+      setIsOpen(open);
+    },
+    [refreshColumns],
   );
 
   return (
-    <MultiSelector
-      label="Show/hide columns"
-      isLabelHidden
-      placeholder="Columns"
-      size="sm"
-      options={options}
-      value={value}
-      onChange={handleChange}
-    />
+    <DropdownMenu
+      hasChevron={false}
+      isMenuOpen={isOpen}
+      onOpenChange={handleOpenChange}
+      button={{
+        label: "Show/hide columns",
+        icon: <ColumnsIcon />,
+        isIconOnly: true,
+        variant: "secondary",
+        tooltip: "Show/hide columns",
+      }}
+    >
+      {columns.map((c) => (
+        <DropdownMenuCheckboxItem
+          key={c.colId}
+          label={c.headerName}
+          value={c.visible}
+          onChange={(checked) => toggleColumn(c.colId, checked)}
+        />
+      ))}
+    </DropdownMenu>
   );
 };
 

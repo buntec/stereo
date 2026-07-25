@@ -1936,7 +1936,7 @@ function App() {
               isValidImportFrom={state.import_from_is_valid}
             />
 
-            <ColumnsMenu gridRef={gridRef} gridReady={gridReady} />
+            <ColumnsMenu gridRef={gridRef} />
 
             <IconButton
               variant="secondary"
