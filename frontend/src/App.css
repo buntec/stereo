@@ -1,15 +1,3 @@
-.radix-themes {
-  --cursor-button: pointer;
-  --cursor-checkbox: pointer;
-  --cursor-disabled: default;
-  --cursor-link: pointer;
-  --cursor-menu-item: pointer;
-  --cursor-radio: pointer;
-  --cursor-slider-thumb: grab;
-  --cursor-slider-thumb-active: grabbing;
-  --cursor-switch: pointer;
-}
-
 .app-main {
   width: 100%;
   height: 100vh;
@@ -23,7 +11,7 @@
 
 .controls {
   width: 100%;
-  padding: var(--space-2);
+  padding: var(--spacing-2);
 }
 
 .toolbar {
@@ -48,23 +36,22 @@
 }
 
 .grid {
-  --ag-cell-text-color: var(--gray-12);
-  --ag-text-color: var(--gray-12);
-  --ag-foreground-color: var(--gray-12);
-  --ag-background-color: rgb(from var(--color-background) r g b / 0.25);
-  --ag-menu-background-color: rgb(from var(--color-surface) r g b / 0.5);
+  --ag-cell-text-color: var(--color-text-primary);
+  --ag-text-color: var(--color-text-primary);
+  --ag-foreground-color: var(--color-text-primary);
+  --ag-background-color: rgb(from var(--color-background-surface) r g b / 0.25);
+  --ag-menu-background-color: rgb(
+    from var(--color-background-popover) r g b / 0.5
+  );
+  --ag-border-color: var(--color-border);
 }
 
 .ag-row-hover {
-  background-color: rgb(from var(--cyan-6) r g b / 0.15);
+  background-color: rgb(from var(--color-accent) r g b / 0.15);
 }
 
 .search-results {
-  --ag-background-color: rgb(from var(--plum-3) r g b / 0.25);
-}
-
-.edit-track.invalid {
-  background-color: var(--red-6);
+  --ag-background-color: rgb(from var(--color-background-purple) r g b / 0.25);
 }
 
 .ag-menu {
@@ -76,14 +63,7 @@
 }
 
 .progress-slider {
-  font-family: var(--code-font-family);
-}
-
-.progress-slider .rt-SliderRoot {
-  --slider-track-size: 3px;
-  --slider-thumb-size: 13px;
-  height: 24px;
-  cursor: pointer;
+  font-family: var(--font-family-code);
 }
 
 @property --stop {
@@ -93,31 +73,33 @@
 }
 
 .progress-bar {
-  --stop: calc(var(--stereo-playback-progress) * 100%);
+  --stop: calc(var(--stereo-playback-progress, 0) * 100%);
 
   transition: --stop 0.5s ease-in-out;
 
   width: 100%;
 
-  background: linear-gradient(
+  /* background-image (not the `background` shorthand) so the row keeps the
+     grid's translucent background-color underneath the accent fill */
+  background-image: linear-gradient(
     to right,
-    rgb(from var(--pink-8) r g b / 0.25) var(--stop),
-    rgb(from var(--pink-4) r g b / 0.25) var(--stop)
+    rgb(from var(--color-accent) r g b / 0.45) var(--stop),
+    rgb(from var(--color-accent) r g b / 0.1) var(--stop)
   );
 }
 
 .toolbar-left {
   flex: 1;
-  padding-left: var(--space-2);
+  padding-left: var(--spacing-2);
 }
 
 .toolbar-right {
   flex: 1;
-  padding-right: var(--space-2);
+  padding-right: var(--spacing-2);
 }
 
 .search-box {
-  font-family: var(--code-font-family);
+  font-family: var(--font-family-code);
 }
 
 .search-box-text-field {
@@ -128,38 +110,27 @@
   display: flex;
   align-items: center;
   gap: 0;
-  margin: var(--space-2);
+  margin: var(--spacing-2);
   cursor: default;
 }
 
-.collection-selector-box .rt-SelectTrigger {
-  min-width: 180px;
-  background: transparent;
-  box-shadow: none;
-  height: 100%;
-}
-
 .collection-selector-actions {
-  gap: var(--space-2);
-  padding-right: var(--space-1);
-}
-
-.collection-text-field {
-  width: 100%;
+  gap: var(--spacing-2);
+  padding-right: var(--spacing-1);
 }
 
 .title {
-  padding: var(--space-4);
-  font-family: var(--code-font-family);
+  padding: var(--spacing-4);
+  font-family: var(--font-family-code);
 }
 
 .player {
   position: relative;
   flex-shrink: 0;
-  margin: var(--space-2);
-  border-radius: var(--radius-4);
+  margin: var(--spacing-2);
+  border-radius: var(--radius-container);
   overflow: hidden;
-  border: 1px solid var(--gray-a5);
+  border: 1px solid var(--color-border);
 }
 
 .fullscreen .player {
@@ -197,8 +168,8 @@
 }
 
 .row-count {
-  border-radius: var(--radius-2);
-  border: 1px solid var(--gray-a6);
+  border-radius: var(--radius-element);
+  border: 1px solid var(--color-border);
 }
 
 .yt-thumbnail-link {
@@ -219,7 +190,7 @@
 }
 
 .version-string {
-  font-family: var(--code-font-family);
+  font-family: var(--font-family-code);
 }
 
 .artist-link {
@@ -236,7 +207,7 @@
 }
 
 .title-clickable:hover {
-  color: var(--gray-12);
+  color: var(--color-text-primary);
 }
 
 .rating-stars {
