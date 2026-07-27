@@ -1,6 +1,9 @@
 import { Toolbar } from "@astryxdesign/core/Toolbar";
 import { Selector } from "@astryxdesign/core/Selector";
-import { MultiSelector } from "@astryxdesign/core/MultiSelector";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+} from "@astryxdesign/core/DropdownMenu";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Spinner } from "@astryxdesign/core/Spinner";
@@ -98,16 +101,31 @@ function SearchBox({
     />
   );
 
+  const toggleSearchSource = (source: TrackSource, checked: boolean) => {
+    setSearchSources(
+      checked
+        ? [...searchSources, source]
+        : searchSources.filter((s) => s !== source),
+    );
+  };
+
   const sourcesMenu = (
-    <MultiSelector
-      label="Search sources"
-      isLabelHidden
-      placeholder="Sources"
-      triggerDisplay="count"
-      options={ALL_SEARCH_SOURCES}
-      value={searchSources}
-      onChange={(v) => setSearchSources(v as TrackSource[])}
-    />
+    <DropdownMenu
+      button={{
+        label: `Sources (${searchSources.length})`,
+        variant: "secondary",
+        tooltip: "Search sources",
+      }}
+    >
+      {ALL_SEARCH_SOURCES.map((s) => (
+        <DropdownMenuCheckboxItem
+          key={s.value}
+          label={s.label}
+          value={searchSources.includes(s.value)}
+          onChange={(checked) => toggleSearchSource(s.value, checked)}
+        />
+      ))}
+    </DropdownMenu>
   );
 
   return (
@@ -141,7 +159,7 @@ function SearchBox({
               <Tooltip content="Limit number of search results">
                 {limitSelect}
               </Tooltip>
-              <Tooltip content="Search sources">{sourcesMenu}</Tooltip>
+              {sourcesMenu}
             </HStack>
           ) : (
             <>
@@ -161,7 +179,7 @@ function SearchBox({
               <Tooltip content="Limit number of search results">
                 {limitSelect}
               </Tooltip>
-              <Tooltip content="Search sources">{sourcesMenu}</Tooltip>
+              {sourcesMenu}
             </>
           )}
         </>
