@@ -68,7 +68,13 @@ function Title({
         {trackName ?? title}
       </Text>
       {parts.length > 0 && (
-        <Text as="div" type="supporting" justify="center">
+        <Text
+          as="div"
+          type="large"
+          weight="normal"
+          color="secondary"
+          justify="center"
+        >
           {parts}
         </Text>
       )}
