@@ -75,6 +75,7 @@ import SpotifyPlaylistDialog, {
   SpotifyPlaylistProgressDialog,
   type SpotifyPlaylistTarget,
 } from "./SpotifyPlaylistDialog.tsx";
+import AddTracksDialog from "./AddTracksDialog.tsx";
 import AppearanceSwitch from "./AppearanceSwitch.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
@@ -377,6 +378,15 @@ const reducer = (state: State, action: Action): State => {
     case "set-notification-show":
       return { ...state, notification_show: action.show };
 
+    case "dismiss-connection-closed-notification":
+      if (
+        state.notification_show &&
+        state.notification_msg?.startsWith("WebSocket connection closed")
+      ) {
+        return { ...state, notification_show: false };
+      }
+      return state;
+
     case "notification":
       return {
         ...state,
@@ -615,11 +625,16 @@ function App() {
     [dispatch],
   );
 
+  const wsOnOpen = useCallback(() => {
+    dispatch({ type: "dismiss-connection-closed-notification" });
+  }, [dispatch]);
+
   const { sendMsg, requestReply } = useWebSocket<ServerMsg, ClientMsg>(
     wsUrl,
     wsOnMessage,
     wsOnError,
     wsOnClose,
+    wsOnOpen,
   );
 
   const playId = useCallback(
@@ -1097,6 +1112,12 @@ function App() {
     { artist: string; title: string; sp_id?: string | null }[]
   >([]);
 
+  const [addTracksPending, setAddTracksPending] = useState<{
+    conflicts: ITrack[];
+    nonConflicting: ITrack[];
+  } | null>(null);
+  const addTracksPendingId = useRef(0);
+
   const exportSelectionToSpotifyPlaylist = useCallback(() => {
     const selectedRows = gridRef.current?.api.getSelectedRows();
     if (selectedRows && selectedRows.length > 0) {
@@ -1251,21 +1272,62 @@ function App() {
 
   useYouTubeOAuthCallback(requestReply, dispatch);
 
-  const addSelectedTracks = useCallback(
-    (overwrite: boolean) => {
-      if (
-        state.search_results_selection &&
-        state.search_results_selection.length > 0
-      ) {
+  const addSelectedTracks = useCallback(async () => {
+    const selection = state.search_results_selection;
+    if (!selection || selection.length === 0) return;
+
+    const results = await Promise.all(
+      selection.map(
+        (track) =>
+          new Promise<{ track: ITrack; exists: boolean }>((resolve) => {
+            requestReply(
+              { type: "collection-contains-id", yt_id: track.yt_id },
+              (msg) =>
+                resolve({
+                  track,
+                  exists: "contains_id" in msg ? msg.contains_id : false,
+                }),
+            );
+          }),
+      ),
+    );
+
+    const conflicts = results.filter((r) => r.exists).map((r) => r.track);
+    const nonConflicting = results
+      .filter((r) => !r.exists)
+      .map((r) => r.track);
+
+    if (conflicts.length === 0) {
+      if (nonConflicting.length > 0) {
         sendMsg({
           type: "add-tracks",
-          tracks: state.search_results_selection,
-          overwrite_existing: overwrite,
+          tracks: nonConflicting,
+          overwrite_existing: true,
         });
-        searchGridRef.current?.api.deselectAll();
       }
+      searchGridRef.current?.api.deselectAll();
+    } else {
+      addTracksPendingId.current += 1;
+      setAddTracksPending({ conflicts, nonConflicting });
+    }
+  }, [requestReply, sendMsg, state.search_results_selection]);
+
+  const confirmAddTracks = useCallback(
+    (overwriteYtIds: Set<string>) => {
+      if (!addTracksPending) return;
+      const tracks = [
+        ...addTracksPending.nonConflicting,
+        ...addTracksPending.conflicts.filter((t) =>
+          overwriteYtIds.has(t.yt_id),
+        ),
+      ];
+      if (tracks.length > 0) {
+        sendMsg({ type: "add-tracks", tracks, overwrite_existing: true });
+      }
+      searchGridRef.current?.api.deselectAll();
+      setAddTracksPending(null);
     },
-    [sendMsg, state.search_results_selection],
+    [addTracksPending, sendMsg],
   );
 
   const updateCurrentRating = useCallback(
@@ -1844,23 +1906,10 @@ function App() {
           <HStack width="100%" gap={2} padding={2}>
             <IconButton
               variant="primary"
-              label="Add selected tracks (don't overwrite existing)"
-              tooltip="Add selected tracks (don't overwrite existing)"
+              label="Add selected tracks"
+              tooltip="Add selected tracks"
               icon={<PlusIcon />}
-              onClick={() => addSelectedTracks(false)}
-              isDisabled={
-                !(
-                  state.search_results_selection &&
-                  state.search_results_selection.length > 0
-                )
-              }
-            />
-            <IconButton
-              variant="secondary"
-              label="Add selected tracks (overwrite existing)"
-              tooltip="Add selected tracks (overwrite existing)"
-              icon={<PlusIcon />}
-              onClick={() => addSelectedTracks(true)}
+              clickAction={addSelectedTracks}
               isDisabled={
                 !(
                   state.search_results_selection &&
@@ -2061,6 +2110,15 @@ function App() {
         checked={state.spotify_playlist_checked ?? 0}
         matched={state.spotify_playlist_matched ?? 0}
         total={state.spotify_playlist_total ?? 0}
+      />
+      <AddTracksDialog
+        key={addTracksPendingId.current}
+        open={addTracksPending !== null}
+        conflicts={addTracksPending?.conflicts ?? []}
+        onOpenChange={(open) => {
+          if (!open) setAddTracksPending(null);
+        }}
+        onConfirm={confirmAddTracks}
       />
     </Theme>
   );

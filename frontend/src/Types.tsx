@@ -274,6 +274,7 @@ export type Action =
   | { type: "set-import-from"; path: string }
   | { type: "set-import-keep-user-data"; keep: boolean }
   | { type: "set-notification-show"; show: boolean }
+  | { type: "dismiss-connection-closed-notification" }
   | { type: "clear-title" }
   | { type: "collection-is-valid" }
   | { type: "grid-refreshed" }

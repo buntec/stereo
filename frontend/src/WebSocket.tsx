@@ -13,6 +13,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
   onMessage: (msg: TMsgI | TMsgI[]) => void,
   onError: (err: Event) => void,
   onClose: (ev: CloseEvent) => void,
+  onOpen?: () => void,
 ) {
   const ws = useRef<WebSocket>(null);
   const queue = useRef<TMsgO[]>([]);
@@ -41,6 +42,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         }, 10000);
 
         setIsReady(true);
+        onOpen?.();
       };
 
       ws.current.onmessage = (event) => {
@@ -100,7 +102,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         ws.current.close();
       }
     };
-  }, [url, onClose, onError, onMessage]);
+  }, [url, onClose, onError, onMessage, onOpen]);
 
   useEffect(() => {
     if (ws.current?.readyState === WebSocket.OPEN) {
