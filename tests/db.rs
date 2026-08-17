@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use chrono::NaiveDate;
 use stereo_backend::{
     db,
-    message::{FilterModel, FilterModelItem, FilterModelMap, SortModelItem},
+    message::{
+        CombinedFilterModelItem, FilterModel, FilterModelItem, FilterModelMap, SortModelItem,
+    },
     models::Track,
 };
 
@@ -174,6 +176,48 @@ async fn test_count_rows_with_filter() {
 }
 
 #[tokio::test]
+async fn test_count_rows_with_combined_or_filter() {
+    let (pool, _dir) = setup().await;
+    for (i, rating) in [Some(1), Some(4), Some(5), None].into_iter().enumerate() {
+        let mut t = make_track(&format!("r{i}"));
+        t.rating = rating;
+        db::insert_track(&pool, &t, true).await.unwrap();
+    }
+
+    // Filter rating >= 4 OR rating is blank
+    let filter: FilterModelMap = [(
+        "rating".to_string(),
+        FilterModel::Combined(CombinedFilterModelItem {
+            filter_type: "number".to_string(),
+            operator: "OR".to_string(),
+            conditions: vec![
+                FilterModelItem {
+                    filter_type: "number".to_string(),
+                    filter_op: "greaterThanOrEqual".to_string(),
+                    filter: Some(serde_json::json!(4)),
+                    filter_to: None,
+                    date_from: None,
+                    date_to: None,
+                },
+                FilterModelItem {
+                    filter_type: "number".to_string(),
+                    filter_op: "blank".to_string(),
+                    filter: None,
+                    filter_to: None,
+                    date_from: None,
+                    date_to: None,
+                },
+            ],
+        }),
+    )]
+    .into_iter()
+    .collect();
+
+    let n = db::count_rows(&pool, &filter).await.unwrap();
+    assert_eq!(n, 3); // rating 4, rating 5, and the blank one
+}
+
+#[tokio::test]
 async fn test_get_rows_sorted() {
     let (pool, _dir) = setup().await;
     let titles = ["Charlie", "Alice", "Bob"];
@@ -250,6 +294,80 @@ async fn test_get_rows_text_filter() {
 
     let rows = db::get_rows(&pool, 0, 100, &[], &filter).await.unwrap();
     assert_eq!(rows.len(), 2);
+}
+
+#[tokio::test]
+async fn test_get_rows_text_filter_not_contains_and_starts_with() {
+    let (pool, _dir) = setup().await;
+    for label in ["Alpha Records", "Beta Music", "Alpha Underground"] {
+        let mut t = make_track(label);
+        t.label = Some(label.to_string());
+        db::insert_track(&pool, &t, true).await.unwrap();
+    }
+
+    let not_contains: FilterModelMap = [(
+        "label".to_string(),
+        FilterModel::Simple(FilterModelItem {
+            filter_type: "text".to_string(),
+            filter_op: "notContains".to_string(),
+            filter: Some(serde_json::json!("Alpha")),
+            filter_to: None,
+            date_from: None,
+            date_to: None,
+        }),
+    )]
+    .into_iter()
+    .collect();
+    let rows = db::get_rows(&pool, 0, 100, &[], &not_contains)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].label.as_deref(), Some("Beta Music"));
+
+    let starts_with: FilterModelMap = [(
+        "label".to_string(),
+        FilterModel::Simple(FilterModelItem {
+            filter_type: "text".to_string(),
+            filter_op: "startsWith".to_string(),
+            filter: Some(serde_json::json!("Alpha")),
+            filter_to: None,
+            date_from: None,
+            date_to: None,
+        }),
+    )]
+    .into_iter()
+    .collect();
+    let rows = db::get_rows(&pool, 0, 100, &[], &starts_with)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+}
+
+#[tokio::test]
+async fn test_count_rows_with_number_in_range_is_inclusive() {
+    let (pool, _dir) = setup().await;
+    for i in 0..3 {
+        let mut t = make_track(&format!("ir{i}"));
+        t.bpm = Some(100 + i * 10); // 100, 110, 120
+        db::insert_track(&pool, &t, true).await.unwrap();
+    }
+
+    let filter: FilterModelMap = [(
+        "bpm".to_string(),
+        FilterModel::Simple(FilterModelItem {
+            filter_type: "number".to_string(),
+            filter_op: "inRange".to_string(),
+            filter: Some(serde_json::json!(100)),
+            filter_to: Some(serde_json::json!(120)),
+            date_from: None,
+            date_to: None,
+        }),
+    )]
+    .into_iter()
+    .collect();
+
+    let n = db::count_rows(&pool, &filter).await.unwrap();
+    assert_eq!(n, 3); // 120 must be included, not excluded by an exclusive upper bound
 }
 
 #[tokio::test]

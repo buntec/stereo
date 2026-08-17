@@ -10,7 +10,7 @@ use sqlx::{
 };
 
 use crate::{
-    message::{FilterModel, FilterModelMap, SortModelItem},
+    message::{FilterModel, FilterModelItem, FilterModelMap, SortModelItem},
     models::{ScoredName, Track},
 };
 
@@ -276,25 +276,38 @@ impl SqlParam {
     }
 }
 
-fn build_where_clause(filter_model: &FilterModelMap) -> (String, Vec<SqlParam>) {
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+fn build_condition_clause(field: &str, item: &FilterModelItem) -> (Vec<String>, Vec<SqlParam>) {
     let mut clauses: Vec<String> = Vec::new();
     let mut params: Vec<SqlParam> = Vec::new();
 
-    for (field, model) in filter_model {
-        if !VALID_COLUMNS.contains(&field.as_str()) {
-            continue;
-        }
-        let item = match model {
-            FilterModel::Simple(item) => item,
-            FilterModel::Combined(_) => continue, // not implemented
-        };
-
+    {
         match item.filter_type.as_str() {
             "text" => match item.filter_op.as_str() {
                 "contains" => {
-                    clauses.push(format!("{field} LIKE ?"));
+                    clauses.push(format!("{field} LIKE ? ESCAPE '\\'"));
                     let v = item.filter.as_ref().and_then(|v| v.as_str()).unwrap_or("");
-                    params.push(SqlParam::Text(format!("%{v}%")));
+                    params.push(SqlParam::Text(format!("%{}%", escape_like(v))));
+                }
+                "notContains" => {
+                    clauses.push(format!("{field} NOT LIKE ? ESCAPE '\\'"));
+                    let v = item.filter.as_ref().and_then(|v| v.as_str()).unwrap_or("");
+                    params.push(SqlParam::Text(format!("%{}%", escape_like(v))));
+                }
+                "startsWith" => {
+                    clauses.push(format!("{field} LIKE ? ESCAPE '\\'"));
+                    let v = item.filter.as_ref().and_then(|v| v.as_str()).unwrap_or("");
+                    params.push(SqlParam::Text(format!("{}%", escape_like(v))));
+                }
+                "endsWith" => {
+                    clauses.push(format!("{field} LIKE ? ESCAPE '\\'"));
+                    let v = item.filter.as_ref().and_then(|v| v.as_str()).unwrap_or("");
+                    params.push(SqlParam::Text(format!("%{}", escape_like(v))));
                 }
                 "equals" => {
                     clauses.push(format!("{field} = ?"));
@@ -349,7 +362,7 @@ fn build_where_clause(filter_model: &FilterModelMap) -> (String, Vec<SqlParam>) 
                     "blank" => clauses.push(format!("{field} IS NULL")),
                     "notBlank" => clauses.push(format!("{field} IS NOT NULL")),
                     "inRange" => {
-                        clauses.push(format!("{field} >= ? AND {field} < ?"));
+                        clauses.push(format!("{field} >= ? AND {field} <= ?"));
                         params.push(v.unwrap_or(SqlParam::Null));
                         params.push(v2.unwrap_or(SqlParam::Null));
                     }
@@ -369,6 +382,10 @@ fn build_where_clause(filter_model: &FilterModelMap) -> (String, Vec<SqlParam>) 
                     clauses.push(format!("{field} > ?"));
                     params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
                 }
+                "greaterThanOrEqual" => {
+                    clauses.push(format!("{field} >= ?"));
+                    params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
+                }
                 "lessThan" => {
                     clauses.push(format!("{field} < ?"));
                     params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
@@ -378,13 +395,51 @@ fn build_where_clause(filter_model: &FilterModelMap) -> (String, Vec<SqlParam>) 
                     params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
                 }
                 "inRange" => {
-                    clauses.push(format!("{field} >= ? AND {field} < ?"));
+                    clauses.push(format!("{field} >= ? AND {field} <= ?"));
                     params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
                     params.push(SqlParam::Text(item.date_to.clone().unwrap_or_default()));
                 }
+                "blank" => clauses.push(format!("{field} IS NULL")),
+                "notBlank" => clauses.push(format!("{field} IS NOT NULL")),
                 _ => {}
             },
             _ => {}
+        }
+    }
+
+    (clauses, params)
+}
+
+fn build_where_clause(filter_model: &FilterModelMap) -> (String, Vec<SqlParam>) {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<SqlParam> = Vec::new();
+
+    for (field, model) in filter_model {
+        if !VALID_COLUMNS.contains(&field.as_str()) {
+            continue;
+        }
+        match model {
+            FilterModel::Simple(item) => {
+                let (item_clauses, item_params) = build_condition_clause(field, item);
+                clauses.extend(item_clauses);
+                params.extend(item_params);
+            }
+            FilterModel::Combined(combined) => {
+                let joiner = if combined.operator.eq_ignore_ascii_case("or") {
+                    " OR "
+                } else {
+                    " AND "
+                };
+                let mut cond_clauses: Vec<String> = Vec::new();
+                for condition in &combined.conditions {
+                    let (item_clauses, item_params) = build_condition_clause(field, condition);
+                    cond_clauses.extend(item_clauses);
+                    params.extend(item_params);
+                }
+                if !cond_clauses.is_empty() {
+                    clauses.push(format!("({})", cond_clauses.join(joiner)));
+                }
+            }
         }
     }
 
