@@ -28,7 +28,7 @@ pub struct Collection {
     pub size: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct Track {
     pub yt_id: String,
     pub bp_id: Option<i64>,

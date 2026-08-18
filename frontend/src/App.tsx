@@ -82,6 +82,7 @@ import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
 import NowPlayingMenu from "./NowPlayingMenu.tsx";
 import CollectionSummary from "./CollectionSummary.tsx";
+import GitSyncStatus from "./GitSyncStatus.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
@@ -150,6 +151,9 @@ type State = {
   import_from_is_valid?: boolean;
 
   git_remote?: string | null;
+  git_sync_state?: import("./Types.tsx").GitSyncState;
+  git_sync_message?: string;
+  git_sync_retryable?: boolean;
   collection_stats?: ICollectionStats;
 
   spotify_backfill_id?: number;
@@ -397,6 +401,14 @@ const reducer = (state: State, action: Action): State => {
 
     case "git-remote":
       return { ...state, git_remote: action.url };
+
+    case "git-sync-status":
+      return {
+        ...state,
+        git_sync_state: action.state,
+        git_sync_message: action.message,
+        git_sync_retryable: action.retryable,
+      };
 
     case "repos":
       return { ...state, repos: action.repos };
@@ -1293,9 +1305,7 @@ function App() {
     );
 
     const conflicts = results.filter((r) => r.exists).map((r) => r.track);
-    const nonConflicting = results
-      .filter((r) => !r.exists)
-      .map((r) => r.track);
+    const nonConflicting = results.filter((r) => !r.exists).map((r) => r.track);
 
     if (conflicts.length === 0) {
       if (nonConflicting.length > 0) {
@@ -1606,6 +1616,15 @@ function App() {
                 }}
               />
             )}
+            <GitSyncStatus
+              state={state.git_sync_state}
+              message={state.git_sync_message}
+              retryable={state.git_sync_retryable}
+              onRetry={() => sendMsg({ type: "retry-git-sync" })}
+              onResolve={(strategy) =>
+                sendMsg({ type: "resolve-git-conflict", strategy })
+              }
+            />
             <SpotifySessionDialog
               requestReply={requestReply}
               collectionOpen={!!state.collection}

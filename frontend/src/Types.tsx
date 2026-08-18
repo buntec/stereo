@@ -54,6 +54,18 @@ export interface IRepo {
   remote: string | null;
 }
 
+export type GitSyncState =
+  | "local-changes"
+  | "syncing"
+  | "synced"
+  | "local-only"
+  | "offline"
+  | "authentication-required"
+  | "remote-ahead"
+  | "conflict-requires-attention"
+  | "corrupt-collection"
+  | "error";
+
 export type SearchKind = "fuzzy" | "by-label" | "by-artist";
 export type SearchBoxKind = SearchKind | "new-releases";
 
@@ -109,6 +121,11 @@ export type ClientMsg =
     }
   | { type: "get-git-remote" }
   | { type: "set-git-remote"; url: string | null }
+  | { type: "retry-git-sync" }
+  | {
+      type: "resolve-git-conflict";
+      strategy: "keep-local" | "keep-upstream";
+    }
   | { type: "get-spotify-session"; id?: number }
   | { type: "set-spotify-session"; id?: number; cookie: string | null }
   | { type: "detect-spotify-session"; id?: number }
@@ -205,6 +222,12 @@ export type ServerMsg =
       contains_id: boolean;
     }
   | { type: "git-remote"; url: string | null }
+  | {
+      type: "git-sync-status";
+      state: GitSyncState;
+      message: string;
+      retryable: boolean;
+    }
   | { type: "spotify-session"; id: number; connected: boolean }
   | {
       type: "spotify-playlist";

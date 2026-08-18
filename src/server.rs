@@ -28,8 +28,6 @@ use crate::{
     youtube,
 };
 
-const GIT_PUSH_INTERVAL: Duration = Duration::from_secs(5 * 60);
-
 #[derive(Default)]
 struct SessionState {
     pool: Option<sqlx::SqlitePool>,
@@ -37,8 +35,6 @@ struct SessionState {
     repo: Option<std::path::PathBuf>,
     search_task: Option<tokio::task::JoinHandle<()>>,
     youtube_playlist_task: Option<tokio::task::JoinHandle<()>>,
-    git_push_handle: Option<tokio::task::JoinHandle<()>>,
-    last_git_push: Option<std::time::Instant>,
 }
 
 impl SessionState {
@@ -276,36 +272,44 @@ fn union_names(
         .collect()
 }
 
-fn git_spawn(state: &mut SessionState, _home: &std::path::Path) {
-    if let (Some(col), Some(repo)) = (&state.collection, &state.repo) {
-        // If a push is already pending it will capture any changes made since it was scheduled.
-        if let Some(h) = &state.git_push_handle {
-            if !h.is_finished() {
-                return;
-            }
-        }
+async fn send_git_status(tx: &mpsc::Sender<MsgServer>, report: git::SyncReport) {
+    let _ = tx
+        .send(MsgServer::GitSyncStatus {
+            state: report.state,
+            message: report.message,
+            retryable: report.retryable,
+        })
+        .await;
+}
 
+async fn lock_current_repo(state: &SessionState) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    match &state.repo {
+        Some(repo) => Some(git::lock_repository(repo).await),
+        None => None,
+    }
+}
+
+fn git_spawn(state: &SessionState, tx: &mpsc::Sender<MsgServer>) {
+    if let (Some(col), Some(repo)) = (&state.collection, &state.repo) {
+        if !col.path.starts_with(repo) {
+            return;
+        }
         let repo = repo.clone();
         let db_path = col.path.clone();
-        let delay = state
-            .last_git_push
-            .map(|last| {
-                let elapsed = last.elapsed();
-                if elapsed >= GIT_PUSH_INTERVAL {
-                    Duration::ZERO
-                } else {
-                    GIT_PUSH_INTERVAL - elapsed
-                }
-            })
-            .unwrap_or(Duration::ZERO);
-
-        state.last_git_push = Some(std::time::Instant::now());
-        state.git_push_handle = Some(tokio::spawn(async move {
-            if !delay.is_zero() {
-                tokio::time::sleep(delay).await;
-            }
-            git::commit_and_push(repo, db_path).await;
-        }));
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            send_git_status(
+                &tx,
+                git::SyncReport {
+                    state: crate::message::GitSyncState::Syncing,
+                    message: "Saving collection changes".into(),
+                    retryable: false,
+                },
+            )
+            .await;
+            let report = git::sync_repository(repo, Some(db_path), false, None).await;
+            send_git_status(&tx, report).await;
+        });
     }
 }
 
@@ -332,6 +336,11 @@ async fn handle_msg(
                 old_pool.close().await;
             }
             state.collection = None;
+            send_git_status(
+                tx,
+                git::sync_repository(repo_path.clone(), None, true, None).await,
+            )
+            .await;
             state.repo = Some(repo_path.clone());
             let _ = tx
                 .send(MsgServer::Collections {
@@ -471,8 +480,48 @@ async fn handle_msg(
                             repos: utils::list_repos(home).await,
                         })
                         .await;
+                    send_git_status(
+                        tx,
+                        git::sync_repository(git_dir.to_path_buf(), None, false, None).await,
+                    )
+                    .await;
                 }
                 Err(e) => notify(tx, &format!("Failed to set git remote: {e}"), "error").await,
+            }
+        }
+
+        sync_msg @ (MsgClient::RetryGitSync | MsgClient::ResolveGitConflict { .. }) => {
+            let Some(repo) = state.repo.clone() else {
+                notify(tx, "No repo selected", "error").await;
+                return Ok(());
+            };
+            let collection_path = state.collection.as_ref().map(|c| c.path.clone());
+            if let Some(pool) = state.pool.take() {
+                pool.close().await;
+            }
+            state.collection = None;
+            let resolution = match sync_msg {
+                MsgClient::ResolveGitConflict { strategy } => Some(strategy),
+                _ => None,
+            };
+            let report = git::sync_repository(repo.clone(), None, true, resolution).await;
+            let synchronized = matches!(
+                report.state,
+                crate::message::GitSyncState::Synced | crate::message::GitSyncState::LocalOnly
+            );
+            send_git_status(tx, report).await;
+            if let Some(path) = collection_path.filter(|path| path.exists()) {
+                if state.set_collection(path, true).await? {
+                    let _ = tx.send(MsgServer::ReloadTracks {}).await;
+                    update_collection_info(state, tx).await;
+                }
+            }
+            if synchronized {
+                let _ = tx
+                    .send(MsgServer::Collections {
+                        collections: utils::list_repo_collections(&repo),
+                    })
+                    .await;
             }
         }
 
@@ -554,11 +603,12 @@ async fn handle_msg(
         }
 
         MsgClient::DeleteTracks { ids } => {
+            let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
                 db::delete_tracks(pool, &ids).await?;
                 let _ = tx.send(MsgServer::ReloadTracks {}).await;
                 update_collection_info(state, tx).await;
-                git_spawn(state, home);
+                git_spawn(state, tx);
             }
         }
 
@@ -569,6 +619,14 @@ async fn handle_msg(
         } => {
             if !tracks.is_empty() {
                 let path = std::path::PathBuf::from(&collection);
+                let target_repo = path
+                    .parent()
+                    .filter(|parent| parent.join(".git").is_dir())
+                    .map(std::path::Path::to_path_buf);
+                let target_guard = match &target_repo {
+                    Some(repo) => Some(git::lock_repository(repo).await),
+                    None => None,
+                };
                 if db::validate_db_schema(&path).await {
                     let export_pool = db::open_pool(&path).await?;
 
@@ -594,6 +652,12 @@ async fn handle_msg(
                         }
                     }
                     export_pool.close().await;
+                    drop(target_guard);
+                    if let Some(repo) = target_repo {
+                        let report =
+                            git::sync_repository(repo, Some(path.clone()), false, None).await;
+                        send_git_status(tx, report).await;
+                    }
 
                     let target_label = utils::collection_label(&collection);
                     let source_label = source_collection.as_deref().map(utils::collection_label);
@@ -762,6 +826,7 @@ async fn handle_msg(
                         let tx = tx.clone();
                         let checked = Arc::clone(&checked);
                         let matched = Arc::clone(&matched);
+                        let write_repo = repo.clone();
                         async move {
                             let artist = track.artists.join(", ");
                             match spotify::match_track(
@@ -773,6 +838,10 @@ async fn handle_msg(
                             .await
                             {
                                 Ok(Some(sp)) => {
+                                    let _repo_guard = match &write_repo {
+                                        Some(repo) => Some(git::lock_repository(repo).await),
+                                        None => None,
+                                    };
                                     if let Err(e) =
                                         db::update_sp_id(&pool, &track.yt_id, sp.id()).await
                                     {
@@ -807,7 +876,8 @@ async fn handle_msg(
                 if matched_n > 0 {
                     let _ = tx.send(MsgServer::ReloadTracks {}).await;
                     if let Some(repo) = repo {
-                        git::commit_and_push(repo, col.path).await;
+                        let report = git::sync_repository(repo, Some(col.path), false, None).await;
+                        send_git_status(&tx, report).await;
                     }
                 }
                 let _ = tx
@@ -979,13 +1049,14 @@ async fn handle_msg(
         }
 
         MsgClient::UpdateTrack { old, new } => {
+            let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
                 db::insert_track(pool, &new, false).await?;
                 if old.yt_id != new.yt_id {
                     db::delete_track(pool, &old.yt_id).await?;
                 }
                 update_collection_info(state, tx).await;
-                git_spawn(state, home);
+                git_spawn(state, tx);
             }
         }
 
@@ -1103,23 +1174,25 @@ async fn handle_msg(
         }
 
         MsgClient::UpdateRating { yt_id, rating } => {
+            let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
                 db::update_rating(pool, &yt_id, rating).await?;
                 if let Some(track) = db::get_track(pool, &yt_id).await? {
                     let _ = tx.send(MsgServer::TrackUpdate { track }).await;
                 }
-                git_spawn(state, home);
+                git_spawn(state, tx);
             }
         }
 
         MsgClient::IncPlayCount { yt_id } => {
+            let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
                 let last_played = chrono::Local::now().date_naive();
                 db::inc_play_count(pool, &yt_id, last_played).await?;
                 if let Some(track) = db::get_track(pool, &yt_id).await? {
                     let _ = tx.send(MsgServer::TrackUpdate { track }).await;
                 }
-                git_spawn(state, home);
+                git_spawn(state, tx);
             }
         }
 
@@ -1168,11 +1241,12 @@ async fn handle_msg(
             track,
             overwrite_existing,
         } => {
+            let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
                 db::insert_track(pool, &track, !overwrite_existing).await?;
                 let _ = tx.send(MsgServer::TrackUpdate { track }).await;
                 update_collection_info(state, tx).await;
-                git_spawn(state, home);
+                git_spawn(state, tx);
             }
         }
 
@@ -1180,11 +1254,12 @@ async fn handle_msg(
             tracks,
             overwrite_existing,
         } => {
+            let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
                 db::insert_tracks(pool, &tracks, !overwrite_existing).await?;
                 let _ = tx.send(MsgServer::ReloadTracks {}).await;
                 update_collection_info(state, tx).await;
-                git_spawn(state, home);
+                git_spawn(state, tx);
             }
         }
 
@@ -1197,6 +1272,7 @@ async fn handle_msg(
         }
 
         MsgClient::CreateCollection { name } => {
+            let _repo_guard = lock_current_repo(state).await;
             let repo = match state.repo.clone() {
                 Some(r) => r,
                 None => {
@@ -1238,7 +1314,7 @@ async fn handle_msg(
                     path_completions: None,
                 })
                 .await;
-            git_spawn(state, home);
+            git_spawn(state, tx);
         }
 
         MsgClient::SetCollection { id, path } => {
@@ -1276,6 +1352,7 @@ async fn handle_msg(
             path,
             keep_user_data,
         } => {
+            let _repo_guard = lock_current_repo(state).await;
             let src = match utils::is_file_or_url(&path) {
                 Some(k) => k,
                 None => {
@@ -1307,7 +1384,7 @@ async fn handle_msg(
                     drop(tmp);
                     result?;
                     update_collection_info(state, tx).await;
-                    git_spawn(state, home);
+                    git_spawn(state, tx);
                     return Ok(());
                 } else {
                     std::path::PathBuf::from(&path)
@@ -1319,7 +1396,7 @@ async fn handle_msg(
                 }
                 db::import_from_db(pool, &db_path, keep_user_data).await?;
                 update_collection_info(state, tx).await;
-                git_spawn(state, home);
+                git_spawn(state, tx);
             }
         }
 

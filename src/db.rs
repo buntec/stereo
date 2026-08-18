@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow},
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow},
     Row, SqlitePool,
 };
 
@@ -38,7 +38,9 @@ const VALID_COLUMNS: &[&str] = &[
 pub async fn open_pool(path: &Path) -> anyhow::Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
         .filename(path)
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Delete)
+        .busy_timeout(std::time::Duration::from_secs(5));
     Ok(SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(opts)

@@ -171,6 +171,9 @@ async fn main() -> anyhow::Result<()> {
 
     let home = settings.home_dir();
     std::fs::create_dir_all(&home)?;
+    let repos_dir = home.join("gitrepos");
+    stereo_backend::utils::ensure_default_repo(&repos_dir).await?;
+    stereo_backend::git::recover_pending_repositories(&repos_dir).await;
 
     let settings = Arc::new(settings);
 

@@ -141,9 +141,7 @@ pub async fn list_repos(home: &Path) -> Vec<crate::models::Repo> {
     let mut repos = Vec::new();
     for path in dirs {
         let remote = crate::git::get_remote(&path).await;
-        if remote.is_some() {
-            repos.push(crate::models::Repo { path, remote });
-        }
+        repos.push(crate::models::Repo { path, remote });
     }
     repos
 }

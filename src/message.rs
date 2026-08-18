@@ -4,6 +4,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::{Collection, Repo, ScoredName, Track, TrackSource};
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum GitSyncState {
+    LocalChanges,
+    Syncing,
+    Synced,
+    LocalOnly,
+    Offline,
+    AuthenticationRequired,
+    RemoteAhead,
+    ConflictRequiresAttention,
+    CorruptCollection,
+    Error,
+}
+
 // ── Server → Client ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +84,11 @@ pub enum MsgServer {
     },
     GitRemote {
         url: Option<String>,
+    },
+    GitSyncStatus {
+        state: GitSyncState,
+        message: String,
+        retryable: bool,
     },
     SpotifySession {
         id: i64,
@@ -304,6 +324,10 @@ pub enum MsgClient {
     SetGitRemote {
         url: Option<String>,
     },
+    RetryGitSync,
+    ResolveGitConflict {
+        strategy: GitConflictStrategy,
+    },
     GetSpotifySession {
         id: i64,
     },
@@ -389,4 +413,11 @@ pub enum MsgClient {
     CancelYouTubePlaylist {
         id: i64,
     },
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GitConflictStrategy {
+    KeepLocal,
+    KeepUpstream,
 }
