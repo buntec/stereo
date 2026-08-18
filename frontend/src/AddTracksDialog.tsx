@@ -38,7 +38,12 @@ function AddTracksDialog({
   };
 
   return (
-    <Dialog isOpen={open} onOpenChange={onOpenChange} purpose="form" width={480}>
+    <Dialog
+      isOpen={open}
+      onOpenChange={onOpenChange}
+      purpose="form"
+      width={480}
+    >
       <Layout
         header={
           <DialogHeader
