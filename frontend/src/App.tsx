@@ -311,6 +311,23 @@ const reducer = (state: State, action: Action): State => {
     case "search-results-selection-changed":
       return { ...state, search_results_selection: action.selected };
 
+    case "set-track-rating": {
+      const updateTrack = (track: ITrack): ITrack =>
+        track.yt_id === action.yt_id
+          ? { ...track, rating: action.rating ?? undefined }
+          : track;
+
+      return {
+        ...state,
+        track_info: state.track_info
+          ? updateTrack(state.track_info)
+          : undefined,
+        search_results: state.search_results?.map(updateTrack),
+        search_results_selection:
+          state.search_results_selection?.map(updateTrack),
+      };
+    }
+
     case "clear-search-results":
       return { ...state, search_results: undefined, search_busy: false };
 
@@ -1343,10 +1360,11 @@ function App() {
   const updateCurrentRating = useCallback(
     (rating: number | null) => {
       if (state.current_id) {
+        dispatch({ type: "set-track-rating", yt_id: state.current_id, rating });
         updateRating(state.current_id, rating);
       }
     },
-    [updateRating, state.current_id],
+    [dispatch, updateRating, state.current_id],
   );
 
   const fastForward = useCallback(

@@ -305,6 +305,7 @@ export type Action =
   | { type: "search-box-input"; input: string }
   | { type: "selection-changed"; selected: string[] }
   | { type: "search-results-selection-changed"; selected: ITrack[] }
+  | { type: "set-track-rating"; yt_id: string; rating: number | null }
   | { type: "clear-search-results" }
   | { type: "set-search-failure" }
   | { type: "set-search-busy" }
