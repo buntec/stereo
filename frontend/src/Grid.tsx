@@ -356,6 +356,7 @@ export const SearchResultsGrid = ({
       field: "release_date",
       headerName: "Release",
       sortable: true,
+      initialSort: "desc",
       filter: true,
       width: 120,
     },
