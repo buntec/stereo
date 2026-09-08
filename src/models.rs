@@ -242,10 +242,12 @@ impl TXTrack {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct YTVideo {
     pub title: String,
     pub id: String,
     pub channel: String,
+    pub duration_secs: Option<u32>,
 }
 
 /// Which search backend a `SearchResult` track was found on. Purely informational for the
