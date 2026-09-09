@@ -86,9 +86,19 @@ import GitSyncStatus from "./GitSyncStatus.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
-const wsToken = new URLSearchParams(window.location.hash.slice(1)).get(
+const wsTokenFromFragment = new URLSearchParams(window.location.hash.slice(1)).get(
   "stereo-token",
 );
+if (wsTokenFromFragment) {
+  window.sessionStorage.setItem("stereo-ws-token", wsTokenFromFragment);
+  window.history.replaceState(
+    null,
+    "",
+    `${window.location.pathname}${window.location.search}`,
+  );
+}
+const wsToken =
+  wsTokenFromFragment ?? window.sessionStorage.getItem("stereo-ws-token");
 const wsProtocols = wsToken
   ? [
       `stereo.auth.${Array.from(new TextEncoder().encode(wsToken), (byte) =>

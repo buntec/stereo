@@ -248,7 +248,7 @@ pub struct GetRowIndexContent {
     pub filter_model: FilterModelMap,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum MsgClient {
     Heartbeat {

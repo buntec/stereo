@@ -270,7 +270,14 @@ async fn recv_loop(
     while let Some(result) = stream.next().await {
         match result {
             Ok(Message::Text(text)) => {
-                tracing::debug!("recv: {}", &text[..text.len().min(500)]);
+                let message_type = serde_json::from_str::<serde_json::Value>(&text)
+                    .ok()
+                    .and_then(|value| value["type"].as_str().map(str::to_owned));
+                tracing::debug!(
+                    message_type = message_type.as_deref().unwrap_or("unknown"),
+                    payload_bytes = text.len(),
+                    "WebSocket message received"
+                );
                 match serde_json::from_str::<MsgClient>(&text) {
                     Ok(msg) => {
                         if tx.send(msg).await.is_err() {
@@ -313,7 +320,11 @@ async fn send_loop(
         if !buf.is_empty() {
             match serde_json::to_string(&buf) {
                 Ok(json) => {
-                    tracing::debug!("send: {}", &json[..json.len().min(500)]);
+                    tracing::debug!(
+                        message_count = buf.len(),
+                        payload_bytes = json.len(),
+                        "WebSocket messages sent"
+                    );
                     if sink.send(Message::Text(json)).await.is_err() {
                         break;
                     }

@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 use totp_rs::{Algorithm, TOTP};
 use wreq::{header::HeaderMap, Client};
 
-use crate::models::Track;
+use crate::{models::Track, utils};
 
 const SPOTIFY_SESSION_FILE: &str = "spotify_session.json";
 
@@ -612,7 +612,7 @@ pub struct SpotifySession {
 impl SpotifySession {
     pub async fn load(home: &std::path::Path) -> Option<SpotifySession> {
         let path = home.join(SPOTIFY_SESSION_FILE);
-        let data = tokio::fs::read(&path).await.ok()?;
+        let data = utils::read_secret_file(&path).await.ok()?;
         serde_json::from_slice(&data).ok()
     }
 
@@ -621,7 +621,7 @@ impl SpotifySession {
         let data = serde_json::to_vec(&SpotifySession {
             cookie: cookie.to_string(),
         })?;
-        tokio::fs::write(&path, data).await?;
+        utils::write_secret_file(&path, &data).await?;
         Ok(())
     }
 

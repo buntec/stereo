@@ -11,6 +11,8 @@ use anyhow::Context;
 use serde_json::Value;
 use wreq::Client;
 
+use crate::utils;
+
 const YOUTUBE_SESSION_FILE: &str = "youtube_session.json";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const API_BASE: &str = "https://www.googleapis.com/youtube/v3";
@@ -31,14 +33,14 @@ pub struct YouTubeSession {
 impl YouTubeSession {
     pub async fn load(home: &std::path::Path) -> Option<YouTubeSession> {
         let path = home.join(YOUTUBE_SESSION_FILE);
-        let data = tokio::fs::read(&path).await.ok()?;
+        let data = utils::read_secret_file(&path).await.ok()?;
         serde_json::from_slice(&data).ok()
     }
 
     async fn save(&self, home: &std::path::Path) -> anyhow::Result<()> {
         let path = home.join(YOUTUBE_SESSION_FILE);
         let data = serde_json::to_vec(self)?;
-        tokio::fs::write(&path, data).await?;
+        utils::write_secret_file(&path, &data).await?;
         Ok(())
     }
 

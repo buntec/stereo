@@ -1,9 +1,46 @@
 use std::{
+    io,
     path::{Path, PathBuf},
     sync::LazyLock,
 };
 
 use regex::Regex;
+use tokio::io::AsyncWriteExt;
+
+/// Read a file containing credentials after restricting it to the current user.
+///
+/// Windows user-profile directories already inherit per-user ACLs. On Unix, explicitly repair
+/// files created by older Stereo versions, which otherwise inherited a potentially permissive
+/// process umask.
+pub async fn read_secret_file(path: &Path) -> io::Result<Vec<u8>> {
+    #[cfg(unix)]
+    tokio::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600)).await?;
+
+    tokio::fs::read(path).await
+}
+
+/// Write credentials to an owner-only file.
+pub async fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
+    #[cfg(unix)]
+    if tokio::fs::try_exists(path).await? {
+        tokio::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o600))
+            .await?;
+    }
+
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path).await?;
+    #[cfg(unix)]
+    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))
+        .await?;
+    file.write_all(data).await?;
+    file.sync_all().await
+}
 
 // Strips a trailing "feat./ft./featuring X" clause from a title. That artist is normally
 // already present in the artists list, so leaving it in the title duplicates it as free text in
@@ -250,4 +287,56 @@ pub async fn download_file(url: &str, destination: &Path) -> anyhow::Result<()> 
         file.write_all(&chunk?).await?;
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod secret_file_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn secret_files_are_owner_only_and_existing_permissions_are_repaired() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.json");
+
+        tokio::fs::write(&path, b"old secret").await.unwrap();
+        tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .await
+            .unwrap();
+
+        assert_eq!(read_secret_file(&path).await.unwrap(), b"old secret");
+        assert_eq!(
+            tokio::fs::metadata(&path)
+                .await
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        write_secret_file(&path, b"new secret").await.unwrap();
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"new secret");
+        assert_eq!(
+            tokio::fs::metadata(&path)
+                .await
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        let new_path = dir.path().join("new-session.json");
+        write_secret_file(&new_path, b"fresh secret").await.unwrap();
+        assert_eq!(
+            tokio::fs::metadata(&new_path)
+                .await
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
 }
