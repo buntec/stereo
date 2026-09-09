@@ -155,6 +155,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let settings = cli.settings;
+    settings.validate_websocket_security()?;
 
     let level = match settings.verbosity {
         0 => "warn",

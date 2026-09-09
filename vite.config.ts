@@ -9,11 +9,11 @@ export default defineConfig({
   publicDir: "frontend/public",
   server: {
     port: 5174,
+    strictPort: true,
     proxy: {
       "/ws": {
         target: `ws://localhost:${process.env.STEREO_PORT ?? "8005"}`,
         ws: true,
-        rewriteWsOrigin: true,
       },
     },
   },

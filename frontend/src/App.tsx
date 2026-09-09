@@ -86,6 +86,17 @@ import GitSyncStatus from "./GitSyncStatus.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
+const wsToken = new URLSearchParams(window.location.hash.slice(1)).get(
+  "stereo-token",
+);
+const wsProtocols = wsToken
+  ? [
+      `stereo.auth.${Array.from(new TextEncoder().encode(wsToken), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("")}`,
+    ]
+  : undefined;
+
 const YTPlayerState = {
   UNSTARTED: -1,
   ENDED: 0,
@@ -660,6 +671,7 @@ function App() {
 
   const { sendMsg, requestReply } = useWebSocket<ServerMsg, ClientMsg>(
     wsUrl,
+    wsProtocols,
     wsOnMessage,
     wsOnError,
     wsOnClose,

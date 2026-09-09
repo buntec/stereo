@@ -28,7 +28,7 @@ dev:
     cargo run -- --dev -vv --port {{ dev-port }} &
     BACKEND_PID=$!
     trap "kill $BACKEND_PID" EXIT INT TERM
-    STEREO_PORT={{ dev-port }} bun run dev --host
+    STEREO_PORT={{ dev-port }} bun run dev
     kill $BACKEND_PID 2>/dev/null || true
 
 run-backend *args:

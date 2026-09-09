@@ -10,6 +10,7 @@ interface BaseMessage {
 
 export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
   url: string,
+  protocols: string[] | undefined,
   onMessage: (msg: TMsgI | TMsgI[]) => void,
   onError: (err: Event) => void,
   onClose: (ev: CloseEvent) => void,
@@ -28,7 +29,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
     let isUnmounted = false;
 
     function connect() {
-      ws.current = new WebSocket(url);
+      ws.current = new WebSocket(url, protocols);
 
       ws.current.onopen = () => {
         logger.info("WebSocket connected");
@@ -102,7 +103,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         ws.current.close();
       }
     };
-  }, [url, onClose, onError, onMessage, onOpen]);
+  }, [url, protocols, onClose, onError, onMessage, onOpen]);
 
   useEffect(() => {
     if (ws.current?.readyState === WebSocket.OPEN) {

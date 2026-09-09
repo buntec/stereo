@@ -12,6 +12,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
+    http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
@@ -74,9 +75,117 @@ impl SessionState {
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     State(settings): State<Arc<Settings>>,
 ) -> impl IntoResponse {
+    let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return (StatusCode::FORBIDDEN, "WebSocket Origin header required").into_response();
+    };
+    if !websocket_origin_allowed(origin, &settings) {
+        tracing::warn!(%origin, "Rejected WebSocket from untrusted origin");
+        return (StatusCode::FORBIDDEN, "Untrusted WebSocket origin").into_response();
+    }
+
+    let auth_protocol = settings.ws_token.as_deref().map(websocket_auth_protocol);
+    if let Some(expected) = auth_protocol.as_deref() {
+        if !websocket_auth_supplied(&headers, expected) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "WebSocket authentication required",
+            )
+                .into_response();
+        }
+    }
+
+    let ws = match auth_protocol {
+        Some(protocol) => ws.protocols([protocol]),
+        None => ws,
+    };
     ws.on_upgrade(move |socket| handle_socket(socket, settings))
+        .into_response()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct BrowserOrigin {
+    scheme: String,
+    host: String,
+    port: u16,
+}
+
+fn parse_browser_origin(origin: &str) -> Option<BrowserOrigin> {
+    let url = url::Url::parse(origin).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    Some(BrowserOrigin {
+        scheme: url.scheme().to_string(),
+        host: url
+            .host_str()?
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase(),
+        port: url.port_or_known_default()?,
+    })
+}
+
+fn websocket_origin_allowed(origin: &str, settings: &Settings) -> bool {
+    let Some(origin) = parse_browser_origin(origin) else {
+        return false;
+    };
+
+    let loopback = matches!(origin.host.as_str(), "localhost" | "127.0.0.1" | "::1");
+    if loopback && origin.scheme == "http" && (origin.port == settings.port || settings.dev) {
+        return true;
+    }
+
+    let bind_host = settings
+        .host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    if !matches!(bind_host.as_str(), "0.0.0.0" | "::")
+        && origin.scheme == "http"
+        && origin.host == bind_host
+        && origin.port == settings.port
+    {
+        return true;
+    }
+
+    settings
+        .allowed_origins
+        .iter()
+        .filter_map(|allowed| parse_browser_origin(allowed))
+        .any(|allowed| allowed == origin)
+}
+
+fn websocket_auth_protocol(token: &str) -> String {
+    let encoded = token
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("stereo.auth.{encoded}")
+}
+
+fn websocket_auth_supplied(headers: &HeaderMap, expected: &str) -> bool {
+    headers
+        .get(header::SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|protocols| {
+            protocols
+                .split(',')
+                .any(|protocol| protocol.trim() == expected)
+        })
 }
 
 async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
@@ -1431,4 +1540,86 @@ async fn handle_msg(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod websocket_security_tests {
+    use super::*;
+
+    fn settings(host: &str, port: u16) -> Settings {
+        Settings {
+            home: None,
+            host: host.to_string(),
+            port,
+            allowed_origins: Vec::new(),
+            ws_token: None,
+            verbosity: 0,
+            dev: false,
+        }
+    }
+
+    #[test]
+    fn accepts_same_port_loopback_origins() {
+        let settings = settings("localhost", 8005);
+        assert!(websocket_origin_allowed("http://localhost:8005", &settings));
+        assert!(websocket_origin_allowed("http://127.0.0.1:8005", &settings));
+        assert!(websocket_origin_allowed("http://[::1]:8005", &settings));
+    }
+
+    #[test]
+    fn rejects_cross_site_and_wrong_port_origins() {
+        let settings = settings("localhost", 8005);
+        assert!(!websocket_origin_allowed(
+            "https://attacker.example",
+            &settings
+        ));
+        assert!(!websocket_origin_allowed(
+            "http://localhost:9999",
+            &settings
+        ));
+        assert!(!websocket_origin_allowed("null", &settings));
+    }
+
+    #[test]
+    fn accepts_any_loopback_dev_port_only_in_dev_mode() {
+        let mut settings = settings("localhost", 8055);
+        assert!(!websocket_origin_allowed(
+            "http://localhost:5174",
+            &settings
+        ));
+        settings.dev = true;
+        assert!(websocket_origin_allowed("http://localhost:5174", &settings));
+        assert!(websocket_origin_allowed("http://127.0.0.1:6123", &settings));
+        assert!(!websocket_origin_allowed(
+            "https://attacker.example",
+            &settings
+        ));
+    }
+
+    #[test]
+    fn wildcard_bind_requires_an_explicit_remote_origin() {
+        let mut settings = settings("0.0.0.0", 8005);
+        assert!(!websocket_origin_allowed(
+            "http://stereo.local:8005",
+            &settings
+        ));
+        settings
+            .allowed_origins
+            .push("https://music.example".to_string());
+        assert!(websocket_origin_allowed("https://music.example", &settings));
+    }
+
+    #[test]
+    fn websocket_token_uses_a_browser_safe_subprotocol() {
+        let protocol = websocket_auth_protocol("correct horse");
+        assert_eq!(protocol, "stereo.auth.636f727265637420686f727365");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::SEC_WEBSOCKET_PROTOCOL,
+            format!("other, {protocol}").parse().unwrap(),
+        );
+        assert!(websocket_auth_supplied(&headers, &protocol));
+        assert!(!websocket_auth_supplied(&headers, "stereo.auth.bad"));
+    }
 }

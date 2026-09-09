@@ -17,6 +17,19 @@ stereo
 
 Navigate to `localhost:8005` in your browser.
 
+Stereo only accepts same-origin WebSocket connections. If you deliberately listen on a
+non-loopback interface, configure both the public browser origin and an authentication token:
+
+```
+STEREO_WS_TOKEN="choose-a-long-random-token" stereo \
+  --host 0.0.0.0 \
+  --allowed-origin http://stereo.local:8005
+```
+
+Then open `http://stereo.local:8005/#stereo-token=choose-a-long-random-token`. The URL fragment
+is not sent in HTTP requests; the frontend presents an encoded form of it during the WebSocket
+handshake. Missing-origin WebSocket clients are rejected.
+
 Begin by searching for and adding music to a new collection.
 Or by importing from another collection.
 You can create as many collections as you want.

@@ -22,6 +22,19 @@ pub struct Settings {
     )]
     pub port: u16,
 
+    /// Additional browser origins allowed to open the WebSocket (comma-separated in the env var)
+    #[arg(
+        long = "allowed-origin",
+        env = "STEREO_ALLOWED_ORIGINS",
+        value_delimiter = ',',
+        global = true
+    )]
+    pub allowed_origins: Vec<String>,
+
+    /// WebSocket token required when listening on a non-loopback interface
+    #[arg(long, env = "STEREO_WS_TOKEN", global = true)]
+    pub ws_token: Option<String>,
+
     /// Increase verbosity (repeat for more detail)
     #[arg(long = "verbose", short = 'v', action = clap::ArgAction::Count)]
     pub verbosity: u8,
@@ -39,5 +52,105 @@ impl Settings {
                 .unwrap_or_else(|_| PathBuf::from("."));
             base.join(".local").join("share").join("stereo")
         })
+    }
+
+    pub fn is_loopback_bind(&self) -> bool {
+        matches!(
+            self.host
+                .trim()
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_ascii_lowercase()
+                .as_str(),
+            "localhost" | "127.0.0.1" | "::1"
+        )
+    }
+
+    pub fn validate_websocket_security(&self) -> anyhow::Result<()> {
+        if self
+            .ws_token
+            .as_deref()
+            .is_some_and(|token| token.trim().is_empty())
+        {
+            anyhow::bail!("--ws-token must not be empty");
+        }
+        if self
+            .ws_token
+            .as_deref()
+            .is_some_and(|token| token.len() > 256)
+        {
+            anyhow::bail!("--ws-token must be at most 256 bytes");
+        }
+        let mut has_remote_origin = false;
+        for origin in &self.allowed_origins {
+            let parsed = url::Url::parse(origin)
+                .map_err(|_| anyhow::anyhow!("invalid --allowed-origin: {origin}"))?;
+            if !matches!(parsed.scheme(), "http" | "https")
+                || parsed.host_str().is_none()
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+                || parsed.path() != "/"
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+            {
+                anyhow::bail!("invalid --allowed-origin: {origin}");
+            }
+            let host = parsed
+                .host_str()
+                .expect("origin host was checked above")
+                .trim_start_matches('[')
+                .trim_end_matches(']');
+            has_remote_origin |= !matches!(host, "localhost" | "127.0.0.1" | "::1");
+        }
+        if (!self.is_loopback_bind() || has_remote_origin) && self.ws_token.is_none() {
+            anyhow::bail!("--ws-token (or STEREO_WS_TOKEN) is required for non-loopback access");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings(host: &str) -> Settings {
+        Settings {
+            home: None,
+            host: host.to_string(),
+            port: 8005,
+            allowed_origins: Vec::new(),
+            ws_token: None,
+            verbosity: 0,
+            dev: false,
+        }
+    }
+
+    #[test]
+    fn remote_bind_requires_websocket_token() {
+        assert!(settings("localhost").validate_websocket_security().is_ok());
+        assert!(settings("127.0.0.1").validate_websocket_security().is_ok());
+        assert!(settings("0.0.0.0").validate_websocket_security().is_err());
+
+        let mut remote = settings("0.0.0.0");
+        remote.ws_token = Some("secret".to_string());
+        assert!(remote.validate_websocket_security().is_ok());
+    }
+
+    #[test]
+    fn configured_origins_must_be_bare_http_origins() {
+        let mut settings = settings("localhost");
+        settings.allowed_origins = vec!["https://localhost".to_string()];
+        assert!(settings.validate_websocket_security().is_ok());
+        settings.allowed_origins = vec!["https://music.example/path".to_string()];
+        assert!(settings.validate_websocket_security().is_err());
+    }
+
+    #[test]
+    fn remote_allowed_origin_requires_websocket_token() {
+        let mut settings = settings("localhost");
+        settings.allowed_origins = vec!["https://music.example".to_string()];
+        assert!(settings.validate_websocket_security().is_err());
+        settings.ws_token = Some("secret".to_string());
+        assert!(settings.validate_websocket_security().is_ok());
     }
 }
