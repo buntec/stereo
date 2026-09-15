@@ -1,13 +1,14 @@
 import { useState } from "react";
-import { ResetIcon } from "@radix-ui/react-icons";
-import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { ReloadIcon } from "@radix-ui/react-icons";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Button } from "@astryxdesign/core/Button";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import type { GitSyncState } from "./Types.tsx";
+import { gitSyncLabels, gitSyncVariant } from "./gitSync.ts";
 
 type Props = {
   state?: GitSyncState;
@@ -17,35 +18,8 @@ type Props = {
   onResolve: (strategy: "keep-local" | "keep-upstream") => void;
 };
 
-const labels: Record<GitSyncState, string> = {
-  "local-changes": "Local changes",
-  syncing: "Syncing",
-  synced: "Synced",
-  "local-only": "Local only",
-  offline: "Offline",
-  "authentication-required": "Authentication required",
-  "remote-ahead": "Upstream changes",
-  "conflict-requires-attention": "Sync conflict",
-  "corrupt-collection": "Invalid collection",
-  error: "Sync error",
-};
-
-function variant(state: GitSyncState) {
-  if (state === "synced") return "success" as const;
-  if (state === "syncing") return "accent" as const;
-  if (state === "error" || state === "corrupt-collection")
-    return "error" as const;
-  if (
-    state === "offline" ||
-    state === "authentication-required" ||
-    state === "remote-ahead" ||
-    state === "conflict-requires-attention"
-  ) {
-    return "warning" as const;
-  }
-  return "neutral" as const;
-}
-
+// Only surfaces in the toolbar when the user can or should act on the sync
+// state; routine states are conveyed by the dot on the collection menu.
 export default function GitSyncStatus({
   state,
   message,
@@ -55,26 +29,28 @@ export default function GitSyncStatus({
 }: Props) {
   const [resolveOpen, setResolveOpen] = useState(false);
   if (!state) return null;
-  const label = labels[state];
+  const variant = gitSyncVariant(state);
   const conflict = state === "conflict-requires-attention";
+  if (!retryable && !conflict && variant !== "warning" && variant !== "error") {
+    return null;
+  }
+  const label = gitSyncLabels[state];
 
   return (
     <>
-      <HStack gap={2} vAlign="center">
-        <StatusDot
-          variant={variant(state)}
-          label={label}
-          tooltip={message ?? label}
-          isPulsing={state === "syncing"}
-        />
-        <Text type="supporting">{label}</Text>
+      <HStack gap={1} vAlign="center" style={{ minWidth: 0 }}>
+        <Tooltip content={message ?? label}>
+          <Text type="supporting" color="secondary" maxLines={1}>
+            {label}
+          </Text>
+        </Tooltip>
         {retryable && !conflict && (
           <IconButton
             size="sm"
             variant="ghost"
             label="Retry repository synchronization"
-            tooltip={message ?? "Retry repository synchronization"}
-            icon={<ResetIcon />}
+            tooltip="Retry repository synchronization"
+            icon={<ReloadIcon />}
             onClick={onRetry}
           />
         )}

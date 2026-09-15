@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
-import { IconButton } from "@astryxdesign/core/IconButton";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { TextInput } from "@astryxdesign/core/TextInput";
@@ -10,7 +9,6 @@ import { Code } from "@astryxdesign/core/Code";
 import { Badge } from "@astryxdesign/core/Badge";
 
 import type { Action, RequestReply } from "./Types.tsx";
-import YouTubeIcon from "./YouTubeIcon.tsx";
 
 // ─── PKCE helpers ─────────────────────────────────────────────────────────────
 
@@ -113,18 +111,23 @@ export function useYouTubeOAuthCallback(
 // ─── Dialog component ─────────────────────────────────────────────────────────
 
 type YouTubeSessionDialogProps = {
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
   requestReply: RequestReply;
   connected: boolean;
   clientId: string | null;
 };
 
+// Mount fresh for each opening (via `key`) so the inputs start from the saved
+// client ID.
 function YouTubeSessionDialog({
+  isOpen,
+  onOpenChange,
   requestReply,
   connected,
   clientId,
 }: YouTubeSessionDialogProps) {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [clientIdInput, setClientIdInput] = useState("");
+  const [clientIdInput, setClientIdInput] = useState(clientId ?? "");
   const [clientSecretInput, setClientSecretInput] = useState("");
 
   const hasStoredCredentials = !!clientId;
@@ -152,103 +155,89 @@ function YouTubeSessionDialog({
     !!clientIdInput.trim() &&
     (!!clientSecretInput.trim() || hasStoredCredentials);
 
-  const closeDialog = () => setDialogOpen(false);
+  const closeDialog = () => onOpenChange(false);
 
   return (
-    <>
-      <IconButton
-        variant={connected ? "primary" : "secondary"}
-        label="Connect a YouTube account (for creating playlists)"
-        tooltip="Connect a YouTube account (for creating playlists)"
-        icon={<YouTubeIcon />}
-        onClick={() => {
-          setDialogOpen(true);
-          setClientIdInput(clientId ?? "");
-          setClientSecretInput("");
-        }}
-      />
+    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={480}>
+      <Layout
+        header={
+          <DialogHeader
+            title="YouTube Account"
+            onOpenChange={closeDialog}
+            endContent={
+              connected ? (
+                <Badge variant="success" label="Connected" />
+              ) : undefined
+            }
+          />
+        }
+        content={
+          <LayoutContent>
+            <VStack gap={3}>
+              <Text as="div" type="body">
+                Stereo needs a Google OAuth client to create playlists on your
+                behalf. Create a <strong>Desktop app</strong> OAuth client in
+                Google Cloud Console with the YouTube Data API v3 enabled, and
+                register <Code>{window.location.origin}</Code> as an authorized
+                redirect URI.
+              </Text>
 
-      <Dialog isOpen={dialogOpen} onOpenChange={setDialogOpen} width={480}>
-        <Layout
-          header={
-            <DialogHeader
-              title="YouTube Account"
-              onOpenChange={closeDialog}
-              endContent={
-                connected ? (
-                  <Badge variant="success" label="Connected" />
-                ) : undefined
-              }
-            />
-          }
-          content={
-            <LayoutContent>
-              <VStack gap={3}>
-                <Text as="div" type="body">
-                  Stereo needs a Google OAuth client to create playlists on your
-                  behalf. Create a <strong>Desktop app</strong> OAuth client in
-                  Google Cloud Console with the YouTube Data API v3 enabled, and
-                  register <Code>{window.location.origin}</Code> as an
-                  authorized redirect URI.
-                </Text>
+              <TextInput
+                label="Google OAuth client ID"
+                value={clientIdInput}
+                onChange={setClientIdInput}
+                placeholder="...apps.googleusercontent.com"
+              />
 
-                <TextInput
-                  label="Google OAuth client ID"
-                  value={clientIdInput}
-                  onChange={setClientIdInput}
-                  placeholder="...apps.googleusercontent.com"
-                />
-
-                <TextInput
-                  label="Google OAuth client secret"
-                  type="password"
-                  value={clientSecretInput}
-                  onChange={setClientSecretInput}
-                  placeholder={
-                    hasStoredCredentials
-                      ? "Leave blank to keep the saved secret"
-                      : "GOCSPX-..."
-                  }
-                />
-              </VStack>
-            </LayoutContent>
-          }
-          footer={
-            <LayoutFooter>
-              <HStack gap={2} hAlign="end">
-                {connected && (
-                  <Button
-                    label="Disconnect"
-                    variant="destructive"
-                    onClick={() => {
-                      requestReply(
-                        { type: "disconnect-youtube-session" },
-                        () => {},
-                      );
-                      closeDialog();
-                    }}
-                  />
-                )}
+              <TextInput
+                label="Google OAuth client secret"
+                type="password"
+                value={clientSecretInput}
+                onChange={setClientSecretInput}
+                placeholder={
+                  hasStoredCredentials
+                    ? "Leave blank to keep the saved secret"
+                    : "GOCSPX-..."
+                }
+              />
+            </VStack>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack gap={2} hAlign="end">
+              {connected && (
                 <Button
-                  label="Cancel"
-                  variant="secondary"
-                  onClick={closeDialog}
-                />
-                <Button
-                  label="Connect"
-                  variant="primary"
-                  isDisabled={!canConnect}
+                  label="Disconnect"
+                  variant="destructive"
                   onClick={() => {
-                    handleConnect();
+                    requestReply(
+                      { type: "disconnect-youtube-session" },
+                      () => {},
+                    );
                     closeDialog();
                   }}
                 />
-              </HStack>
-            </LayoutFooter>
-          }
-        />
-      </Dialog>
-    </>
+              )}
+              <Button
+                label="Cancel"
+                variant="secondary"
+                onClick={closeDialog}
+              />
+              <Button
+                label="Connect"
+                variant="primary"
+                isDisabled={!canConnect}
+                onClick={() => {
+                  handleConnect();
+                  closeDialog();
+                }}
+              />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
   );
 }
 

@@ -1,21 +1,25 @@
 import { useState } from "react";
-import type { ReactNode } from "react";
-import { InputGroup, InputGroupText } from "@astryxdesign/core/InputGroup";
-import { Selector } from "@astryxdesign/core/Selector";
+import {
+  DropdownMenu,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@astryxdesign/core/DropdownMenu";
 import { Divider } from "@astryxdesign/core/Divider";
-import { IconButton } from "@astryxdesign/core/IconButton";
-import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
-import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
-import { Button } from "@astryxdesign/core/Button";
-import { TextInput } from "@astryxdesign/core/TextInput";
-import { HStack, VStack } from "@astryxdesign/core/Stack";
-import { Text } from "@astryxdesign/core/Text";
-import { Code } from "@astryxdesign/core/Code";
-import { CubeIcon, PlusCircledIcon, Link2Icon } from "@radix-ui/react-icons";
-import type { ICollection } from "./Types.tsx";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { BarChartIcon, DownloadIcon, PlusIcon } from "@radix-ui/react-icons";
+import { MenuCheck, MenuHeading } from "./Menu.tsx";
+import NewCollectionDialog from "./NewCollectionDialog.tsx";
+import CloneRepoDialog from "./CloneRepoDialog.tsx";
+import { gitSyncLabels, gitSyncVariant } from "./gitSync.ts";
+import type { GitSyncState, ICollection, IRepo } from "./Types.tsx";
+
+function basename(path: string): string {
+  return path.split("/").pop() ?? path;
+}
 
 export function collectionLabel(path: string): string {
-  return path.split("/").pop() ?? path;
+  return basename(path).replace(/\.db$/, "");
 }
 
 export type CollectionSelectorProps = {
@@ -24,9 +28,14 @@ export type CollectionSelectorProps = {
   setValue: (path: string) => void;
   onCreate: (name: string) => void;
   isValid: boolean;
-  repoVisible: boolean;
-  onToggleRepo: () => void;
-  children?: ReactNode;
+  repos: IRepo[];
+  repoPath: string;
+  setRepoPath: (path: string) => void;
+  onClone: (url: string) => void;
+  syncState?: GitSyncState;
+  syncMessage?: string;
+  // Undefined when there are no stats to show.
+  onShowStats?: () => void;
 };
 
 function CollectionSelector({
@@ -35,117 +44,124 @@ function CollectionSelector({
   setValue,
   onCreate,
   isValid,
-  repoVisible,
-  onToggleRepo,
-  children,
+  repos,
+  repoPath,
+  setRepoPath,
+  onClone,
+  syncState,
+  syncMessage,
+  onShowStats,
 }: CollectionSelectorProps) {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [newName, setNewName] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
 
-  const selectedValue = collections.some((c) => c.path === value)
+  const selectedCollection = collections.some((c) => c.path === value)
     ? value
     : undefined;
+  const selectedRepo = repos.find((r) => r.path === repoPath);
 
-  const closeDialog = () => {
-    setDialogOpen(false);
-    setNewName("");
-  };
+  const status = !isValid
+    ? { variant: "error" as const, label: "Invalid collection" }
+    : syncState
+      ? { variant: gitSyncVariant(syncState), label: gitSyncLabels[syncState] }
+      : { variant: "neutral" as const, label: "Not synchronized" };
+
+  const tooltip = [
+    selectedRepo && basename(selectedRepo.path),
+    syncMessage ?? status.label,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <HStack className="collection-selector-box" gap={0} vAlign="center">
-      <InputGroup label="Collection" isLabelHidden>
-        <InputGroupText>
-          <CubeIcon color={isValid ? "green" : "red"} height={14} width={14} />
-        </InputGroupText>
-        <Selector
-          label="Collection"
-          isLabelHidden
-          placeholder="Select collection…"
-          options={collections.map((c) => ({
-            value: c.path,
-            label: collectionLabel(c.path),
-          }))}
-          value={selectedValue}
+    <>
+      <DropdownMenu
+        menuWidth={300}
+        button={{
+          label: selectedCollection
+            ? collectionLabel(selectedCollection)
+            : "Select collection",
+          variant: "ghost",
+          tooltip,
+          icon: (
+            <StatusDot
+              variant={status.variant}
+              label={status.label}
+              isPulsing={syncState === "syncing"}
+            />
+          ),
+        }}
+      >
+        <MenuHeading>Collections</MenuHeading>
+        <DropdownMenuRadioGroup
+          aria-label="Collections"
+          value={selectedCollection}
           onChange={setValue}
-        />
-      </InputGroup>
-
-      <HStack className="collection-selector-actions" gap={2} vAlign="center">
-        <Divider orientation="vertical" style={{ height: "14px" }} />
-
-        <IconButton
-          variant="ghost"
-          size="sm"
-          label="Create new collection"
-          tooltip="Create new collection"
-          icon={<PlusCircledIcon />}
-          onClick={() => setDialogOpen(true)}
-        />
-
-        <Dialog
-          isOpen={dialogOpen}
-          onOpenChange={(open) => (open ? setDialogOpen(true) : closeDialog())}
-          purpose="form"
-          width={380}
         >
-          <Layout
-            header={
-              <DialogHeader
-                title="New Collection"
-                onOpenChange={() => closeDialog()}
-              />
-            }
-            content={
-              <LayoutContent>
-                <VStack gap={3}>
-                  <Text as="div" type="body">
-                    Enter a name for the new collection. It will be created as{" "}
-                    <Code>{newName || "name"}.db</Code> in the current repo.
-                  </Text>
-                  <TextInput
-                    label="Collection name"
-                    value={newName}
-                    placeholder="my-sets"
-                    onChange={(v) => setNewName(v.replace(/[/\\]/g, ""))}
-                  />
-                </VStack>
-              </LayoutContent>
-            }
-            footer={
-              <LayoutFooter>
-                <HStack gap={2} hAlign="end">
-                  <Button
-                    label="Cancel"
-                    variant="secondary"
-                    onClick={closeDialog}
-                  />
-                  <Button
-                    label="Create"
-                    variant="primary"
-                    isDisabled={!newName.trim()}
-                    onClick={() => {
-                      onCreate(newName.trim());
-                      closeDialog();
-                    }}
-                  />
-                </HStack>
-              </LayoutFooter>
-            }
-          />
-        </Dialog>
-
-        <IconButton
-          variant={repoVisible ? "secondary" : "ghost"}
-          size="sm"
-          label="Git repository"
-          tooltip="Git repository"
-          icon={<Link2Icon />}
-          onClick={onToggleRepo}
+          {collections.map((c) => (
+            <DropdownMenuRadioItem
+              key={c.path}
+              value={c.path}
+              label={collectionLabel(c.path)}
+              endContent={
+                <MenuCheck isChecked={c.path === selectedCollection} />
+              }
+            />
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuItem
+          icon={<PlusIcon />}
+          label="New collection…"
+          onClick={() => setCreateOpen(true)}
         />
 
-        {children}
-      </HStack>
-    </HStack>
+        <Divider />
+
+        <MenuHeading>Repository</MenuHeading>
+        <DropdownMenuRadioGroup
+          aria-label="Repository"
+          value={selectedRepo?.path}
+          onChange={setRepoPath}
+        >
+          {repos.map((r) => (
+            <DropdownMenuRadioItem
+              key={r.path}
+              value={r.path}
+              label={basename(r.path)}
+              description={r.remote ?? "No remote"}
+              endContent={
+                <MenuCheck isChecked={r.path === selectedRepo?.path} />
+              }
+            />
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuItem
+          icon={<DownloadIcon />}
+          label="Clone repository…"
+          onClick={() => setCloneOpen(true)}
+        />
+
+        <Divider />
+
+        <DropdownMenuItem
+          icon={<BarChartIcon />}
+          label="Library stats"
+          isDisabled={!onShowStats}
+          onClick={onShowStats}
+        />
+      </DropdownMenu>
+
+      <NewCollectionDialog
+        isOpen={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreate={onCreate}
+      />
+      <CloneRepoDialog
+        isOpen={cloneOpen}
+        onOpenChange={setCloneOpen}
+        onClone={onClone}
+      />
+    </>
   );
 }
 

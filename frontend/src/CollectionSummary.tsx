@@ -1,14 +1,13 @@
-import { useState } from "react";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
-import { IconButton } from "@astryxdesign/core/IconButton";
-import { InfoCircledIcon } from "@radix-ui/react-icons";
 import type { IScoredName, ICollectionStats } from "./Types.tsx";
 
 type Props = {
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
   stats: ICollectionStats;
   totalTracks?: number;
   onArtistClick: (name: string) => void;
@@ -50,89 +49,69 @@ function ScoredNameColumn({
 }
 
 function CollectionSummary({
+  isOpen,
+  onOpenChange,
   stats,
   totalTracks,
   onArtistClick,
   onLabelClick,
 }: Props) {
-  const [open, setOpen] = useState(false);
-
-  const empty =
-    stats.top_artists_five_star.length === 0 &&
-    stats.top_artists_four_plus.length === 0 &&
-    stats.top_labels_five_star.length === 0 &&
-    stats.top_labels_four_plus.length === 0;
-  if (empty) {
-    return null;
-  }
-
   const handleArtistClick = (name: string) => {
-    setOpen(false);
+    onOpenChange(false);
     onArtistClick(name);
   };
 
   const handleLabelClick = (name: string) => {
-    setOpen(false);
+    onOpenChange(false);
     onLabelClick(name);
   };
 
   return (
-    <>
-      <IconButton
-        variant="ghost"
-        size="sm"
-        label="Library stats"
-        tooltip="Library stats"
-        icon={<InfoCircledIcon />}
-        onClick={() => setOpen(true)}
+    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={640}>
+      <Layout
+        header={
+          <DialogHeader
+            title="Library stats"
+            onOpenChange={() => onOpenChange(false)}
+            endContent={
+              totalTracks !== undefined ? (
+                <Text type="supporting">{totalTracks} tracks total</Text>
+              ) : undefined
+            }
+          />
+        }
+        content={
+          <LayoutContent>
+            <HStack gap={6} wrap="wrap">
+              <ScoredNameColumn
+                title="Top artists (5★)"
+                names={stats.top_artists_five_star}
+                color="blue"
+                onClick={handleArtistClick}
+              />
+              <ScoredNameColumn
+                title="Top artists (4★+)"
+                names={stats.top_artists_four_plus}
+                color="blue"
+                onClick={handleArtistClick}
+              />
+              <ScoredNameColumn
+                title="Top labels (5★)"
+                names={stats.top_labels_five_star}
+                color="purple"
+                onClick={handleLabelClick}
+              />
+              <ScoredNameColumn
+                title="Top labels (4★+)"
+                names={stats.top_labels_four_plus}
+                color="purple"
+                onClick={handleLabelClick}
+              />
+            </HStack>
+          </LayoutContent>
+        }
       />
-
-      <Dialog isOpen={open} onOpenChange={setOpen} width={640}>
-        <Layout
-          header={
-            <DialogHeader
-              title="Library stats"
-              onOpenChange={() => setOpen(false)}
-              endContent={
-                totalTracks !== undefined ? (
-                  <Text type="supporting">{totalTracks} tracks total</Text>
-                ) : undefined
-              }
-            />
-          }
-          content={
-            <LayoutContent>
-              <HStack gap={6} wrap="wrap">
-                <ScoredNameColumn
-                  title="Top artists (5★)"
-                  names={stats.top_artists_five_star}
-                  color="blue"
-                  onClick={handleArtistClick}
-                />
-                <ScoredNameColumn
-                  title="Top artists (4★+)"
-                  names={stats.top_artists_four_plus}
-                  color="blue"
-                  onClick={handleArtistClick}
-                />
-                <ScoredNameColumn
-                  title="Top labels (5★)"
-                  names={stats.top_labels_five_star}
-                  color="purple"
-                  onClick={handleLabelClick}
-                />
-                <ScoredNameColumn
-                  title="Top labels (4★+)"
-                  names={stats.top_labels_four_plus}
-                  color="purple"
-                  onClick={handleLabelClick}
-                />
-              </HStack>
-            </LayoutContent>
-          }
-        />
-      </Dialog>
-    </>
+    </Dialog>
   );
 }
 

@@ -33,7 +33,6 @@ import { Theme } from "@astryxdesign/core/theme";
 import { stereoTheme } from "./theme";
 import { Slider } from "@astryxdesign/core/Slider";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
-import { Skeleton } from "@astryxdesign/core/Skeleton";
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
@@ -55,28 +54,29 @@ import type {
 
 import { useWebSocket } from "./WebSocket.tsx";
 import { useYTPlayer, type YTPlayerOptions } from "./YT.tsx";
-import { formatDuration, useLocalStorage, shuffleArray } from "./Utils.tsx";
+import {
+  formatDuration,
+  useLocalStorage,
+  shuffleArray,
+  hasCollectionStats,
+} from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
 import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector from "./CollectionSelector.tsx";
-import RepoSelector from "./RepoSelector.tsx";
 import ImportDialog from "./ImportDialog.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
 import {
   YouTubePlaylistDialog,
   YouTubePlaylistProgressDialog,
 } from "./YouTubePlaylistDialog.tsx";
-import YouTubeSessionDialog, {
-  useYouTubeOAuthCallback,
-} from "./YouTubeSessionDialog.tsx";
-import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
+import { useYouTubeOAuthCallback } from "./YouTubeSessionDialog.tsx";
 import SpotifyPlaylistDialog, {
   SpotifyPlaylistProgressDialog,
   type SpotifyPlaylistTarget,
 } from "./SpotifyPlaylistDialog.tsx";
 import AddTracksDialog from "./AddTracksDialog.tsx";
-import AppearanceSwitch from "./AppearanceSwitch.tsx";
+import AppMenu from "./AppMenu.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
@@ -86,9 +86,9 @@ import GitSyncStatus from "./GitSyncStatus.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
-const wsTokenFromFragment = new URLSearchParams(window.location.hash.slice(1)).get(
-  "stereo-token",
-);
+const wsTokenFromFragment = new URLSearchParams(
+  window.location.hash.slice(1),
+).get("stereo-token");
 if (wsTokenFromFragment) {
   window.sessionStorage.setItem("stereo-ws-token", wsTokenFromFragment);
   window.history.replaceState(
@@ -635,7 +635,7 @@ function App() {
     undefined,
   );
 
-  const [repoVisible, setRepoVisible] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
 
   const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
     "stereo_app_grid_state",
@@ -1611,8 +1611,8 @@ function App() {
         className={`app-main ${settings.fullScreen ? "fullscreen" : ""}`}
         hAlign="center"
       >
-        <HStack vAlign="center" className="toolbar">
-          <HStack gap={2} vAlign="center" className="toolbar-left">
+        <HStack vAlign="center" gap={2} className="toolbar">
+          <HStack vAlign="center" gap={2} className="toolbar-side">
             <CollectionSelector
               isValid={state.collection_is_valid ?? true}
               collections={state.collections ?? []}
@@ -1621,41 +1621,33 @@ function App() {
                 setSettings({ ...settings, collectionPath: path })
               }
               onCreate={(name) => sendMsg({ type: "create-collection", name })}
-              repoVisible={repoVisible}
-              onToggleRepo={() => setRepoVisible((v) => !v)}
-            >
-              {state.collection_stats && (
-                <CollectionSummary
-                  stats={state.collection_stats}
-                  totalTracks={state.collection?.size}
-                  onArtistClick={handleArtistClick}
-                  onLabelClick={handleLabelClick}
-                />
-              )}
-            </CollectionSelector>
-            {repoVisible && (
-              <RepoSelector
-                repos={state.repos ?? []}
-                value={settings.repoPath}
-                setValue={(path) => {
+              repos={state.repos ?? []}
+              repoPath={settings.repoPath}
+              setRepoPath={(path) => {
+                setSettings({ ...settings, repoPath: path });
+                sendMsg({ type: "set-repo", path });
+              }}
+              onClone={(url) => {
+                if (state.home_dir) {
+                  const name =
+                    url
+                      .replace(/\/$/, "")
+                      .replace(/\.git$/, "")
+                      .split("/")
+                      .pop() ?? "repo";
+                  const path = `${state.home_dir}/${name}`;
                   setSettings({ ...settings, repoPath: path });
-                  sendMsg({ type: "set-repo", path });
-                }}
-                onClone={(url) => {
-                  if (state.home_dir) {
-                    const name =
-                      url
-                        .replace(/\/$/, "")
-                        .replace(/\.git$/, "")
-                        .split("/")
-                        .pop() ?? "repo";
-                    const path = `${state.home_dir}/${name}`;
-                    setSettings({ ...settings, repoPath: path });
-                  }
-                  sendMsg({ type: "clone-repo", url });
-                }}
-              />
-            )}
+                }
+                sendMsg({ type: "clone-repo", url });
+              }}
+              syncState={state.git_sync_state}
+              syncMessage={state.git_sync_message}
+              onShowStats={
+                hasCollectionStats(state.collection_stats)
+                  ? () => setStatsOpen(true)
+                  : undefined
+              }
+            />
             <GitSyncStatus
               state={state.git_sync_state}
               message={state.git_sync_message}
@@ -1665,22 +1657,7 @@ function App() {
                 sendMsg({ type: "resolve-git-conflict", strategy })
               }
             />
-            <SpotifySessionDialog
-              requestReply={requestReply}
-              collectionOpen={!!state.collection}
-              backfillRunning={state.spotify_backfill_running}
-              backfillChecked={state.spotify_backfill_checked}
-              backfillMatched={state.spotify_backfill_matched}
-              backfillTotal={state.spotify_backfill_total}
-              onBackfill={backfillSpotifyIds}
-            />
-            <YouTubeSessionDialog
-              requestReply={requestReply}
-              connected={state.youtube_connected}
-              clientId={state.youtube_client_id ?? null}
-            />
           </HStack>
-
           <SearchBox
             value={state.search_box_input ?? ""}
             setValue={(value: string) =>
@@ -1710,25 +1687,22 @@ function App() {
             }
             errorMessage={state.search_error_message}
           />
-
-          <HStack
-            gap={2}
-            vAlign="center"
-            hAlign="end"
-            className="toolbar-right"
-          >
-            {state.backend_version ? (
-              <Text type="body" className="version-string">
-                Stereo - {state.backend_version}
-              </Text>
-            ) : (
-              <Skeleton width={80} height={16} />
-            )}
-            <AppearanceSwitch
+          <HStack vAlign="center" hAlign="end" className="toolbar-side">
+            <AppMenu
+              version={state.backend_version}
               appearance={settings.appearance}
               setAppearance={(appearance) =>
                 setSettings({ ...settings, appearance })
               }
+              requestReply={requestReply}
+              youtubeConnected={state.youtube_connected}
+              youtubeClientId={state.youtube_client_id ?? null}
+              collectionOpen={!!state.collection}
+              spotifyBackfillRunning={state.spotify_backfill_running}
+              spotifyBackfillChecked={state.spotify_backfill_checked}
+              spotifyBackfillMatched={state.spotify_backfill_matched}
+              spotifyBackfillTotal={state.spotify_backfill_total}
+              onSpotifyBackfill={backfillSpotifyIds}
             />
           </HStack>
         </HStack>
@@ -2170,6 +2144,16 @@ function App() {
         matched={state.spotify_playlist_matched ?? 0}
         total={state.spotify_playlist_total ?? 0}
       />
+      {state.collection_stats && (
+        <CollectionSummary
+          isOpen={statsOpen}
+          onOpenChange={setStatsOpen}
+          stats={state.collection_stats}
+          totalTracks={state.collection?.size}
+          onArtistClick={handleArtistClick}
+          onLabelClick={handleLabelClick}
+        />
+      )}
       <AddTracksDialog
         key={addTracksPendingId.current}
         open={addTracksPending !== null}

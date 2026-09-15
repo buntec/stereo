@@ -1,17 +1,21 @@
-import { Toolbar } from "@astryxdesign/core/Toolbar";
 import { Selector } from "@astryxdesign/core/Selector";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "@astryxdesign/core/DropdownMenu";
+import { InputGroup } from "@astryxdesign/core/InputGroup";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { IconButton } from "@astryxdesign/core/IconButton";
-import { Spinner } from "@astryxdesign/core/Spinner";
-import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { Divider } from "@astryxdesign/core/Divider";
 import { HStack } from "@astryxdesign/core/Stack";
-import { Text } from "@astryxdesign/core/Text";
-import { MagnifyingGlassIcon } from "@radix-ui/react-icons";
+import {
+  MagnifyingGlassIcon,
+  MixerHorizontalIcon,
+} from "@radix-ui/react-icons";
 
+import { MenuCheck, MenuHeading } from "./Menu.tsx";
 import { type SearchBoxKind, type TrackSource } from "./Types.tsx";
 
 export interface ISearchBoxProps {
@@ -37,7 +41,7 @@ const SEARCH_KIND_OPTIONS = [
   { value: "new-releases", label: "Latest releases" },
 ];
 
-const LIMIT_OPTIONS = ["10", "25", "50", "100", "500", "1000"];
+const LIMIT_OPTIONS = [10, 25, 50, 100, 500, 1000];
 
 const ALL_SEARCH_SOURCES: { value: TrackSource; label: string }[] = [
   { value: "beatport", label: "Beatport" },
@@ -81,26 +85,6 @@ function SearchBox({
 }: ISearchBoxProps) {
   const isNewReleases = searchKind === "new-releases";
 
-  const kindSelect = (
-    <Selector
-      label="Search kind"
-      isLabelHidden
-      options={SEARCH_KIND_OPTIONS}
-      value={searchKind}
-      onChange={(v) => setSearchKind(toSearchKind(v))}
-    />
-  );
-
-  const limitSelect = (
-    <Selector
-      label="Result limit"
-      isLabelHidden
-      options={LIMIT_OPTIONS}
-      value={`${searchLimit}`}
-      onChange={(v) => setSearchLimit(parseInt(v))}
-    />
-  );
-
   const toggleSearchSource = (source: TrackSource, checked: boolean) => {
     setSearchSources(
       checked
@@ -109,97 +93,107 @@ function SearchBox({
     );
   };
 
-  const sourcesMenu = (
-    <DropdownMenu
-      button={{
-        label: `Sources (${searchSources.length})`,
-        variant: "secondary",
-        tooltip: "Search sources",
-      }}
-    >
-      {ALL_SEARCH_SOURCES.map((s) => (
-        <DropdownMenuCheckboxItem
-          key={s.value}
-          label={s.label}
-          value={searchSources.includes(s.value)}
-          onChange={(checked) => toggleSearchSource(s.value, checked)}
-        />
-      ))}
-    </DropdownMenu>
-  );
+  const optionsSummary = `Up to ${searchLimit} results from ${searchSources.length} source${searchSources.length === 1 ? "" : "s"}`;
 
   return (
-    <Toolbar
-      className="search-box"
-      label="Search"
-      size="sm"
-      startContent={
-        <>
-          <Tooltip content="Search by label, by artist, fuzzy, or latest releases">
-            {kindSelect}
-          </Tooltip>
-          {isNewReleases ? (
-            <HStack
-              className="search-box-text-field"
-              gap={2}
-              vAlign="center"
-              paddingInline={2}
-            >
-              {searchBusy ? <Spinner size="sm" label="Searching" /> : null}
-              <Selector
-                label="Days"
-                isLabelHidden
-                options={DAY_OPTIONS.map((d) => ({
-                  value: `${d}`,
-                  label: `Last ${d} day${d === 1 ? "" : "s"}`,
-                }))}
-                value={`${newReleasesDays}`}
-                onChange={(v) => setNewReleasesDays(parseInt(v))}
-              />
-              <Tooltip content="Limit number of search results">
-                {limitSelect}
-              </Tooltip>
-              {sourcesMenu}
-            </HStack>
-          ) : (
-            <>
-              <TextInput
-                className="search-box-text-field"
-                label="Search"
-                isLabelHidden
-                startIcon="search"
-                hasClear
-                isLoading={searchBusy}
-                value={value}
-                onChange={setValue}
-                onKeyDown={(ev) => {
-                  if (ev.key === "Enter") onSearch();
-                }}
-              />
-              <Tooltip content="Limit number of search results">
-                {limitSelect}
-              </Tooltip>
-              {sourcesMenu}
-            </>
-          )}
-        </>
-      }
-      endContent={
-        <>
-          <IconButton
-            variant="primary"
-            label="Search"
-            tooltip="Search"
-            icon={<MagnifyingGlassIcon />}
-            isDisabled={!isNewReleases && value.trim().length === 0}
-            onClick={onSearch}
+    <HStack gap={1} vAlign="center" className="search-box">
+      <InputGroup
+        label="Search"
+        isLabelHidden
+        className="search-box-group"
+        status={
+          errorMessage ? { type: "error", message: errorMessage } : undefined
+        }
+      >
+        <Selector
+          label="Search kind"
+          isLabelHidden
+          options={SEARCH_KIND_OPTIONS}
+          value={searchKind}
+          onChange={(v) => setSearchKind(toSearchKind(v))}
+          // Size to its label instead of splitting the group evenly.
+          style={{ flex: "none", width: "auto" }}
+        />
+        {isNewReleases ? (
+          <Selector
+            label="Released within"
+            isLabelHidden
+            options={DAY_OPTIONS.map((d) => ({
+              value: `${d}`,
+              label: `Last ${d} day${d === 1 ? "" : "s"}`,
+            }))}
+            value={`${newReleasesDays}`}
+            onChange={(v) => setNewReleasesDays(parseInt(v))}
           />
-          {errorMessage ? (
-            <Text style={{ color: "var(--color-error)" }}>{errorMessage}</Text>
-          ) : null}
-        </>
-      }
-    />
+        ) : (
+          <TextInput
+            label="Search query"
+            isLabelHidden
+            placeholder="Search tracks, artists, labels…"
+            hasClear
+            value={value}
+            onChange={setValue}
+            onKeyDown={(ev) => {
+              if (ev.key === "Enter") onSearch();
+            }}
+          />
+        )}
+      </InputGroup>
+
+      <DropdownMenu
+        hasChevron={false}
+        menuWidth={200}
+        button={{
+          label: "Search options",
+          icon: <MixerHorizontalIcon />,
+          isIconOnly: true,
+          variant: "ghost",
+          tooltip: optionsSummary,
+        }}
+      >
+        <MenuHeading>Result limit</MenuHeading>
+        <DropdownMenuRadioGroup
+          aria-label="Result limit"
+          value={`${searchLimit}`}
+          onChange={(v) => setSearchLimit(parseInt(v))}
+          hasCloseOnSelect={false}
+        >
+          {LIMIT_OPTIONS.map((n) => (
+            <DropdownMenuRadioItem
+              key={n}
+              value={`${n}`}
+              label={`${n}`}
+              endContent={<MenuCheck isChecked={n === searchLimit} />}
+            />
+          ))}
+        </DropdownMenuRadioGroup>
+
+        <Divider />
+
+        <MenuHeading>Sources</MenuHeading>
+        {ALL_SEARCH_SOURCES.map((s) => (
+          <DropdownMenuCheckboxItem
+            key={s.value}
+            label={s.label}
+            value={searchSources.includes(s.value)}
+            onChange={(checked) => toggleSearchSource(s.value, checked)}
+            endContent={
+              <MenuCheck isChecked={searchSources.includes(s.value)} />
+            }
+          />
+        ))}
+      </DropdownMenu>
+
+      <IconButton
+        variant="primary"
+        label="Search"
+        tooltip="Search"
+        icon={<MagnifyingGlassIcon />}
+        isLoading={searchBusy}
+        isDisabled={!isNewReleases && value.trim().length === 0}
+        onClick={onSearch}
+      />
+    </HStack>
   );
 }
 

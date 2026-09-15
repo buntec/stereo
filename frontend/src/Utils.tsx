@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import type { ICollectionStats } from "./Types.tsx";
 
 export function shuffleArray<T>(array: T[]): T[] {
   for (let i = array.length - 1; i > 0; i--) {
@@ -41,4 +42,14 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
   }, [key, storedValue]);
 
   return [storedValue, setStoredValue] as const;
+}
+
+export function hasCollectionStats(stats?: ICollectionStats): boolean {
+  return (
+    !!stats &&
+    (stats.top_artists_five_star.length > 0 ||
+      stats.top_artists_four_plus.length > 0 ||
+      stats.top_labels_five_star.length > 0 ||
+      stats.top_labels_four_plus.length > 0)
+  );
 }

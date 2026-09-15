@@ -49,6 +49,7 @@ import { CheckCircledIcon, PlayIcon, ColumnsIcon } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import logger from "./logger.tsx";
+import { MenuCheck } from "./Menu.tsx";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -580,6 +581,7 @@ export const ColumnsMenu = ({ gridRef }: ColumnsMenuProps) => {
           label={c.headerName}
           value={c.visible}
           onChange={(checked) => toggleColumn(c.colId, checked)}
+          endContent={<MenuCheck isChecked={c.visible} />}
         />
       ))}
     </DropdownMenu>
