@@ -1323,43 +1323,65 @@ function App() {
 
   useYouTubeOAuthCallback(requestReply, dispatch);
 
+  const addTracksToCollection = useCallback(
+    async (tracks: ITrack[]) => {
+      if (tracks.length === 0) return true;
+
+      const results = await Promise.all(
+        tracks.map(
+          (track) =>
+            new Promise<{ track: ITrack; exists: boolean }>((resolve) => {
+              requestReply(
+                { type: "collection-contains-id", yt_id: track.yt_id },
+                (msg) =>
+                  resolve({
+                    track,
+                    exists: "contains_id" in msg ? msg.contains_id : false,
+                  }),
+              );
+            }),
+        ),
+      );
+
+      const conflicts = results.filter((r) => r.exists).map((r) => r.track);
+      const nonConflicting = results
+        .filter((r) => !r.exists)
+        .map((r) => r.track);
+
+      if (conflicts.length === 0) {
+        if (nonConflicting.length > 0) {
+          sendMsg({
+            type: "add-tracks",
+            tracks: nonConflicting,
+            overwrite_existing: true,
+          });
+        }
+        return true;
+      } else {
+        addTracksPendingId.current += 1;
+        setAddTracksPending({ conflicts, nonConflicting });
+        return false;
+      }
+    },
+    [requestReply, sendMsg],
+  );
+
   const addSelectedTracks = useCallback(async () => {
     const selection = state.search_results_selection;
     if (!selection || selection.length === 0) return;
 
-    const results = await Promise.all(
-      selection.map(
-        (track) =>
-          new Promise<{ track: ITrack; exists: boolean }>((resolve) => {
-            requestReply(
-              { type: "collection-contains-id", yt_id: track.yt_id },
-              (msg) =>
-                resolve({
-                  track,
-                  exists: "contains_id" in msg ? msg.contains_id : false,
-                }),
-            );
-          }),
-      ),
-    );
-
-    const conflicts = results.filter((r) => r.exists).map((r) => r.track);
-    const nonConflicting = results.filter((r) => !r.exists).map((r) => r.track);
-
-    if (conflicts.length === 0) {
-      if (nonConflicting.length > 0) {
-        sendMsg({
-          type: "add-tracks",
-          tracks: nonConflicting,
-          overwrite_existing: true,
-        });
-      }
+    const added = await addTracksToCollection(selection);
+    if (added) {
       searchGridRef.current?.api.deselectAll();
-    } else {
-      addTracksPendingId.current += 1;
-      setAddTracksPending({ conflicts, nonConflicting });
     }
-  }, [requestReply, sendMsg, state.search_results_selection]);
+  }, [addTracksToCollection, state.search_results_selection]);
+
+  const addSearchResultTrack = useCallback(
+    (track: ITrack) => {
+      void addTracksToCollection([track]);
+    },
+    [addTracksToCollection],
+  );
 
   const confirmAddTracks = useCallback(
     (overwriteYtIds: Set<string>) => {
@@ -2089,6 +2111,7 @@ function App() {
               lastCollectionUpdate={state.collection_last_update}
               onArtistClick={handleArtistClick}
               onLabelClick={handleLabelClick}
+              addTrack={addSearchResultTrack}
               appearance={settings.appearance}
             />
           ) : (

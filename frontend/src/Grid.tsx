@@ -45,7 +45,7 @@ import {
   type Dispatch,
 } from "react";
 
-import { CheckCircledIcon, PlayIcon, ColumnsIcon } from "@radix-ui/react-icons";
+import { PlayIcon, PlusIcon, ColumnsIcon } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import logger from "./logger.tsx";
@@ -260,6 +260,12 @@ const SearchPlayControlRenderer: React.FC<
     context.requestReply,
   ]);
 
+  const handleAdd = useCallback(() => {
+    if (data) {
+      context.addTrack(data);
+    }
+  }, [data, context]);
+
   if (!data) return null;
 
   return (
@@ -277,11 +283,15 @@ const SearchPlayControlRenderer: React.FC<
         tooltip="Play"
         icon={<PlayIcon />}
       />
-      {exists ? (
-        <Tooltip content="Track exists in collection">
-          <CheckCircledIcon color="green" />
-        </Tooltip>
-      ) : null}
+      <IconButton
+        variant="secondary"
+        size="sm"
+        onClick={handleAdd}
+        isDisabled={!!exists}
+        label={exists ? "Track exists in collection" : "Add to collection"}
+        tooltip={exists ? "Track exists in collection" : "Add to collection"}
+        icon={<PlusIcon />}
+      />
     </HStack>
   );
 };
@@ -296,6 +306,7 @@ interface SearchResultsGridProps {
   lastCollectionUpdate?: number;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
+  addTrack: (track: ITrack) => void;
   appearance: "light" | "dark";
 }
 
@@ -306,6 +317,7 @@ type SearchResultsGridContext = {
   dispatch: Dispatch<Action>;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
+  addTrack: (track: ITrack) => void;
   tracks: ITrack[];
 };
 
@@ -319,6 +331,7 @@ export const SearchResultsGrid = ({
   lastCollectionUpdate,
   onArtistClick,
   onLabelClick,
+  addTrack,
   appearance,
 }: SearchResultsGridProps) => {
   const [colDefs] = useState<ColDef[]>([
@@ -326,7 +339,7 @@ export const SearchResultsGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: SearchPlayControlRenderer,
-      width: 140,
+      width: 180,
     },
     {
       field: "title",
@@ -463,6 +476,7 @@ export const SearchResultsGrid = ({
       dispatch,
       onArtistClick,
       onLabelClick,
+      addTrack,
       tracks: tracks ?? [],
     };
   }, [
@@ -472,6 +486,7 @@ export const SearchResultsGrid = ({
     dispatch,
     onArtistClick,
     onLabelClick,
+    addTrack,
     tracks,
   ]);
 
