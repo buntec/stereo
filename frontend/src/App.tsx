@@ -908,18 +908,15 @@ function App() {
     if (!playing) {
       audio.pause();
       audio.muted = true;
-      audio.volume = 0;
       return;
     }
 
     // Start muted so autoplay policy cannot block the media-session anchor.
     // The WAV source contains only silence, so unmuting it produces no sound.
     audio.muted = true;
-    audio.volume = 0;
     void audio.play().then(
       () => {
         audio.muted = false;
-        audio.volume = 1;
       },
       () => {
         // The YouTube player remains usable if the browser rejects the anchor.
@@ -935,8 +932,6 @@ function App() {
     audio.src = source;
     audio.loop = true;
     audio.preload = "auto";
-    audio.hidden = true;
-    audio.setAttribute("aria-hidden", "true");
     document.body.append(audio);
     mediaSessionAudioRef.current = audio;
 
@@ -1717,9 +1712,9 @@ function App() {
             seekTime !== undefined &&
             Number.isFinite(seekTime)
           ) {
-            player.seekTo(seekTime, details.fastSeek ?? false);
+            player.seekTo(seekTime, true);
             if (player2 && player2IsReady) {
-              player2.seekTo(seekTime, details.fastSeek ?? false);
+              player2.seekTo(seekTime, true);
             }
           }
         },
