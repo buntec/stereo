@@ -116,6 +116,49 @@ const YTPlayerState = {
   CUED: 5,
 };
 
+const createSilentAudioSource = (): string => {
+  const sampleRate = 8000;
+  const durationSeconds = 10;
+  const bytesPerSample = 2;
+  const dataSize = sampleRate * durationSeconds * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeAscii = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i++) {
+      view.setUint8(offset + i, value.charCodeAt(i));
+    }
+  };
+
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, bytesPerSample * 8, true);
+  writeAscii(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  return URL.createObjectURL(
+    new Blob([buffer], {
+      type: "audio/wav",
+    }),
+  );
+};
+
+const getVideoData = (player: YT.Player): YT.VideoData | undefined => {
+  try {
+    return player.getVideoData();
+  } catch {
+    return undefined;
+  }
+};
+
 const defaultSettings: Settings = {
   appearance: "dark",
   repoPath: "",
@@ -793,28 +836,28 @@ function App() {
         });
       },
       onStateChange: (event: YT.OnStateChangeEvent) => {
+        const videoData = getVideoData(event.target);
+        if (!videoData?.video_id) return;
+
         if (event.data === window.YT.PlayerState.PLAYING) {
-          const id = event.target.getVideoData().video_id;
           dispatch({
             type: "player-state-change",
             state: YTPlayerState.PLAYING,
-            id,
+            id: videoData.video_id,
           });
         }
         if (event.data === window.YT.PlayerState.PAUSED) {
-          const id = event.target.getVideoData().video_id;
           dispatch({
             type: "player-state-change",
             state: YTPlayerState.PAUSED,
-            id,
+            id: videoData.video_id,
           });
         }
         if (event.data === window.YT.PlayerState.ENDED) {
-          const id = event.target.getVideoData().video_id;
           dispatch({
             type: "player-state-change",
             state: YTPlayerState.ENDED,
-            id,
+            id: videoData.video_id,
           });
           dispatch({ type: "play-next-track" });
         }
@@ -855,6 +898,57 @@ function App() {
     player: player2,
     isReady: player2IsReady,
   } = useYTPlayer(player2Options);
+
+  const mediaSessionAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const setMediaSessionAudioPlaying = useCallback((playing: boolean) => {
+    const audio = mediaSessionAudioRef.current;
+    if (!audio) return;
+
+    if (!playing) {
+      audio.pause();
+      audio.muted = true;
+      audio.volume = 0;
+      return;
+    }
+
+    // Start muted so autoplay policy cannot block the media-session anchor.
+    // The WAV source contains only silence, so unmuting it produces no sound.
+    audio.muted = true;
+    audio.volume = 0;
+    void audio.play().then(
+      () => {
+        audio.muted = false;
+        audio.volume = 1;
+      },
+      () => {
+        // The YouTube player remains usable if the browser rejects the anchor.
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    const audio = document.createElement("audio");
+    const source = createSilentAudioSource();
+    audio.src = source;
+    audio.loop = true;
+    audio.preload = "auto";
+    audio.hidden = true;
+    audio.setAttribute("aria-hidden", "true");
+    document.body.append(audio);
+    mediaSessionAudioRef.current = audio;
+
+    return () => {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      audio.remove();
+      URL.revokeObjectURL(source);
+      mediaSessionAudioRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     logger.debug("state:", state);
@@ -932,8 +1026,10 @@ function App() {
 
     if (yt_id && state.player_state === YTPlayerState.PLAYING) {
       if (player && playerIsReady) {
-        const title = player.getVideoData().title;
-        dispatch({ type: "set-title", title });
+        const title = getVideoData(player)?.title;
+        if (title) {
+          dispatch({ type: "set-title", title });
+        }
 
         // 1 minute of continuous playback triggers play count increase
         t = setTimeout(() => sendMsg({ type: "inc-play-count", yt_id }), 60000);
@@ -952,11 +1048,56 @@ function App() {
   }, [sendMsg, state.player_state, state.player_id, player, playerIsReady]);
 
   useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    const currentTrack =
+      state.track_info?.yt_id === state.current_id
+        ? state.track_info
+        : undefined;
+    const videoTitle =
+      player && playerIsReady ? getVideoData(player)?.title : undefined;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: state.title ?? currentTrack?.title ?? videoTitle ?? "Stereo",
+      artist: currentTrack?.artists.join(", ") ?? "Stereo",
+      album: "Stereo",
+      artwork: state.current_id
+        ? [
+            {
+              src: `https://i.ytimg.com/vi/${state.current_id}/hqdefault.jpg`,
+              sizes: "480x360",
+              type: "image/jpeg",
+            },
+          ]
+        : [],
+    });
+  }, [player, playerIsReady, state.current_id, state.title, state.track_info]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    if (state.player_state === YTPlayerState.PLAYING) {
+      navigator.mediaSession.playbackState = "playing";
+      setMediaSessionAudioPlaying(true);
+    } else if (state.player_state === YTPlayerState.PAUSED) {
+      navigator.mediaSession.playbackState = "paused";
+      setMediaSessionAudioPlaying(false);
+    } else if (state.player_state === YTPlayerState.ENDED) {
+      navigator.mediaSession.playbackState = "none";
+      setMediaSessionAudioPlaying(false);
+    }
+  }, [setMediaSessionAudioPlaying, state.player_state]);
+
+  useEffect(() => {
     if (state.current_id && player && playerIsReady) {
-      const id = player?.getVideoData().video_id;
+      const id = getVideoData(player)?.video_id;
       if (id !== state.current_id) {
-        player?.loadVideoById(state.current_id);
-        player2?.loadVideoById(state.current_id);
+        try {
+          player.loadVideoById(state.current_id);
+          player2?.loadVideoById(state.current_id);
+        } catch {
+          // YouTube can reject commands while replacing the iframe's video.
+        }
       }
     }
   }, [state.current_id, player, playerIsReady, player2]);
@@ -983,6 +1124,23 @@ function App() {
           duration: d,
           current_time: t,
         });
+
+        if (
+          "mediaSession" in navigator &&
+          Number.isFinite(t) &&
+          Number.isFinite(d) &&
+          d > 0
+        ) {
+          try {
+            navigator.mediaSession.setPositionState({
+              duration: d,
+              playbackRate: 1,
+              position: Math.min(Math.max(t, 0), d),
+            });
+          } catch {
+            // Ignore invalid position updates while YouTube is loading a video.
+          }
+        }
       }
 
       if (player && playerIsReady && player2 && player2IsReady) {
@@ -1413,10 +1571,17 @@ function App() {
 
   const fastForward = useCallback(
     (seconds: number) => {
-      if (player && playerIsReady && player2 && player2IsReady) {
+      if (player && playerIsReady) {
         const t = player.getCurrentTime();
-        player.seekTo(t + seconds, true);
-        player2.seekTo(t + seconds, true);
+        const d = player.getDuration();
+        const target = Math.max(
+          0,
+          Math.min(Number.isFinite(d) && d > 0 ? d : Infinity, t + seconds),
+        );
+        player.seekTo(target, true);
+        if (player2 && player2IsReady) {
+          player2.seekTo(target, true);
+        }
       }
     },
     [player, playerIsReady, player2, player2IsReady],
@@ -1532,6 +1697,68 @@ function App() {
     () => dispatch({ type: "play-prev-track" }),
     [dispatch],
   );
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) return;
+
+    const mediaSession = navigator.mediaSession;
+    const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
+      ["play", startPlayback],
+      ["pause", pausePlayback],
+      ["seekbackward", (details) => fastForward(-(details.seekOffset ?? 10))],
+      ["seekforward", (details) => fastForward(details.seekOffset ?? 10)],
+      [
+        "seekto",
+        (details) => {
+          const seekTime = details.seekTime;
+          if (
+            player &&
+            playerIsReady &&
+            seekTime !== undefined &&
+            Number.isFinite(seekTime)
+          ) {
+            player.seekTo(seekTime, details.fastSeek ?? false);
+            if (player2 && player2IsReady) {
+              player2.seekTo(seekTime, details.fastSeek ?? false);
+            }
+          }
+        },
+      ],
+      ["previoustrack", prevTrack],
+      ["nexttrack", nextTrack],
+    ];
+
+    const setHandler = (
+      action: MediaSessionAction,
+      handler: MediaSessionActionHandler | null,
+    ) => {
+      try {
+        mediaSession.setActionHandler(action, handler);
+      } catch {
+        // Browsers may expose Media Session without supporting every action.
+      }
+    };
+
+    for (const [action, handler] of handlers) {
+      setHandler(action, handler);
+    }
+
+    return () => {
+      for (const [action] of handlers) {
+        setHandler(action, null);
+      }
+    };
+  }, [
+    fastForward,
+    nextTrack,
+    pausePlayback,
+    player,
+    player2,
+    player2IsReady,
+    playerIsReady,
+    prevTrack,
+    startPlayback,
+  ]);
 
   const onTrackGridStateUpdate = useCallback(
     (ev: StateUpdatedEvent<ITrack>) => {
