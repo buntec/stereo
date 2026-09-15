@@ -6,7 +6,17 @@ import tseslint from "typescript-eslint";
 import { defineConfig, globalIgnores } from "eslint/config";
 
 export default defineConfig([
-  globalIgnores(["dist", "src/stereo/statics"]),
+  globalIgnores([
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/target/**",
+    "**/vendor/**",
+    "**/vendors/**",
+    "**/third_party/**",
+    "**/third-party/**",
+    "**/generated/**",
+    "src/stereo/statics",
+  ]),
   {
     files: ["**/*.{ts,tsx}"],
     extends: [
@@ -18,6 +28,25 @@ export default defineConfig([
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,
+    },
+  },
+  {
+    files: [
+      "frontend/src/CollectionSelector.tsx",
+      "frontend/src/YouTubeSessionDialog.tsx",
+    ],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
+  {
+    files: [
+      "frontend/src/EditDialog.tsx",
+      "frontend/src/GitRemoteDialog.tsx",
+      "frontend/src/SpotifyPlaylistDialog.tsx",
+    ],
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
     },
   },
 ]);
