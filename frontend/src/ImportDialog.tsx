@@ -18,6 +18,9 @@ type ImportDialogProps = {
   keepUserData: boolean;
   doImport: () => void;
   isValidImportFrom?: boolean;
+  showTrigger?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 function ImportDialog({
@@ -27,8 +30,13 @@ function ImportDialog({
   keepUserData,
   doImport,
   isValidImportFrom,
+  showTrigger = true,
+  open,
+  onOpenChange,
 }: ImportDialogProps) {
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const dialogOpen = open ?? internalOpen;
+  const setDialogOpen = onOpenChange ?? setInternalOpen;
   const closeDialog = () => setDialogOpen(false);
 
   const status =
@@ -40,13 +48,15 @@ function ImportDialog({
 
   return (
     <>
-      <IconButton
-        variant="secondary"
-        label="Import tracks from another collection"
-        tooltip="Import tracks from another collection"
-        icon={<DownloadIcon />}
-        onClick={() => setDialogOpen(true)}
-      />
+      {showTrigger && (
+        <IconButton
+          variant="secondary"
+          label="Import tracks from another collection"
+          tooltip="Import tracks from another collection"
+          icon={<DownloadIcon />}
+          onClick={() => setDialogOpen(true)}
+        />
+      )}
 
       <Dialog
         isOpen={dialogOpen}

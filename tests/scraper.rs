@@ -17,7 +17,7 @@ use stereo_backend::{
     models::TrackSource,
     scraper::{
         self, bp_search_artist, bp_search_tracks, create_client, yt_create_anon_playlist,
-        yt_search_simple,
+        yt_import_playlist, yt_search_simple,
     },
 };
 
@@ -61,6 +61,22 @@ async fn test_yt_anon_playlist() {
         "unexpected url: {url}"
     );
     assert!(url.contains("list="), "url missing list param: {url}");
+}
+
+#[tokio::test]
+#[ignore = "hits real YouTube API"]
+async fn test_yt_import_playlist() {
+    let c = client();
+    let playlist = yt_import_playlist(
+        &c,
+        "https://music.youtube.com/playlist?list=PLZ81rI6YPQ4kgyL6oqkdfbqDU2Zj3LFLN&si=ycq2PwZz1vbRl-CR",
+    )
+    .await
+    .unwrap();
+    assert_eq!(playlist.name, "Indie");
+    assert_eq!(playlist.tracks.len(), 34);
+    assert!(!playlist.tracks[0].yt_id.is_empty());
+    assert!(!playlist.tracks[0].title.is_empty());
 }
 
 // ── Beatport ─────────────────────────────────────────────────────────────────

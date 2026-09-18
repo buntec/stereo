@@ -778,6 +778,293 @@ const YT_CLIENTS: &[(&str, &str)] = &[
     ("ANDROID", "19.09.37"),
 ];
 
+/// Extracts a playlist id from a public YouTube or YouTube Music playlist URL.
+pub fn parse_youtube_playlist_id(input: &str) -> Option<String> {
+    let parsed = url::Url::parse(input.trim()).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    if !(host == "youtube.com" || host.ends_with(".youtube.com")) {
+        return None;
+    }
+
+    let id = parsed
+        .query_pairs()
+        .find(|(key, _)| key == "list")
+        .map(|(_, value)| value.into_owned())?;
+    (!id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    .then_some(id)
+}
+
+fn extract_json_assignment(html: &str, marker: &str) -> Option<serde_json::Value> {
+    let start = html.find(marker)? + marker.len();
+    let json_start = html[start..].find('{')? + start;
+    let bytes = html.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (offset, byte) in bytes[json_start..].iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match byte {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return serde_json::from_slice(&bytes[json_start..=json_start + offset]).ok();
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn text_content(value: &serde_json::Value) -> String {
+    value["content"]
+        .as_str()
+        .or_else(|| value["simpleText"].as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            value["runs"].as_array().map(|runs| {
+                runs.iter()
+                    .filter_map(|run| run["text"].as_str())
+                    .collect::<String>()
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn first_video_id(value: &serde_json::Value) -> Option<String> {
+    if let Some(id) = value["videoId"].as_str() {
+        return Some(id.to_string());
+    }
+    if let Some(sources) = value["sources"].as_array() {
+        for source in sources {
+            if let Some(url) = source["url"].as_str() {
+                if let Some(rest) = url.split("/vi/").nth(1) {
+                    if let Some(id) = rest.split('/').next().filter(|id| !id.is_empty()) {
+                        return Some(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+    value.as_object()?.values().find_map(first_video_id)
+}
+
+fn topic_artist(value: String) -> String {
+    value
+        .strip_suffix(" - Topic")
+        .or_else(|| value.strip_suffix(" – Topic"))
+        .unwrap_or(&value)
+        .trim()
+        .to_string()
+}
+
+fn parse_lockup_track(lockup: &serde_json::Value) -> Option<Track> {
+    let metadata = &lockup["metadata"]["lockupMetadataViewModel"];
+    let title = text_content(&metadata["title"]);
+    if title.is_empty() || lockup["contentImage"]["thumbnailViewModel"].is_null() {
+        return None;
+    }
+
+    let yt_id = first_video_id(lockup)?;
+    let artist = metadata["metadata"]["contentMetadataViewModel"]["metadataRows"]
+        .as_array()
+        .and_then(|rows| rows.first())
+        .and_then(|row| row["metadataParts"].as_array())
+        .and_then(|parts| parts.first())
+        .map(|part| topic_artist(text_content(&part["text"])))
+        .filter(|artist| !artist.is_empty());
+
+    Some(Track {
+        yt_id,
+        title,
+        artists: artist.into_iter().collect(),
+        ..Default::default()
+    })
+}
+
+fn parse_legacy_playlist_video(video: &serde_json::Value) -> Option<Track> {
+    let yt_id = video["videoId"].as_str()?.to_string();
+    let title = text_content(&video["title"]);
+    if title.is_empty() {
+        return None;
+    }
+    let artist = text_content(&video["shortBylineText"]);
+    Some(Track {
+        yt_id,
+        title,
+        artists: (!artist.is_empty())
+            .then(|| topic_artist(artist))
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    })
+}
+
+fn collect_playlist_tracks(value: &serde_json::Value, tracks: &mut Vec<Track>) {
+    if let Some(video) = value.get("playlistVideoRenderer") {
+        if let Some(track) = parse_legacy_playlist_video(video) {
+            tracks.push(track);
+        }
+        return;
+    }
+    if let Some(lockup) = value.get("lockupViewModel") {
+        if let Some(track) = parse_lockup_track(lockup) {
+            tracks.push(track);
+        }
+        return;
+    }
+    if let Some(object) = value.as_object() {
+        for child in object.values() {
+            collect_playlist_tracks(child, tracks);
+        }
+    } else if let Some(array) = value.as_array() {
+        for child in array {
+            collect_playlist_tracks(child, tracks);
+        }
+    }
+}
+
+fn html_config_value(html: &str, key: &str) -> Option<String> {
+    let marker = format!("\"{key}\":\"");
+    let start = html.find(&marker)? + marker.len();
+    let end = html[start..].find('"')? + start;
+    Some(html[start..end].to_string())
+}
+
+fn continuation_token(value: &serde_json::Value) -> Option<String> {
+    value["continuationCommand"]["token"]
+        .as_str()
+        .map(String::from)
+        .or_else(|| value.as_object()?.values().find_map(continuation_token))
+        .or_else(|| value.as_array()?.iter().find_map(continuation_token))
+}
+
+fn playlist_name(data: &serde_json::Value) -> Option<String> {
+    data["metadata"]["playlistMetadataRenderer"]["title"]
+        .as_str()
+        .map(String::from)
+        .or_else(|| {
+            data["sidebar"]["playlistSidebarRenderer"]["items"]
+                .as_array()?
+                .iter()
+                .find_map(|item| {
+                    let title = &item["playlistSidebarPrimaryInfoRenderer"]["title"];
+                    let value = text_content(title);
+                    (!value.is_empty()).then_some(value)
+                })
+        })
+}
+
+fn unique_tracks(tracks: impl IntoIterator<Item = Track>) -> Vec<Track> {
+    let mut seen = std::collections::HashSet::new();
+    tracks
+        .into_iter()
+        .filter(|track| seen.insert(track.yt_id.clone()))
+        .collect()
+}
+
+pub struct YouTubePlaylist {
+    pub name: String,
+    pub tracks: Vec<Track>,
+}
+
+/// Loads a public YouTube playlist page and converts its videos to collection tracks. This uses
+/// the public page's embedded data rather than the authenticated YouTube Data API, so importing
+/// does not require a Google account or API key.
+pub async fn yt_import_playlist(client: &Client, input: &str) -> anyhow::Result<YouTubePlaylist> {
+    let playlist_id =
+        parse_youtube_playlist_id(input).context("not a valid YouTube playlist link")?;
+    let page_url = format!("https://www.youtube.com/playlist?list={playlist_id}");
+    let response = client
+        .get(&page_url)
+        .header("User-Agent", "Mozilla/5.0")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .send()
+        .await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "YouTube returned {}",
+        response.status()
+    );
+    let html = response.text().await?;
+    let data = extract_json_assignment(&html, "var ytInitialData = ")
+        .context("could not read playlist data from YouTube")?;
+
+    let name = playlist_name(&data).unwrap_or_else(|| playlist_id.clone());
+    let mut tracks = Vec::new();
+    collect_playlist_tracks(&data, &mut tracks);
+    let mut token = continuation_token(&data);
+
+    // The first page normally contains the complete playlist for smaller lists. Continue paging
+    // for larger lists, with a bound so a changed YouTube response cannot loop forever.
+    let api_key = html_config_value(&html, "INNERTUBE_API_KEY");
+    let client_version = html_config_value(&html, "INNERTUBE_CLIENT_VERSION");
+    let visitor_data = data["responseContext"]["visitorData"].as_str();
+
+    for _ in 0..20 {
+        let Some(current_token) = token.take() else {
+            break;
+        };
+        let body = serde_json::json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": client_version.as_deref().unwrap_or("2.20240201.00.00"),
+                    "visitorData": visitor_data,
+                }
+            },
+            "continuation": url::form_urlencoded::parse(
+                format!("token={current_token}").as_bytes(),
+            )
+                .next()
+                .map(|(_, value)| value.into_owned())
+                .unwrap_or(current_token),
+        });
+        let endpoint = if let Some(key) = api_key.as_deref() {
+            format!("https://www.youtube.com/youtubei/v1/browse?key={key}")
+        } else {
+            "https://www.youtube.com/youtubei/v1/browse".to_string()
+        };
+        let response = client
+            .post(endpoint)
+            .header("User-Agent", "Mozilla/5.0")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            break;
+        }
+        let page: serde_json::Value = response.json().await?;
+        let before = tracks.len();
+        collect_playlist_tracks(&page, &mut tracks);
+        token = continuation_token(&page);
+        if tracks.len() == before && token.is_none() {
+            break;
+        }
+    }
+
+    let tracks = unique_tracks(tracks);
+    anyhow::ensure!(!tracks.is_empty(), "playlist contains no public videos");
+    Ok(YouTubePlaylist { name, tracks })
+}
+
 /// Videos longer than this are excluded from search results — likely DJ sets/mixes
 /// rather than the single track being matched.
 const MAX_VIDEO_LENGTH_SECS: u32 = 15 * 60;
@@ -2109,5 +2396,61 @@ mod remix_match_tests {
 
         let remix = RawTrack::Bp(bp_track("Just Like Magic", "Someone Remix"));
         assert!(remix.yt_query().contains("Someone Remix"));
+    }
+
+    #[test]
+    fn parses_youtube_playlist_urls() {
+        assert_eq!(
+            parse_youtube_playlist_id(
+                "https://music.youtube.com/playlist?list=PLabc_123&si=ignored"
+            ),
+            Some("PLabc_123".to_string())
+        );
+        assert_eq!(
+            parse_youtube_playlist_id("https://youtube.com/playlist?si=ignored&list=PLabc-123"),
+            Some("PLabc-123".to_string())
+        );
+        assert_eq!(
+            parse_youtube_playlist_id("https://example.com/playlist?list=PLabc123"),
+            None
+        );
+        assert_eq!(
+            parse_youtube_playlist_id("https://youtube.com/watch?v=abc123"),
+            None
+        );
+    }
+
+    #[test]
+    fn parses_embedded_youtube_playlist_tracks() {
+        let data = serde_json::json!({
+            "metadata": { "playlistMetadataRenderer": { "title": "Indie" } },
+            "contents": [{
+                "lockupViewModel": {
+                    "contentImage": {
+                        "thumbnailViewModel": {
+                            "image": { "sources": [{ "url": "https://i.ytimg.com/vi/video123/hq.jpg" }] }
+                        }
+                    },
+                    "metadata": {
+                        "lockupMetadataViewModel": {
+                            "title": { "content": "A song" },
+                            "metadata": {
+                                "contentMetadataViewModel": {
+                                    "metadataRows": [{ "metadataParts": [{ "text": { "content": "An Artist - Topic" } }] }]
+                                }
+                            }
+                        }
+                    }
+                }
+            }]
+        });
+        let mut tracks = Vec::new();
+        collect_playlist_tracks(&data, &mut tracks);
+        let tracks = unique_tracks(tracks);
+
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].yt_id, "video123");
+        assert_eq!(tracks[0].title, "A song");
+        assert_eq!(tracks[0].artists, vec!["An Artist"]);
     }
 }

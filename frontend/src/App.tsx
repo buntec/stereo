@@ -64,12 +64,14 @@ import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
 import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector from "./CollectionSelector.tsx";
-import ImportDialog from "./ImportDialog.tsx";
+import ImportMenu from "./ImportMenu.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
 import {
   YouTubePlaylistDialog,
   YouTubePlaylistProgressDialog,
 } from "./YouTubePlaylistDialog.tsx";
+import { YouTubeFixupProgressDialog } from "./YouTubePlaylistImportDialog.tsx";
+import YouTubePlaylistStagingDialog from "./YouTubePlaylistStagingDialog.tsx";
 import { useYouTubeOAuthCallback } from "./YouTubeSessionDialog.tsx";
 import SpotifyPlaylistDialog, {
   SpotifyPlaylistProgressDialog,
@@ -241,6 +243,14 @@ type State = {
   youtube_playlist_current?: number;
   youtube_playlist_total?: number;
   youtube_playlist_open_url?: string | null;
+
+  youtube_fixup_id?: number;
+  youtube_fixup_name?: string;
+  youtube_fixup_running: boolean;
+  youtube_fixup_current?: number;
+  youtube_fixup_matched?: number;
+  youtube_fixup_total?: number;
+  youtube_fixup_tracks?: ITrack[];
 };
 
 const reducer = (state: State, action: Action): State => {
@@ -521,6 +531,7 @@ const reducer = (state: State, action: Action): State => {
     case "fixup-track-reply":
     case "check-spotify-id-reply":
     case "spotify-playlist-info":
+    case "youtube-playlist-info":
       return { ...state };
 
     case "start-spotify-backfill":
@@ -614,6 +625,58 @@ const reducer = (state: State, action: Action): State => {
         youtube_playlist_total: action.total,
       };
 
+    case "fixup-tracks-progress":
+      if (action.id !== state.youtube_fixup_id) return { ...state };
+      return {
+        ...state,
+        youtube_fixup_current: action.current,
+        youtube_fixup_matched: action.matched,
+        youtube_fixup_total: action.total,
+      };
+
+    case "fixup-tracks-complete":
+      if (action.id !== state.youtube_fixup_id) return { ...state };
+      return {
+        ...state,
+        youtube_fixup_running: false,
+        youtube_fixup_current: action.total,
+        youtube_fixup_matched: action.matched,
+        youtube_fixup_total: action.total,
+        youtube_fixup_tracks:
+          action.tracks.length > 0 ? action.tracks : undefined,
+        notification_kind:
+          action.tracks.length > 0 ? state.notification_kind : "error",
+        notification_msg:
+          action.tracks.length > 0
+            ? state.notification_msg
+            : "Playlist metadata lookup returned no tracks",
+        notification_show:
+          action.tracks.length > 0 ? state.notification_show : true,
+      };
+
+    case "start-youtube-fixup":
+      return {
+        ...state,
+        youtube_fixup_id: action.id,
+        youtube_fixup_name: action.name,
+        youtube_fixup_running: true,
+        youtube_fixup_current: 0,
+        youtube_fixup_matched: 0,
+        youtube_fixup_total: action.total,
+        youtube_fixup_tracks: undefined,
+      };
+
+    case "clear-youtube-fixup-result":
+      return { ...state, youtube_fixup_tracks: undefined };
+
+    case "cancel-youtube-fixup":
+      return {
+        ...state,
+        youtube_fixup_id: undefined,
+        youtube_fixup_running: false,
+        youtube_fixup_tracks: undefined,
+      };
+
     case "youtube-playlist":
       if (action.id !== state.youtube_playlist_id) return { ...state };
       return {
@@ -667,6 +730,7 @@ function App() {
     spotify_playlist_running: false,
     youtube_connected: false,
     youtube_playlist_running: false,
+    youtube_fixup_running: false,
   });
 
   const [settings, setSettings] = useLocalStorage<Settings>(
@@ -1519,6 +1583,51 @@ function App() {
     [requestReply, sendMsg],
   );
 
+  const youtubeFixupReqId = useRef(0);
+  const fixupYouTubePlaylist = useCallback(
+    (name: string, tracks: ITrack[]) => {
+      const id = ++youtubeFixupReqId.current;
+      dispatch({
+        type: "start-youtube-fixup",
+        id,
+        name,
+        total: tracks.length,
+      });
+      sendMsg({ type: "fixup-tracks", id, tracks });
+    },
+    [sendMsg],
+  );
+
+  const cancelYouTubeFixup = useCallback(() => {
+    const id = youtubeFixupReqId.current;
+    dispatch({ type: "cancel-youtube-fixup" });
+    sendMsg({ type: "cancel-fixup-tracks", id });
+  }, [sendMsg]);
+
+  const commitYouTubeStaging = useCallback(
+    (tracks: ITrack[]) => {
+      const name = state.youtube_fixup_name ?? "YouTube playlist";
+      const matched = state.youtube_fixup_matched ?? 0;
+      const total = state.youtube_fixup_total ?? tracks.length;
+      dispatch({ type: "clear-youtube-fixup-result" });
+      void addTracksToCollection(tracks).then((added) => {
+        if (added) {
+          dispatch({
+            type: "notification",
+            message: `Imported ${tracks.length} track${tracks.length === 1 ? "" : "s"} from “${name}” (${matched}/${total} enriched)`,
+            kind: "info",
+          });
+        }
+      });
+    },
+    [
+      addTracksToCollection,
+      state.youtube_fixup_matched,
+      state.youtube_fixup_name,
+      state.youtube_fixup_total,
+    ],
+  );
+
   const addSelectedTracks = useCallback(async () => {
     const selection = state.search_results_selection;
     if (!selection || selection.length === 0) return;
@@ -1528,6 +1637,13 @@ function App() {
       searchGridRef.current?.api.deselectAll();
     }
   }, [addTracksToCollection, state.search_results_selection]);
+
+  const importYouTubePlaylist = useCallback(
+    (name: string, tracks: ITrack[]) => {
+      fixupYouTubePlaylist(name, tracks);
+    },
+    [fixupYouTubePlaylist],
+  );
 
   const addSearchResultTrack = useCallback(
     (track: ITrack) => {
@@ -2255,7 +2371,7 @@ function App() {
               exportAllToSpotifyPlaylist={exportAllToSpotifyPlaylist}
             />
 
-            <ImportDialog
+            <ImportMenu
               setImportFrom={(path: string) =>
                 dispatch({ type: "set-import-from", path })
               }
@@ -2274,6 +2390,8 @@ function App() {
                 }
               }}
               isValidImportFrom={state.import_from_is_valid}
+              requestReply={requestReply}
+              onYouTubeImport={importYouTubePlaylist}
             />
 
             <ColumnsMenu gridRef={gridRef} />
@@ -2375,6 +2493,22 @@ function App() {
         current={state.youtube_playlist_current ?? 0}
         total={state.youtube_playlist_total ?? 0}
         onCancel={cancelYouTubePlaylist}
+      />
+      <YouTubeFixupProgressDialog
+        running={state.youtube_fixup_running}
+        current={state.youtube_fixup_current ?? 0}
+        matched={state.youtube_fixup_matched ?? 0}
+        total={state.youtube_fixup_total ?? 0}
+        onCancel={cancelYouTubeFixup}
+      />
+      <YouTubePlaylistStagingDialog
+        key={`${state.youtube_fixup_id}-${state.youtube_fixup_tracks ? "staged" : "loading"}`}
+        open={state.youtube_fixup_tracks !== undefined}
+        name={state.youtube_fixup_name ?? "YouTube playlist"}
+        tracks={state.youtube_fixup_tracks ?? []}
+        requestReply={requestReply}
+        onCancel={() => dispatch({ type: "clear-youtube-fixup-result" })}
+        onCommit={commitYouTubeStaging}
       />
       <SpotifyPlaylistDialog
         open={spotifyPlaylistOpen}

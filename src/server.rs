@@ -36,6 +36,7 @@ struct SessionState {
     repo: Option<std::path::PathBuf>,
     search_task: Option<tokio::task::JoinHandle<()>>,
     youtube_playlist_task: Option<tokio::task::JoinHandle<()>>,
+    fixup_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SessionState {
@@ -722,6 +723,35 @@ async fn handle_msg(
             });
         }
 
+        MsgClient::GetYouTubePlaylist { id, url } => {
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                match scraper::yt_import_playlist(&client, &url).await {
+                    Ok(playlist) => {
+                        let _ = tx
+                            .send(MsgServer::YouTubePlaylistInfo {
+                                id,
+                                name: Some(playlist.name),
+                                tracks: playlist.tracks,
+                                error_message: None,
+                            })
+                            .await;
+                    }
+                    Err(error) => {
+                        let _ = tx
+                            .send(MsgServer::YouTubePlaylistInfo {
+                                id,
+                                name: None,
+                                tracks: Vec::new(),
+                                error_message: Some(error.to_string()),
+                            })
+                            .await;
+                    }
+                }
+            });
+        }
+
         MsgClient::DeleteTracks { ids } => {
             let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
@@ -1290,6 +1320,72 @@ async fn handle_msg(
                         .send(MsgServer::FixupTrackReply { id, track: None })
                         .await;
                 }
+            }
+        }
+
+        MsgClient::FixupTracks { id, tracks } => {
+            if let Some(task) = state.fixup_task.take() {
+                task.abort();
+            }
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            let total = tracks.len() as i64;
+            let handle = tokio::spawn(async move {
+                let checked = Arc::new(AtomicI64::new(0));
+                let matched = Arc::new(AtomicI64::new(0));
+                let mut fixed: Vec<(usize, Track)> =
+                    futures::stream::iter(tracks.into_iter().enumerate())
+                        .map(|(index, track)| {
+                            let client = Arc::clone(&client);
+                            let tx = tx.clone();
+                            let checked = Arc::clone(&checked);
+                            let matched = Arc::clone(&matched);
+                            async move {
+                                let fallback = track.clone();
+                                let track = match scraper::fixup_track(client, track).await {
+                                    Ok(Some(track)) => {
+                                        matched.fetch_add(1, Ordering::Relaxed);
+                                        track
+                                    }
+                                    Ok(None) => fallback,
+                                    Err(error) => {
+                                        tracing::warn!("Track fixup failed: {error}");
+                                        fallback
+                                    }
+                                };
+                                let current = checked.fetch_add(1, Ordering::Relaxed) + 1;
+                                let _ = tx
+                                    .send(MsgServer::FixupTracksProgress {
+                                        id,
+                                        current,
+                                        matched: matched.load(Ordering::Relaxed),
+                                        total,
+                                    })
+                                    .await;
+                                (index, track)
+                            }
+                        })
+                        .buffer_unordered(4)
+                        .collect()
+                        .await;
+                fixed.sort_by_key(|(index, _)| *index);
+                let matched = matched.load(Ordering::Relaxed);
+                let tracks = fixed.into_iter().map(|(_, track)| track).collect();
+                let _ = tx
+                    .send(MsgServer::FixupTracksComplete {
+                        id,
+                        tracks,
+                        matched,
+                        total,
+                    })
+                    .await;
+            });
+            state.fixup_task = Some(handle);
+        }
+
+        MsgClient::CancelFixupTracks { id: _ } => {
+            if let Some(task) = state.fixup_task.take() {
+                task.abort();
             }
         }
 

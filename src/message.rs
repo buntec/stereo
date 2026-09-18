@@ -110,6 +110,13 @@ pub enum MsgServer {
         id: i64,
         name: Option<String>,
     },
+    #[serde(rename = "youtube-playlist-info")]
+    YouTubePlaylistInfo {
+        id: i64,
+        name: Option<String>,
+        tracks: Vec<Track>,
+        error_message: Option<String>,
+    },
     ValidateTrackReply {
         id: i64,
         is_valid: bool,
@@ -163,6 +170,18 @@ pub enum MsgServer {
     YouTubePlaylistProgress {
         id: i64,
         current: i64,
+        total: i64,
+    },
+    FixupTracksProgress {
+        id: i64,
+        current: i64,
+        matched: i64,
+        total: i64,
+    },
+    FixupTracksComplete {
+        id: i64,
+        tracks: Vec<Track>,
+        matched: i64,
         total: i64,
     },
 }
@@ -349,6 +368,11 @@ pub enum MsgClient {
         id: i64,
         url: String,
     },
+    #[serde(rename = "get-youtube-playlist")]
+    GetYouTubePlaylist {
+        id: i64,
+        url: String,
+    },
     SetRepo {
         path: String,
     },
@@ -378,6 +402,13 @@ pub enum MsgClient {
     FixupTrack {
         id: i64,
         track: Track,
+    },
+    FixupTracks {
+        id: i64,
+        tracks: Vec<Track>,
+    },
+    CancelFixupTracks {
+        id: i64,
     },
     BackfillSpotifyIds {
         id: i64,

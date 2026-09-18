@@ -137,11 +137,14 @@ export type ClientMsg =
       existing_playlist?: string | null;
     }
   | { type: "get-spotify-playlist-info"; id?: number; url: string }
+  | { type: "get-youtube-playlist"; id?: number; url: string }
   | { type: "set-repo"; path: string }
   | { type: "clone-repo"; url: string }
   | { type: "list-repos" }
   | { type: "list-collections" }
   | { type: "fixup-track"; track: ITrack; id?: number }
+  | { type: "fixup-tracks"; id?: number; tracks: ITrack[] }
+  | { type: "cancel-fixup-tracks"; id: number }
   | { type: "backfill-spotify-ids"; id: number }
   | { type: "get-youtube-session"; id?: number }
   | {
@@ -248,6 +251,13 @@ export type ServerMsg =
       id: number;
       name: string | null;
     }
+  | {
+      type: "youtube-playlist-info";
+      id: number;
+      name: string | null;
+      tracks: ITrack[];
+      error_message: string | null;
+    }
   | { type: "repos"; repos: IRepo[] }
   | { type: "collections"; collections: ICollection[] }
   | {
@@ -258,6 +268,20 @@ export type ServerMsg =
       top_labels_four_plus: IScoredName[];
     }
   | { type: "fixup-track-reply"; id: number; track?: ITrack }
+  | {
+      type: "fixup-tracks-progress";
+      id: number;
+      current: number;
+      matched: number;
+      total: number;
+    }
+  | {
+      type: "fixup-tracks-complete";
+      id: number;
+      tracks: ITrack[];
+      matched: number;
+      total: number;
+    }
   | {
       type: "spotify-backfill-progress";
       id: number;
@@ -327,7 +351,10 @@ export type Action =
   | { type: "clear-spotify-playlist-open-url" }
   | { type: "start-youtube-playlist-export"; id: number; total: number }
   | { type: "clear-youtube-playlist-open-url" }
-  | { type: "cancel-youtube-playlist"; reason: "cancelled" | "timeout" };
+  | { type: "cancel-youtube-playlist"; reason: "cancelled" | "timeout" }
+  | { type: "start-youtube-fixup"; id: number; name: string; total: number }
+  | { type: "clear-youtube-fixup-result" }
+  | { type: "cancel-youtube-fixup" };
 
 export type RequestReply = (
   request: ClientMsg,
