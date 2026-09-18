@@ -1301,6 +1301,26 @@ async fn handle_msg(
             }
         }
 
+        MsgClient::SearchShazamSimilar {
+            query_id,
+            track,
+            limit,
+        } => {
+            if let Some(task) = state.search_task.take() {
+                task.abort();
+            }
+            let tx2 = tx.clone();
+            let c = client.clone();
+            let handle = tokio::spawn(scraper::search_shazam_similar(
+                c,
+                tx2,
+                track,
+                query_id,
+                limit.max(0) as usize,
+            ));
+            state.search_task = Some(handle);
+        }
+
         MsgClient::FixupTrack { id, track } => {
             match scraper::fixup_track(client.clone(), track).await {
                 Ok(found @ Some(_)) => {

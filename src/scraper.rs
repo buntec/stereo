@@ -14,7 +14,8 @@ use wreq_util::Emulation;
 use crate::{
     message::MsgServer,
     models::{
-        BPArtist, BPLabel, BPTrack, SCTrack, SCUser, TXTrack, Track, TrackSource, VLTrack, YTVideo,
+        BPArtist, BPLabel, BPTrack, SCTrack, SCUser, ShazamTrack, TXTrack, Track, TrackSource,
+        VLTrack, YTVideo,
     },
     spotify::{self, SpTrack},
     utils::is_original_mix,
@@ -83,6 +84,205 @@ fn get_next_data(html: &str) -> Option<serde_json::Value> {
     let el = doc.select(&sel).next()?;
     let text = el.text().collect::<String>();
     serde_json::from_str(&text).ok()
+}
+
+// ── Shazam ──────────────────────────────────────────────────────────────────
+
+/// Parses a Shazam song link and returns its numeric id plus an absolute URL.
+///
+/// Shazam currently emits `/song/{id}/{slug}` links for this section, but accepting
+/// `/track/{id}/{slug}` as well makes the parser tolerant of older page variants.
+fn parse_shazam_song_link(href: &str) -> Option<(i64, String)> {
+    let url = url::Url::parse(href)
+        .or_else(|_| url::Url::parse(&format!("https://www.shazam.com{href}")))
+        .ok()?;
+    let host = url.host_str()?;
+    if !matches!(host, "www.shazam.com" | "shazam.com") {
+        return None;
+    }
+
+    let mut segments = url.path_segments()?;
+    let kind = segments.next()?;
+    if kind != "song" && kind != "track" {
+        return None;
+    }
+    let id = segments.next()?.parse().ok()?;
+    Some((id, url.to_string()))
+}
+
+/// Extracts the server-rendered `Similar Songs` cards from a Shazam song page.
+///
+/// The title and artist test ids are scoped to the similar-songs section, rather than the
+/// generic `songItem` test id, so this does not accidentally include top tracks, playlists, or
+/// other recommendation sections on the page. Shazam renders an empty link before the visible
+/// title link for its play-button overlay; the first non-empty title is therefore intentional.
+pub fn parse_shazam_similar_tracks(html: &str, limit: usize) -> Vec<ShazamTrack> {
+    if limit == 0 {
+        return vec![];
+    }
+
+    let doc = Html::parse_document(html);
+    let item_sel = Selector::parse("div[data-test-id=\"songItem\"]").unwrap();
+    let title_sel =
+        Selector::parse("a[data-test-id=\"track_userevent_similar-songs_songTitle\"]").unwrap();
+    let artist_sel =
+        Selector::parse("a[data-test-id=\"track_userevent_similar-songs_artistName\"]").unwrap();
+    let mut seen = HashSet::new();
+    let mut tracks = Vec::new();
+
+    for item in doc.select(&item_sel) {
+        let Some(title_link) = item
+            .select(&title_sel)
+            .find(|link| !link.text().collect::<String>().trim().is_empty())
+        else {
+            continue;
+        };
+        let Some(href) = title_link.value().attr("href") else {
+            continue;
+        };
+        let Some((id, url)) = parse_shazam_song_link(href) else {
+            continue;
+        };
+
+        let title = title_link.text().collect::<String>().trim().to_string();
+        let Some(artist_link) = item.select(&artist_sel).next() else {
+            continue;
+        };
+        let artists = artist_link
+            .value()
+            .attr("aria-label")
+            .map(str::to_string)
+            .unwrap_or_else(|| artist_link.text().collect::<String>().trim().to_string());
+        let artists = artists.trim().to_string();
+        if title.is_empty() || artists.is_empty() || !seen.insert(id) {
+            continue;
+        }
+
+        tracks.push(ShazamTrack {
+            id,
+            title,
+            artists: vec![artists],
+            url,
+        });
+        if tracks.len() >= limit {
+            break;
+        }
+    }
+
+    tracks
+}
+
+/// Fetches a Shazam song page and returns its similar-song recommendations.
+///
+/// This intentionally scrapes the page instead of depending on Shazam's private similarities
+/// endpoint. The endpoint is not consistently available for older ids, while the public page
+/// follows old links to the current canonical song and contains the rendered recommendation
+/// cards. `limit` only caps the locally parsed page results; Shazam currently renders the first
+/// recommendation page in the HTML response.
+pub async fn shazam_similar_tracks(
+    client: &Client,
+    song_url: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<ShazamTrack>> {
+    let parsed = url::Url::parse(song_url).context("invalid Shazam song URL")?;
+    anyhow::ensure!(
+        parsed.scheme() == "https"
+            && matches!(
+                parsed.host_str(),
+                Some("www.shazam.com") | Some("shazam.com")
+            ),
+        "expected an https://www.shazam.com/song/... URL"
+    );
+
+    let resp = client
+        .get(song_url)
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .send()
+        .await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "Shazam song page returned {}",
+        resp.status()
+    );
+    let html = resp.text().await?;
+    let tracks = parse_shazam_similar_tracks(&html, limit);
+    tracing::info!(
+        "Shazam returned {} similar tracks for {}",
+        tracks.len(),
+        song_url
+    );
+    Ok(tracks)
+}
+
+/// Finds the Shazam id for a normal collection track by going through Apple Music's public web
+/// search page and Shazam's Apple-id mapping endpoint. Collection tracks do not store a Shazam id,
+/// so this is the bridge used by the row-level "similar songs" action.
+async fn shazam_id_for_track(client: &Client, track: &Track) -> anyhow::Result<i64> {
+    let query = format!("{} {}", track.artists.join(" "), track.title);
+    let response = client
+        .get("https://music.apple.com/us/search")
+        .query(&[("term", query.as_str())])
+        .send()
+        .await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Apple Music search returned {}",
+        response.status()
+    );
+    let html = response.text().await?;
+    let result_sel = Selector::parse("div[data-testid=\"top-search-result\"]").unwrap();
+    let link_sel = Selector::parse("a[data-testid=\"click-action\"]").unwrap();
+    let expected = format!("{} {}", track.artists.join(" "), track.title);
+
+    let apple_id = doc_select_first_apple_song_id(&html, &result_sel, &link_sel, &expected)
+        .context("Apple Music search found no matching song")?;
+    let mapping_url = format!("https://www.shazam.com/services/sd/s/a2st/US/en-US/{apple_id}");
+    let mapping: serde_json::Value = client.get(mapping_url).send().await?.json().await?;
+    mapping
+        .as_object()
+        .and_then(|items| items.values().find_map(|value| value.as_str()))
+        .and_then(|id| id.parse().ok())
+        .context("Shazam did not map the Apple Music song")
+}
+
+fn doc_select_first_apple_song_id(
+    html: &str,
+    result_sel: &Selector,
+    link_sel: &Selector,
+    expected: &str,
+) -> Option<String> {
+    let doc = Html::parse_document(html);
+    doc.select(result_sel)
+        .filter_map(|result| {
+            let label = result.value().attr("aria-label")?;
+            if !label.to_lowercase().contains("song") {
+                return None;
+            }
+            let href = result.select(link_sel).next()?.value().attr("href")?;
+            let url = url::Url::parse(href).ok()?;
+            let apple_id = url
+                .query_pairs()
+                .find(|(key, _)| key == "i")
+                .map(|(_, value)| value.to_string())?;
+            Some((normalized_similarity(expected, label), apple_id))
+        })
+        .max_by(|(left, _), (right, _)| left.total_cmp(right))
+        .map(|(_, apple_id)| apple_id)
+}
+
+/// Resolves a collection track to its Shazam page and returns the page's similar songs.
+pub async fn shazam_similar_tracks_for_track(
+    client: &Client,
+    track: &Track,
+    limit: usize,
+) -> anyhow::Result<Vec<ShazamTrack>> {
+    let shazam_id = shazam_id_for_track(client, track).await?;
+    shazam_similar_tracks(
+        client,
+        &format!("https://www.shazam.com/track/{shazam_id}"),
+        limit,
+    )
+    .await
 }
 
 pub async fn bp_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<BPTrack>> {
@@ -1191,6 +1391,7 @@ enum RawTrack {
     Vl(VLTrack),
     Tx(TXTrack),
     Sp(SpTrack),
+    Sz(ShazamTrack),
 }
 
 /// Words that mark a bracketed segment of a title as a mix/edit identifier, as opposed to
@@ -1258,6 +1459,7 @@ impl RawTrack {
             RawTrack::Vl(t) => Some(t.label.as_str()),
             RawTrack::Tx(t) => Some(t.label.as_str()),
             RawTrack::Sp(_) => None,
+            RawTrack::Sz(_) => None,
         }
         .filter(|label| !label.trim().is_empty())
     }
@@ -1269,6 +1471,7 @@ impl RawTrack {
             RawTrack::Vl(t) => &t.track_name,
             RawTrack::Tx(t) => &t.track_name,
             RawTrack::Sp(t) => &t.track_name,
+            RawTrack::Sz(t) => &t.title,
         }
     }
 
@@ -1279,6 +1482,7 @@ impl RawTrack {
             RawTrack::Vl(t) => &t.artists,
             RawTrack::Tx(t) => &t.artists,
             RawTrack::Sp(t) => &t.artists,
+            RawTrack::Sz(t) => &t.artists,
         }
     }
 
@@ -1292,6 +1496,7 @@ impl RawTrack {
             RawTrack::Vl(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
             RawTrack::Tx(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
             RawTrack::Sp(t) => extract_mix_tag(&t.track_name),
+            RawTrack::Sz(t) => extract_mix_tag(&t.title),
         }
     }
 
@@ -1302,6 +1507,7 @@ impl RawTrack {
             RawTrack::Vl(_) => TrackSource::Volumo,
             RawTrack::Tx(_) => TrackSource::Traxsource,
             RawTrack::Sp(_) => TrackSource::Spotify,
+            RawTrack::Sz(_) => TrackSource::Shazam,
         }
     }
 
@@ -1312,6 +1518,7 @@ impl RawTrack {
             RawTrack::Vl(t) => t.release_date,
             RawTrack::Tx(t) => t.release_date,
             RawTrack::Sp(t) => t.release_date,
+            RawTrack::Sz(_) => NaiveDate::MIN,
         }
     }
 
@@ -1322,6 +1529,12 @@ impl RawTrack {
             RawTrack::Vl(t) => t.into_track(yt_id),
             RawTrack::Tx(t) => t.into_track(yt_id),
             RawTrack::Sp(t) => t.into_track(yt_id),
+            RawTrack::Sz(t) => Track {
+                yt_id,
+                title: t.title,
+                artists: t.artists,
+                ..Default::default()
+            },
         }
     }
 }
@@ -1782,6 +1995,57 @@ async fn stream_raw_tracks(
             }
         }
     }
+}
+
+async fn resolve_shazam_track(client: Arc<Client>, candidate: ShazamTrack) -> Option<Track> {
+    let raw = RawTrack::Sz(candidate);
+    let video = find_best_match(&client, &raw).await?;
+    let base = raw.into_track(video.id);
+    match fixup_track(client, base.clone()).await {
+        Ok(Some(track)) => Some(track),
+        Ok(None) | Err(_) => Some(base),
+    }
+}
+
+/// Fetches Shazam recommendations, resolves each to a playable YouTube video, and enriches the
+/// resulting metadata with the same fixup sources used by the edit dialog.
+pub async fn search_shazam_similar(
+    client: Arc<Client>,
+    tx: mpsc::Sender<MsgServer>,
+    track: Track,
+    query_id: i64,
+    limit: usize,
+) {
+    run_search(&tx, query_id, "search_shazam_similar", || async {
+        let candidates = shazam_similar_tracks_for_track(&client, &track, limit).await?;
+        let mut resolved = stream::iter(candidates)
+            .map(|candidate| resolve_shazam_track(Arc::clone(&client), candidate))
+            .buffer_unordered(4);
+        let mut count = 0;
+
+        while let Some(result) = resolved.next().await {
+            let Some(track) = result else {
+                continue;
+            };
+            if tx
+                .send(MsgServer::SearchResult {
+                    query_id,
+                    track,
+                    source: TrackSource::Shazam,
+                })
+                .await
+                .is_err()
+            {
+                break;
+            }
+            count += 1;
+            if count >= limit {
+                break;
+            }
+        }
+        Ok(())
+    })
+    .await;
 }
 
 pub async fn search_fuzzy(
@@ -2452,5 +2716,65 @@ mod remix_match_tests {
         assert_eq!(tracks[0].yt_id, "video123");
         assert_eq!(tracks[0].title, "A song");
         assert_eq!(tracks[0].artists, vec!["An Artist"]);
+    }
+}
+
+#[cfg(test)]
+mod shazam_tests {
+    use super::*;
+
+    #[test]
+    fn parses_similar_song_cards_and_skips_duplicates() {
+        let html = r#"
+            <section data-test-id="track_impression_similarTracks">
+              <div data-test-id="songItem">
+                <a data-test-id="track_userevent_similar-songs_songTitle"
+                   href="/song/101/first-song"></a>
+                <a data-test-id="track_userevent_similar-songs_songTitle"
+                   href="/song/101/first-song">First &amp; Song</a>
+                <a data-test-id="track_userevent_similar-songs_artistName"
+                   aria-label="An Artist &amp; Friends">An Artist &amp; Friends</a>
+              </div>
+              <div data-test-id="songItem">
+                <a data-test-id="track_userevent_similar-songs_songTitle"
+                   href="https://www.shazam.com/song/202/second-song">Second Song</a>
+                <a data-test-id="track_userevent_similar-songs_artistName">Another Artist</a>
+              </div>
+              <div data-test-id="songItem">
+                <a data-test-id="track_userevent_similar-songs_songTitle"
+                   href="/song/101/first-song">Duplicate</a>
+                <a data-test-id="track_userevent_similar-songs_artistName">Ignored Artist</a>
+              </div>
+              <div data-test-id="songItem">
+                <a data-test-id="track_userevent_top-tracks_songTitle"
+                   href="/song/303/not-similar">Not Similar</a>
+              </div>
+            </section>
+        "#;
+
+        let tracks = parse_shazam_similar_tracks(html, 10);
+
+        assert_eq!(
+            tracks,
+            vec![
+                ShazamTrack {
+                    id: 101,
+                    title: "First & Song".to_string(),
+                    artists: vec!["An Artist & Friends".to_string()],
+                    url: "https://www.shazam.com/song/101/first-song".to_string(),
+                },
+                ShazamTrack {
+                    id: 202,
+                    title: "Second Song".to_string(),
+                    artists: vec!["Another Artist".to_string()],
+                    url: "https://www.shazam.com/song/202/second-song".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_limit_zero_without_html_work() {
+        assert!(parse_shazam_similar_tracks("<div>", 0).is_empty());
     }
 }

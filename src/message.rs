@@ -323,6 +323,11 @@ pub enum MsgClient {
         limit: i64,
         sources: Vec<TrackSource>,
     },
+    SearchShazamSimilar {
+        query_id: i64,
+        track: Track,
+        limit: i64,
+    },
     SearchCancelAll {},
     CollectionContainsId {
         id: i64,

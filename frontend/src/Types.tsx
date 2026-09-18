@@ -3,7 +3,8 @@ export type TrackSource =
   | "soundcloud"
   | "volumo"
   | "traxsource"
-  | "spotify";
+  | "spotify"
+  | "shazam";
 
 export interface ITrack {
   title: string;
@@ -118,6 +119,12 @@ export type ClientMsg =
       days: number;
       limit: number;
       sources: TrackSource[];
+    }
+  | {
+      type: "search-shazam-similar";
+      query_id: number;
+      track: ITrack;
+      limit: number;
     }
   | { type: "get-git-remote" }
   | { type: "set-git-remote"; url: string | null }

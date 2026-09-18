@@ -14,10 +14,11 @@ use tokio::sync::mpsc;
 
 use stereo_backend::{
     message::MsgServer,
-    models::TrackSource,
+    models::{Track, TrackSource},
     scraper::{
-        self, bp_search_artist, bp_search_tracks, create_client, yt_create_anon_playlist,
-        yt_import_playlist, yt_search_simple,
+        self, bp_search_artist, bp_search_tracks, create_client, shazam_similar_tracks,
+        shazam_similar_tracks_for_track, yt_create_anon_playlist, yt_import_playlist,
+        yt_search_simple,
     },
 };
 
@@ -98,6 +99,66 @@ async fn test_bp_search_artist() {
     let artists = bp_search_artist(&c, "kadosh", 10).await.unwrap();
     assert!(!artists.is_empty(), "expected Beatport artist results");
     assert!(!artists[0].display_name.is_empty());
+}
+
+// ── Shazam ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+#[ignore = "hits real Shazam page"]
+async fn test_shazam_similar_tracks() {
+    let c = client();
+    let tracks =
+        shazam_similar_tracks(&c, "https://www.shazam.com/song/1243689211/fiore-and-i", 10)
+            .await
+            .unwrap();
+    assert!(!tracks.is_empty(), "expected Shazam similar-track results");
+    assert!(!tracks[0].title.is_empty());
+    assert!(!tracks[0].artists.is_empty());
+    assert!(tracks[0].url.starts_with("https://www.shazam.com/song/"));
+}
+
+#[tokio::test]
+#[ignore = "hits Apple Music and Shazam pages"]
+async fn test_shazam_similar_tracks_for_track() {
+    let c = client();
+    let track = Track {
+        title: "Jamaican (Bam Bam)".to_string(),
+        artists: vec!["HUGEL & SOLTO (FR)".to_string()],
+        ..Default::default()
+    };
+    let tracks = shazam_similar_tracks_for_track(&c, &track, 5)
+        .await
+        .unwrap();
+    assert!(!tracks.is_empty(), "expected Shazam similar-track results");
+    assert!(!tracks[0].title.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "hits Apple Music, Shazam, YouTube, and metadata APIs"]
+async fn test_search_shazam_similar() {
+    let c = client();
+    let track = Track {
+        title: "Jamaican (Bam Bam)".to_string(),
+        artists: vec!["HUGEL & SOLTO (FR)".to_string()],
+        ..Default::default()
+    };
+    let (tx, mut rx) = mpsc::channel(20);
+    tokio::spawn(scraper::search_shazam_similar(c, tx, track, 1, 1));
+
+    let mut results = vec![];
+    while let Some(message) = rx.recv().await {
+        match message {
+            MsgServer::SearchResult { track, source, .. } => {
+                results.push((track, source));
+            }
+            MsgServer::SearchComplete { .. } => break,
+            _ => {}
+        }
+    }
+
+    assert!(!results.is_empty(), "expected a playable Shazam result");
+    assert_eq!(results[0].1, TrackSource::Shazam);
+    assert!(!results[0].0.yt_id.is_empty());
 }
 
 // ── Integrated search (Beatport + YouTube) ───────────────────────────────────

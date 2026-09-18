@@ -250,6 +250,14 @@ pub struct YTVideo {
     pub duration_secs: Option<u32>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShazamTrack {
+    pub id: i64,
+    pub title: String,
+    pub artists: Vec<String>,
+    pub url: String,
+}
+
 /// Which search backend a `SearchResult` track was found on. Purely informational for the
 /// client — not persisted on `Track`/in the collection database. Also used (client → server)
 /// to select which backends a search should query.
@@ -261,6 +269,7 @@ pub enum TrackSource {
     Volumo,
     Traxsource,
     Spotify,
+    Shazam,
 }
 
 pub struct MBRecording {

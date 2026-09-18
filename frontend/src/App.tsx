@@ -403,7 +403,12 @@ const reducer = (state: State, action: Action): State => {
     }
 
     case "clear-search-results":
-      return { ...state, search_results: undefined, search_busy: false };
+      return {
+        ...state,
+        search_results: undefined,
+        search_results_selection: undefined,
+        search_busy: false,
+      };
 
     case "search-result": {
       const track = { ...action.track, source: action.source };
@@ -1943,6 +1948,24 @@ function App() {
     [dispatch, sendMsg, state.search_limit, state.search_sources],
   );
 
+  const handleShazamSimilar = useCallback(
+    (track: ITrack) => {
+      const query_id = ++queryId.current;
+      const query = `Shazam similar to: ${track.artists.join(", ")} - ${track.title}`;
+      dispatch({ type: "set-search-kind", kind: "fuzzy" });
+      dispatch({ type: "search-box-input", input: query });
+      dispatch({ type: "clear-search-results" });
+      dispatch({ type: "set-search-busy" });
+      sendMsg({
+        type: "search-shazam-similar",
+        query_id,
+        track,
+        limit: state.search_limit,
+      });
+    },
+    [dispatch, sendMsg, state.search_limit],
+  );
+
   useKeyboardActions({
     "0": () => updateCurrentRating(null),
     "1": () => updateCurrentRating(1),
@@ -2469,6 +2492,7 @@ function App() {
               onRowCountChange={setFilteredRowCount}
               onArtistClick={handleArtistClick}
               onLabelClick={handleLabelClick}
+              onShazamSimilar={handleShazamSimilar}
               appearance={settings.appearance}
             />
           )}

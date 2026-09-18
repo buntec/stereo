@@ -45,7 +45,12 @@ import {
   type Dispatch,
 } from "react";
 
-import { PlayIcon, PlusIcon, ColumnsIcon } from "@radix-ui/react-icons";
+import {
+  PlayIcon,
+  PlusIcon,
+  ColumnsIcon,
+  MagnifyingGlassIcon,
+} from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import logger from "./logger.tsx";
@@ -209,6 +214,14 @@ const PlayControlRenderer: React.FC<
         label="Play"
         tooltip="Play"
         icon={<PlayIcon />}
+      />
+      <IconButton
+        variant="ghost"
+        size="sm"
+        onClick={() => context.onShazamSimilar(data)}
+        label="Find similar songs on Shazam"
+        tooltip="Find similar songs on Shazam"
+        icon={<MagnifyingGlassIcon />}
       />
 
       <EditTrackDialog
@@ -401,6 +414,8 @@ export const SearchResultsGrid = ({
             return "Volumo";
           case "traxsource":
             return "Traxsource";
+          case "shazam":
+            return "Shazam";
           default:
             return params.value ?? "";
         }
@@ -617,6 +632,7 @@ interface TracksGridProps {
   onRowCountChange?: (count: number) => void;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
+  onShazamSimilar: (track: ITrack) => void;
   appearance: "light" | "dark";
 }
 
@@ -627,6 +643,7 @@ type TracksGridContext = {
   sendMsg: (msg: ClientMsg) => void;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
+  onShazamSimilar: (track: ITrack) => void;
 };
 
 export const TracksGrid = ({
@@ -643,6 +660,7 @@ export const TracksGrid = ({
   onRowCountChange,
   onArtistClick,
   onLabelClick,
+  onShazamSimilar,
   appearance,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
@@ -650,7 +668,7 @@ export const TracksGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: PlayControlRenderer,
-      width: 140,
+      width: 180,
     },
     {
       field: "title",
@@ -825,6 +843,7 @@ export const TracksGrid = ({
       sendMsg,
       onArtistClick,
       onLabelClick,
+      onShazamSimilar,
     };
   }, [
     updateRatingAndRefresh,
@@ -833,6 +852,7 @@ export const TracksGrid = ({
     sendMsg,
     onArtistClick,
     onLabelClick,
+    onShazamSimilar,
   ]);
 
   const onSelectionChanged = useCallback(
