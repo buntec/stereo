@@ -58,6 +58,14 @@ import { MenuCheck } from "./Menu.tsx";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
+const fixedWidth = (width: number): ColDef => ({
+  width,
+  minWidth: width,
+  maxWidth: width,
+  resizable: false,
+  suppressAutoSize: true,
+});
+
 const ArtistCellRenderer = (params: ICellRendererParams<ITrack, string[]>) => {
   const artists: string[] = params.value ?? [];
   const onArtistClick: ((name: string) => void) | undefined =
@@ -192,7 +200,7 @@ const PlayControlRenderer: React.FC<
   if (!data || !value) return null;
 
   return (
-    <HStack gap={3} vAlign="center" className="track-control-cell">
+    <HStack gap={1} vAlign="center" className="track-control-cell">
       <Tooltip content="Open in YouTube">
         <a
           className="yt-thumbnail-link"
@@ -385,18 +393,19 @@ export const SearchResultsGrid = ({
       sortable: true,
       initialSort: "desc",
       filter: true,
-      width: 120,
+      ...fixedWidth(120),
     },
     {
       field: "genre",
       headerName: "Genre",
       filter: true,
+      ...fixedWidth(200),
     },
     {
       field: "bpm",
       headerName: "BPM",
       filter: true,
-      width: 80,
+      ...fixedWidth(80),
       cellStyle: { textAlign: "right" },
     },
     {
@@ -700,31 +709,33 @@ export const TracksGrid = ({
       sortable: true,
       initialSort: "desc",
       filter: "agDateColumnFilter",
-      width: 120,
+      ...fixedWidth(120),
     },
     {
       field: "genre",
       headerName: "Genre",
       filter: true,
+      ...fixedWidth(200),
     },
     {
       field: "bpm",
       headerName: "BPM",
       filter: "agNumberColumnFilter",
-      width: 80,
+      ...fixedWidth(80),
       cellStyle: { textAlign: "right" },
     },
     {
       field: "key",
       headerName: "Key",
       filter: true,
-      width: 80,
+      ...fixedWidth(100),
     },
     {
       field: "rating",
       headerName: "Rating",
       filter: "agNumberColumnFilter",
       cellRenderer: RatingRenderer,
+      ...fixedWidth(130),
     },
     {
       field: "play_count",
@@ -733,7 +744,12 @@ export const TracksGrid = ({
       width: 80,
       cellStyle: { textAlign: "right" },
     },
-    { field: "last_played", headerName: "Last played", filter: true },
+    {
+      field: "last_played",
+      headerName: "Last played",
+      filter: true,
+      ...fixedWidth(130),
+    },
     {
       field: "bp_id",
       headerName: "Beatport ID",
