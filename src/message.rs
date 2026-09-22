@@ -165,6 +165,7 @@ pub enum MsgServer {
     YouTubePlaylist {
         id: i64,
         url: Option<String>,
+        error_message: Option<String>,
     },
     #[serde(rename = "youtube-playlist-progress")]
     YouTubePlaylistProgress {

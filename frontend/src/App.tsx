@@ -691,7 +691,7 @@ const reducer = (state: State, action: Action): State => {
         notification_kind: action.url ? "info" : "error",
         notification_msg: action.url
           ? "Created YouTube playlist"
-          : "Failed to create YouTube playlist",
+          : (action.error_message ?? "Failed to create YouTube playlist"),
         notification_show: true,
       };
 
@@ -780,7 +780,9 @@ function App() {
       dispatch({ type: "repos", repos: [] });
       dispatch({
         type: "notification",
-        message: `WebSocket connection closed (${ev.reason}${ev.code})`,
+        message: ev.reason
+          ? `WebSocket connection closed: ${ev.reason} (code ${ev.code})`
+          : `WebSocket connection closed (code ${ev.code})`,
         kind: "warn",
       });
     },

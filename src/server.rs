@@ -1165,17 +1165,23 @@ async fn handle_msg(
                 match result {
                     Ok(url) => {
                         let _ = tx
-                            .send(MsgServer::YouTubePlaylist { id, url: Some(url) })
+                            .send(MsgServer::YouTubePlaylist {
+                                id,
+                                url: Some(url),
+                                error_message: None,
+                            })
                             .await;
                     }
                     Err(e) => {
-                        notify(
-                            &tx,
-                            &format!("Failed to create YouTube playlist: {e}"),
-                            "error",
-                        )
-                        .await;
-                        let _ = tx.send(MsgServer::YouTubePlaylist { id, url: None }).await;
+                        let _ = tx
+                            .send(MsgServer::YouTubePlaylist {
+                                id,
+                                url: None,
+                                error_message: Some(format!(
+                                    "Failed to create YouTube playlist: {e}"
+                                )),
+                            })
+                            .await;
                     }
                 }
             });
@@ -1186,7 +1192,13 @@ async fn handle_msg(
             if let Some(task) = state.youtube_playlist_task.take() {
                 task.abort();
             }
-            let _ = tx.send(MsgServer::YouTubePlaylist { id, url: None }).await;
+            let _ = tx
+                .send(MsgServer::YouTubePlaylist {
+                    id,
+                    url: None,
+                    error_message: None,
+                })
+                .await;
         }
 
         MsgClient::CreateYtAnonPlaylist { id, yt_ids } => {

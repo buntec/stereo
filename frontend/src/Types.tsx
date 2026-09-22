@@ -312,6 +312,7 @@ export type ServerMsg =
       type: "youtube-playlist";
       id: number;
       url: string | null;
+      error_message: string | null;
     }
   | {
       type: "youtube-playlist-progress";
