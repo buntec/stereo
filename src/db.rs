@@ -158,6 +158,59 @@ pub async fn insert_tracks(
     Ok(())
 }
 
+/// Writes `track`'s metadata (everything but the user data: rating, play count, last played) to
+/// the row currently keyed by `old_yt_id`, re-keying it if `track.yt_id` differs. Fails rather
+/// than overwrite a different track that already has the new id.
+pub async fn update_track_metadata(
+    pool: &SqlitePool,
+    old_yt_id: &str,
+    track: &Track,
+) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    if track.yt_id != old_yt_id {
+        let taken = sqlx::query("SELECT 1 FROM tracks WHERE yt_id = ?")
+            .bind(&track.yt_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_some();
+        anyhow::ensure!(
+            !taken,
+            "another track with YouTube ID {} is already in the collection",
+            track.yt_id
+        );
+    }
+    let updated = sqlx::query(
+        "UPDATE tracks SET yt_id = ?, bp_id = ?, sp_id = ?, mb_id = ?, title = ?, mix_name = ?, \
+         artists = ?, release_date = ?, label = ?, album = ?, length = ?, bpm = ?, genre = ?, \
+         key = ?, mood = ? WHERE yt_id = ?",
+    )
+    .bind(&track.yt_id)
+    .bind(track.bp_id)
+    .bind(&track.sp_id)
+    .bind(&track.mb_id)
+    .bind(&track.title)
+    .bind(&track.mix_name)
+    .bind(track.artists_json())
+    .bind(track.release_date_str())
+    .bind(&track.label)
+    .bind(&track.album)
+    .bind(track.length)
+    .bind(track.bpm)
+    .bind(&track.genre)
+    .bind(&track.key)
+    .bind(&track.mood)
+    .bind(old_yt_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    anyhow::ensure!(
+        updated > 0,
+        "track {old_yt_id} is no longer in the collection"
+    );
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn delete_track(pool: &SqlitePool, yt_id: &str) -> anyhow::Result<()> {
     sqlx::query("DELETE FROM tracks WHERE yt_id = ?")
         .bind(yt_id)
@@ -197,6 +250,23 @@ pub async fn track_exists(pool: &SqlitePool, yt_id: &str) -> anyhow::Result<bool
         .fetch_optional(pool)
         .await?;
     Ok(row.is_some())
+}
+
+/// The subset of `yt_ids` present in the collection, in no particular order.
+pub async fn existing_yt_ids(pool: &SqlitePool, yt_ids: &[String]) -> anyhow::Result<Vec<String>> {
+    if yt_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    // One bound JSON array instead of a placeholder per id, which could exceed SQLite's
+    // host-parameter limit for a large search.
+    let rows =
+        sqlx::query("SELECT yt_id FROM tracks WHERE yt_id IN (SELECT value FROM json_each(?))")
+            .bind(serde_json::to_string(yt_ids)?)
+            .fetch_all(pool)
+            .await?;
+    rows.iter()
+        .map(|r| r.try_get::<String, _>("yt_id").map_err(Into::into))
+        .collect()
 }
 
 pub async fn get_all_yt_ids(pool: &SqlitePool) -> anyhow::Result<HashSet<String>> {

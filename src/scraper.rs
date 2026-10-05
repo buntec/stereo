@@ -1950,6 +1950,36 @@ fn interleave(
     out
 }
 
+/// Unwraps one backend's results, recording a failure instead of silently returning nothing.
+fn source_results<T>(
+    result: anyhow::Result<Vec<T>>,
+    source: &str,
+    what: &str,
+    failures: &mut Vec<String>,
+) -> Vec<T> {
+    result.unwrap_or_else(|e| {
+        tracing::warn!("{source} {what} failed: {e}");
+        failures.push(format!("{source}: {e}"));
+        vec![]
+    })
+}
+
+/// Tells the client which backends failed, so missing results aren't mistaken for "no matches".
+async fn report_source_failures(tx: &mpsc::Sender<MsgServer>, failures: &[String]) {
+    if failures.is_empty() {
+        return;
+    }
+    let _ = tx
+        .send(MsgServer::Notification {
+            message: format!(
+                "Some sources failed, results may be incomplete — {}",
+                failures.join("; ")
+            ),
+            kind: "warn".into(),
+        })
+        .await;
+}
+
 async fn run_search<F, Fut>(tx: &mpsc::Sender<MsgServer>, query_id: i64, label: &str, f: F)
 where
     F: FnOnce() -> Fut,
@@ -1968,6 +1998,7 @@ where
 }
 
 /// Resolves a YouTube match for each raw track and streams it, stopping at `limit` results.
+/// The same video found via several backends is only sent once.
 async fn stream_raw_tracks(
     client: &Client,
     tx: &mpsc::Sender<MsgServer>,
@@ -1975,29 +2006,7 @@ async fn stream_raw_tracks(
     limit: usize,
     raw_tracks: Vec<RawTrack>,
 ) {
-    let mut count = 0;
-    for raw in raw_tracks {
-        let best = find_best_match(client, &raw).await;
-        if let Some(vid) = best {
-            let source = raw.source();
-            let track = raw.into_track(vid.id);
-            if tx
-                .send(MsgServer::SearchResult {
-                    query_id,
-                    track,
-                    source,
-                })
-                .await
-                .is_err()
-            {
-                break;
-            }
-            count += 1;
-            if count >= limit {
-                break;
-            }
-        }
-    }
+    stream_matched_tracks(client, tx, query_id, &mut HashSet::new(), limit, raw_tracks).await;
 }
 
 async fn resolve_shazam_track(client: Arc<Client>, candidate: ShazamTrack) -> Option<Track> {
@@ -2097,26 +2106,13 @@ pub async fn search_fuzzy(
                 }
             },
         );
-        let bp_tracks = bp_res.unwrap_or_else(|e| {
-            tracing::warn!("Beatport track search failed: {e}");
-            vec![]
-        });
-        let sc_tracks = sc_res.unwrap_or_else(|e| {
-            tracing::warn!("SoundCloud track search failed: {e}");
-            vec![]
-        });
-        let vl_tracks = vl_res.unwrap_or_else(|e| {
-            tracing::warn!("Volumo track search failed: {e}");
-            vec![]
-        });
-        let tx_tracks = tx_res.unwrap_or_else(|e| {
-            tracing::warn!("Traxsource track search failed: {e}");
-            vec![]
-        });
-        let sp_tracks = sp_res.unwrap_or_else(|e| {
-            tracing::warn!("Spotify track search failed: {e}");
-            vec![]
-        });
+        let mut failures = Vec::new();
+        let bp_tracks = source_results(bp_res, "Beatport", "track search", &mut failures);
+        let sc_tracks = source_results(sc_res, "SoundCloud", "track search", &mut failures);
+        let vl_tracks = source_results(vl_res, "Volumo", "track search", &mut failures);
+        let tx_tracks = source_results(tx_res, "Traxsource", "track search", &mut failures);
+        let sp_tracks = source_results(sp_res, "Spotify", "track search", &mut failures);
+        report_source_failures(&tx, &failures).await;
         stream_raw_tracks(
             &client,
             &tx,
@@ -2182,26 +2178,13 @@ pub async fn search_by_label(
                 }
             },
         );
-        let bp_tracks = bp_res.unwrap_or_else(|e| {
-            tracing::warn!("Beatport label search failed: {e}");
-            vec![]
-        });
-        let sc_tracks = sc_res.unwrap_or_else(|e| {
-            tracing::warn!("SoundCloud label search failed: {e}");
-            vec![]
-        });
-        let vl_tracks = vl_res.unwrap_or_else(|e| {
-            tracing::warn!("Volumo label search failed: {e}");
-            vec![]
-        });
-        let tx_tracks = tx_res.unwrap_or_else(|e| {
-            tracing::warn!("Traxsource label search failed: {e}");
-            vec![]
-        });
-        let sp_tracks = sp_res.unwrap_or_else(|e| {
-            tracing::warn!("Spotify label search failed: {e}");
-            vec![]
-        });
+        let mut failures = Vec::new();
+        let bp_tracks = source_results(bp_res, "Beatport", "label search", &mut failures);
+        let sc_tracks = source_results(sc_res, "SoundCloud", "label search", &mut failures);
+        let vl_tracks = source_results(vl_res, "Volumo", "label search", &mut failures);
+        let tx_tracks = source_results(tx_res, "Traxsource", "label search", &mut failures);
+        let sp_tracks = source_results(sp_res, "Spotify", "label search", &mut failures);
+        report_source_failures(&tx, &failures).await;
         stream_raw_tracks(
             &client,
             &tx,
@@ -2267,26 +2250,13 @@ pub async fn search_by_artist(
                 }
             },
         );
-        let bp_tracks = bp_res.unwrap_or_else(|e| {
-            tracing::warn!("Beatport artist search failed: {e}");
-            vec![]
-        });
-        let sc_tracks = sc_res.unwrap_or_else(|e| {
-            tracing::warn!("SoundCloud artist search failed: {e}");
-            vec![]
-        });
-        let vl_tracks = vl_res.unwrap_or_else(|e| {
-            tracing::warn!("Volumo artist search failed: {e}");
-            vec![]
-        });
-        let tx_tracks = tx_res.unwrap_or_else(|e| {
-            tracing::warn!("Traxsource artist search failed: {e}");
-            vec![]
-        });
-        let sp_tracks = sp_res.unwrap_or_else(|e| {
-            tracing::warn!("Spotify artist search failed: {e}");
-            vec![]
-        });
+        let mut failures = Vec::new();
+        let bp_tracks = source_results(bp_res, "Beatport", "artist search", &mut failures);
+        let sc_tracks = source_results(sc_res, "SoundCloud", "artist search", &mut failures);
+        let vl_tracks = source_results(vl_res, "Volumo", "artist search", &mut failures);
+        let tx_tracks = source_results(tx_res, "Traxsource", "artist search", &mut failures);
+        let sp_tracks = source_results(sp_res, "Spotify", "artist search", &mut failures);
+        report_source_failures(&tx, &failures).await;
         stream_raw_tracks(
             &client,
             &tx,
@@ -2399,15 +2369,14 @@ async fn gather_new_release_raw_tracks(
         .collect()
 }
 
-/// Like `stream_raw_tracks`, but skips anything whose resolved YouTube id is already in `seen`
-/// — which is seeded with the ids already in the collection, so this both excludes existing
-/// tracks and de-duplicates results found via more than one artist/label.
-/// YouTube-matches are resolved `NEW_RELEASES_MATCH_CONCURRENCY`-wide via `buffered`, which
-/// preserves `raw_tracks`' order (already sorted newest-first) while overlapping the network
-/// round-trips — the dominant cost here, since each of up to `NEW_RELEASES_LIMIT` candidates
-/// needs its own YouTube search. The dedup/send loop itself stays sequential since it's cheap
-/// and mutates `seen`.
-async fn stream_new_release_tracks(
+/// Streams raw tracks' YouTube matches, skipping anything whose resolved YouTube id is already in
+/// `seen` — for new releases it is seeded with the ids already in the collection, so this both
+/// excludes existing tracks and de-duplicates results found via more than one source/artist/label.
+/// YouTube-matches are resolved `MATCH_CONCURRENCY`-wide via `buffered`, which preserves
+/// `raw_tracks`' order while overlapping the network round-trips — the dominant cost here, since
+/// every candidate needs its own YouTube search. The dedup/send loop itself stays sequential
+/// since it's cheap and mutates `seen`.
+async fn stream_matched_tracks(
     client: &Client,
     tx: &mpsc::Sender<MsgServer>,
     query_id: i64,
@@ -2420,7 +2389,7 @@ async fn stream_new_release_tracks(
             let vid = find_best_match(client, &raw).await;
             (raw, vid)
         })
-        .buffered(NEW_RELEASES_MATCH_CONCURRENCY);
+        .buffered(MATCH_CONCURRENCY);
 
     let mut count = 0;
     while let Some((raw, vid)) = matches.next().await {
@@ -2455,7 +2424,7 @@ async fn stream_new_release_tracks(
 // that into a losing battle. YouTube isn't as sensitive, so its match-resolution step below
 // gets a wider budget.
 const NEW_RELEASES_CONCURRENCY: usize = 8;
-const NEW_RELEASES_MATCH_CONCURRENCY: usize = 12;
+const MATCH_CONCURRENCY: usize = 12;
 // Safety cap regardless of what the client asks for, since every result costs a YouTube search.
 const NEW_RELEASES_MAX_LIMIT: usize = 1000;
 
@@ -2513,7 +2482,7 @@ pub async fn search_new_releases(
         raw_tracks.sort_by_key(|t| std::cmp::Reverse(t.release_date()));
 
         let mut seen = existing_yt_ids;
-        stream_new_release_tracks(&client, &tx, query_id, &mut seen, limit, raw_tracks).await;
+        stream_matched_tracks(&client, &tx, query_id, &mut seen, limit, raw_tracks).await;
         Ok(())
     })
     .await;

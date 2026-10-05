@@ -85,6 +85,11 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
 
       ws.current.onclose = (event: CloseEvent) => {
         logger.info("WebSocket closed: ", event);
+        // Each connection starts its own heartbeat on open.
+        if (heartbeatInterval.current) {
+          clearInterval(heartbeatInterval.current);
+          heartbeatInterval.current = null;
+        }
         callbacks.current.forEach((cb) => cb({ type: "websocket-closed" }));
         callbacks.current.clear();
         setIsReady(false);

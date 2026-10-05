@@ -38,6 +38,7 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Divider } from "@astryxdesign/core/Divider";
+import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 
 import type {
   ITrack,
@@ -63,7 +64,7 @@ import {
 import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
 import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
-import CollectionSelector from "./CollectionSelector.tsx";
+import CollectionSelector, { collectionLabel } from "./CollectionSelector.tsx";
 import ImportMenu from "./ImportMenu.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
 import {
@@ -529,7 +530,7 @@ const reducer = (state: State, action: Action): State => {
     case "tracks":
     case "row-index":
     case "heartbeat":
-    case "collection-contains-id-response":
+    case "collection-contains-ids-response":
     case "path-completions":
     case "validate-track-reply":
     case "fixup-track-reply":
@@ -715,7 +716,9 @@ const reducer = (state: State, action: Action): State => {
       };
 
     default:
-      throw new Error(`missing handler for action: ${JSON.stringify(action)}`);
+      // Don't take down the whole UI over a message type this build doesn't know.
+      logger.warn(`missing handler for action: ${JSON.stringify(action)}`);
+      return state;
   }
 };
 
@@ -777,8 +780,13 @@ function App() {
     [dispatch],
   );
 
+  // The repo selected on the current connection. The server forgets it when the socket drops,
+  // so it is reset on close and re-sent once the new connection lists its repos.
+  const activeRepo = useRef<string | null>(null);
+
   const wsOnClose = useCallback(
     (ev: CloseEvent) => {
+      activeRepo.current = null;
       dispatch({ type: "repos", repos: [] });
       dispatch({
         type: "notification",
@@ -1032,7 +1040,12 @@ function App() {
     if (target !== settings.repoPath) {
       setSettings({ ...settings, repoPath: target });
     }
-    sendMsg({ type: "set-repo", path: target });
+    // The repo list is re-sent after clones, remote changes etc.; re-selecting the same repo
+    // would close the open collection and run another sync for nothing.
+    if (activeRepo.current !== target) {
+      activeRepo.current = target;
+      sendMsg({ type: "set-repo", path: target });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.repos]);
 
@@ -1329,14 +1342,39 @@ function App() {
     gridRef.current?.api.deselectAll();
   }, []);
 
+  // Deletes wait for confirmation in an AlertDialog.
+  const [pendingDelete, setPendingDelete] = useState<{
+    ids: string[];
+    description: string;
+    // Deleting the playing track also skips to the next one.
+    isNowPlaying: boolean;
+  } | null>(null);
+
   const deleteSelectedTracks = useCallback(() => {
     const selectedRows = gridRef.current?.api.getSelectedRows();
-    if (selectedRows) {
-      const ids = selectedRows.map((t) => t.yt_id);
-      sendMsg({ type: "delete-tracks", ids });
+    if (selectedRows && selectedRows.length > 0) {
+      const what =
+        selectedRows.length === 1
+          ? `“${selectedRows[0].title}”`
+          : `${selectedRows.length} tracks`;
+      setPendingDelete({
+        ids: selectedRows.map((t) => t.yt_id),
+        description: `This removes ${what} from ${collectionLabel(settings.collectionPath)}, including ratings and play counts.`,
+        isNowPlaying: false,
+      });
+    }
+  }, [settings.collectionPath]);
+
+  const confirmDelete = useCallback(() => {
+    if (!pendingDelete) return;
+    if (pendingDelete.isNowPlaying) {
+      dispatch({ type: "play-next-track" });
+    } else {
       gridRef.current?.api.deselectAll();
     }
-  }, [sendMsg]);
+    sendMsg({ type: "delete-tracks", ids: pendingDelete.ids });
+    setPendingDelete(null);
+  }, [pendingDelete, sendMsg]);
 
   const exportSelectedTracksToCollection = useCallback(
     (collection: string) => {
@@ -1553,26 +1591,21 @@ function App() {
     async (tracks: ITrack[]) => {
       if (tracks.length === 0) return true;
 
-      const results = await Promise.all(
-        tracks.map(
-          (track) =>
-            new Promise<{ track: ITrack; exists: boolean }>((resolve) => {
-              requestReply(
-                { type: "collection-contains-id", yt_id: track.yt_id },
-                (msg) =>
-                  resolve({
-                    track,
-                    exists: "contains_id" in msg ? msg.contains_id : false,
-                  }),
-              );
-            }),
-        ),
-      );
+      const contained = await new Promise<Set<string> | null>((resolve) => {
+        requestReply(
+          {
+            type: "collection-contains-ids",
+            yt_ids: tracks.map((t) => t.yt_id),
+          },
+          (msg) => resolve("contained" in msg ? new Set(msg.contained) : null),
+        );
+      });
+      // Without knowing what's already there, adding (which overwrites) isn't safe; the
+      // server has already reported why the check failed.
+      if (contained === null) return false;
 
-      const conflicts = results.filter((r) => r.exists).map((r) => r.track);
-      const nonConflicting = results
-        .filter((r) => !r.exists)
-        .map((r) => r.track);
+      const conflicts = tracks.filter((t) => contained.has(t.yt_id));
+      const nonConflicting = tracks.filter((t) => !contained.has(t.yt_id));
 
       if (conflicts.length === 0) {
         if (nonConflicting.length > 0) {
@@ -2012,6 +2045,7 @@ function App() {
               repoPath={settings.repoPath}
               setRepoPath={(path) => {
                 setSettings({ ...settings, repoPath: path });
+                activeRepo.current = path;
                 sendMsg({ type: "set-repo", path });
               }}
               onClone={(url) => {
@@ -2021,6 +2055,8 @@ function App() {
                   if (msg.type === "clone-repo-reply" && "path" in msg) {
                     const path = msg.path;
                     if (path) {
+                      // The server has already switched to (and is syncing) the clone.
+                      activeRepo.current = path;
                       setSettings((s) => ({ ...s, repoPath: path }));
                     }
                   }
@@ -2138,10 +2174,12 @@ function App() {
                       }
                     }}
                     onDeleteFromCollection={() => {
-                      if (state.current_id) {
-                        const idToDelete = state.current_id;
-                        dispatch({ type: "play-next-track" });
-                        sendMsg({ type: "delete-tracks", ids: [idToDelete] });
+                      if (state.current_id && state.track_info) {
+                        setPendingDelete({
+                          ids: [state.current_id],
+                          description: `This removes “${state.track_info.title}” from ${collectionLabel(settings.collectionPath)}, including its rating and play count.`,
+                          isNowPlaying: true,
+                        });
                       }
                     }}
                   />
@@ -2560,6 +2598,24 @@ function App() {
           onLabelClick={handleLabelClick}
         />
       )}
+      <AlertDialog
+        isOpen={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title={
+          pendingDelete && pendingDelete.ids.length > 1
+            ? "Delete tracks?"
+            : "Delete track?"
+        }
+        description={pendingDelete?.description ?? ""}
+        actionLabel={
+          pendingDelete && pendingDelete.ids.length > 1
+            ? `Delete ${pendingDelete.ids.length} tracks`
+            : "Delete track"
+        }
+        onAction={confirmDelete}
+      />
       <AddTracksDialog
         key={addTracksPendingId.current}
         open={addTracksPending !== null}

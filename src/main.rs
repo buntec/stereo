@@ -46,26 +46,71 @@ fn uid() -> anyhow::Result<String> {
     Ok(String::from_utf8(out.stdout)?.trim().to_string())
 }
 
-fn install(settings: &Settings) -> anyhow::Result<()> {
-    let exe = std::env::current_exe()?;
-    let home_env = std::env::var("HOME").map(PathBuf::from)?;
-    let log_path = home_env.join("Library/Logs/stereo.log");
-    let plist = plist_path()?;
-
-    let mut args = format!(
-        "        <string>{}</string>\n        <string>--port</string>\n        <string>{}</string>\n        <string>--host</string>\n        <string>{}</string>",
-        exe.display(),
-        settings.port,
-        settings.host,
-    );
-    if let Some(ref h) = settings.home {
-        args.push_str(&format!(
-            "\n        <string>--home</string>\n        <string>{}</string>",
-            h.display()
-        ));
+/// The plist may hold the WebSocket token, so keep it readable by its owner only.
+fn write_owner_only(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        // `mode` only applies on creation; also fix up a plist left by an older install.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        file.write_all(data)
     }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, data)
+    }
+}
 
-    let plist_content = format!(
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// The launchd plist that runs this binary with `settings`.
+fn plist_content(settings: &Settings, exe: &std::path::Path, log_path: &std::path::Path) -> String {
+    let mut argv = vec![
+        exe.display().to_string(),
+        "--port".to_string(),
+        settings.port.to_string(),
+        "--host".to_string(),
+        settings.host.clone(),
+    ];
+    if let Some(ref h) = settings.home {
+        argv.extend(["--home".to_string(), h.display().to_string()]);
+    }
+    for origin in &settings.allowed_origins {
+        argv.extend(["--allowed-origin".to_string(), origin.clone()]);
+    }
+    if settings.verbosity > 0 {
+        argv.push(format!("-{}", "v".repeat(settings.verbosity.into())));
+    }
+    let args = argv
+        .iter()
+        .map(|arg| format!("        <string>{}</string>", xml_escape(arg)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // The token goes in the environment rather than argv so it doesn't show up in `ps`; the
+    // plist itself is made owner-only below.
+    let env = match &settings.ws_token {
+        Some(token) => format!(
+            "    <key>EnvironmentVariables</key>\n    <dict>\n        <key>STEREO_WS_TOKEN</key>\n        <string>{}</string>\n    </dict>\n",
+            xml_escape(token)
+        ),
+        None => String::new(),
+    };
+
+    format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -76,7 +121,7 @@ fn install(settings: &Settings) -> anyhow::Result<()> {
     <array>
 {args}
     </array>
-    <key>RunAtLoad</key>
+{env}    <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
@@ -87,11 +132,22 @@ fn install(settings: &Settings) -> anyhow::Result<()> {
 </dict>
 </plist>
 "#,
-        log = log_path.display(),
-    );
+        log = xml_escape(&log_path.display().to_string()),
+    )
+}
+
+fn install(settings: &Settings) -> anyhow::Result<()> {
+    // The service would otherwise crash-loop under KeepAlive on startup validation.
+    settings.validate_websocket_security()?;
+
+    let exe = std::env::current_exe()?;
+    let home_env = std::env::var("HOME").map(PathBuf::from)?;
+    let log_path = home_env.join("Library/Logs/stereo.log");
+    let plist = plist_path()?;
+    let plist_content = plist_content(settings, &exe, &log_path);
 
     std::fs::create_dir_all(plist.parent().unwrap())?;
-    std::fs::write(&plist, &plist_content)?;
+    write_owner_only(&plist, plist_content.as_bytes())?;
     eprintln!("wrote {}", plist.display());
 
     let uid = uid()?;
@@ -199,4 +255,48 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, router).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plist_keeps_security_settings_and_escapes_values() {
+        let cli = Cli::parse_from([
+            "stereo",
+            "--host",
+            "0.0.0.0",
+            "--allowed-origin",
+            "https://music.example",
+            "--ws-token",
+            "a<b&c",
+            "-vv",
+        ]);
+        let plist = plist_content(
+            &cli.settings,
+            std::path::Path::new("/opt/stereo"),
+            std::path::Path::new("/tmp/stereo.log"),
+        );
+        assert!(plist.contains("<string>--allowed-origin</string>"));
+        assert!(plist.contains("<string>https://music.example</string>"));
+        assert!(plist.contains("<string>-vv</string>"));
+        assert!(plist.contains("<key>STEREO_WS_TOKEN</key>"));
+        assert!(plist.contains("<string>a&lt;b&amp;c</string>"));
+        // The token must not be passed on the command line.
+        assert!(!plist.contains("--ws-token"));
+
+        #[cfg(target_os = "macos")]
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("stereo.plist");
+            std::fs::write(&path, &plist).unwrap();
+            let lint = std::process::Command::new("plutil")
+                .arg("-lint")
+                .arg(&path)
+                .output()
+                .unwrap();
+            assert!(lint.status.success(), "{plist}");
+        }
+    }
 }

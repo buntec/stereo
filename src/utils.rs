@@ -94,15 +94,18 @@ pub fn strip_generic_mix_suffix(track_name: &str) -> String {
 /// are insensitive to artist-ordering differences between our metadata and a third party's
 /// (e.g. "Marcus Worgull, Daniel Bortz" vs. Spotify's "Daniel Bortz, Marcus Worgull" for the
 /// same track) instead of penalizing them as if they were edits.
+///
+/// Words are normalized before sorting, so neither case nor attached punctuation can change
+/// their order.
 pub fn normalize_for_match(s: &str) -> String {
-    let mut words: Vec<&str> = s.split_whitespace().collect();
-    words.sort_unstable();
-    words
-        .join(" ")
+    let cleaned: String = s
+        .to_lowercase()
         .chars()
         .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-        .collect::<String>()
-        .to_lowercase()
+        .collect();
+    let mut words: Vec<&str> = cleaned.split_whitespace().collect();
+    words.sort_unstable();
+    words.join(" ")
 }
 
 pub fn collection_label(path: &str) -> &str {
@@ -287,6 +290,24 @@ pub async fn download_file(url: &str, destination: &Path) -> anyhow::Result<()> 
         file.write_all(&chunk?).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_for_match_ignores_case_order_and_punctuation() {
+        assert_eq!(
+            normalize_for_match("DEADMAU5 Kaskade"),
+            normalize_for_match("Kaskade deadmau5")
+        );
+        assert_eq!(
+            normalize_for_match("Marcus Worgull, Daniel Bortz"),
+            normalize_for_match("Daniel Bortz, Marcus Worgull")
+        );
+        assert_eq!(normalize_for_match("A & B"), "a b");
+    }
 }
 
 #[cfg(all(test, unix))]

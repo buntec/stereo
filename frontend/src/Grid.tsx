@@ -42,7 +42,9 @@ import {
   useMemo,
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
+  type RefObject,
 } from "react";
 
 import {
@@ -177,15 +179,22 @@ const PlayControlRenderer: React.FC<
 
   const [isValid, setIsValid] = useState<boolean | null>(null);
 
+  // Compare by content: after every grid refresh `data` is a new but usually identical object,
+  // and validating then would send a request for every visible row.
+  const edited = useMemo(
+    () => JSON.stringify(value) !== JSON.stringify(data),
+    [value, data],
+  );
+
   useEffect(() => {
-    if (value !== data) {
+    if (edited) {
       context.requestReply({ type: "validate-track", track: value }, (msg) => {
         if ("is_valid" in msg) {
           setIsValid(msg.is_valid);
         }
       });
     }
-  }, [value, context, data]);
+  }, [edited, value, context]);
 
   const commit = useCallback(() => {
     if (data && value) {
@@ -259,23 +268,7 @@ const SearchPlayControlRenderer: React.FC<
     }
   }, [data, context]);
 
-  const [exists, setExists] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    if (data?.yt_id) {
-      context.requestReply(
-        { type: "collection-contains-id", yt_id: data.yt_id },
-        (msg) => {
-          setExists("contains_id" in msg ? msg.contains_id : null);
-        },
-      );
-    }
-  }, [
-    context,
-    data?.yt_id,
-    context.lastCollectionUpdate,
-    context.requestReply,
-  ]);
+  const exists = !!data && context.inCollection.current.has(data.yt_id);
 
   const handleAdd = useCallback(() => {
     if (data) {
@@ -304,7 +297,7 @@ const SearchPlayControlRenderer: React.FC<
         variant="secondary"
         size="sm"
         onClick={handleAdd}
-        isDisabled={!!exists}
+        isDisabled={exists}
         label={exists ? "Track exists in collection" : "Add to collection"}
         tooltip={exists ? "Track exists in collection" : "Add to collection"}
         icon={<PlusIcon />}
@@ -330,7 +323,9 @@ interface SearchResultsGridProps {
 type SearchResultsGridContext = {
   playId: (id: string) => void;
   requestReply: RequestReply;
-  lastCollectionUpdate?: number;
+  // Result ids already in the collection. A stable ref, so updating it doesn't replace the
+  // grid context; cells are refreshed explicitly instead.
+  inCollection: RefObject<Set<string>>;
   dispatch: Dispatch<Action>;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
@@ -488,11 +483,37 @@ export const SearchResultsGrid = ({
     gridRef.current?.api?.redrawRows();
   }, [currentId, gridRef]);
 
+  // One batched lookup for all results instead of one request per row. Results stream in one
+  // at a time, so the lookup is debounced.
+  const inCollection = useRef<Set<string>>(new Set());
+  const resultIds = useMemo(() => (tracks ?? []).map((t) => t.yt_id), [tracks]);
+  useEffect(() => {
+    if (resultIds.length === 0) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      requestReply(
+        { type: "collection-contains-ids", yt_ids: resultIds },
+        (msg) => {
+          if (cancelled || !("contained" in msg)) return;
+          inCollection.current = new Set(msg.contained);
+          gridRef.current?.api?.refreshCells({
+            columns: ["yt_id"],
+            force: true,
+          });
+        },
+      );
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [resultIds, lastCollectionUpdate, requestReply, gridRef]);
+
   const context: SearchResultsGridContext = useMemo(() => {
     return {
       requestReply,
       playId,
-      lastCollectionUpdate,
+      inCollection,
       dispatch,
       onArtistClick,
       onLabelClick,
@@ -502,7 +523,6 @@ export const SearchResultsGrid = ({
   }, [
     requestReply,
     playId,
-    lastCollectionUpdate,
     dispatch,
     onArtistClick,
     onLabelClick,

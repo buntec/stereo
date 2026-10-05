@@ -700,3 +700,77 @@ async fn test_get_rows_date_filter_ignores_ag_grid_time_suffix() {
         ["jun01", "jun02"]
     );
 }
+
+#[tokio::test]
+async fn test_update_track_metadata_keeps_user_data() {
+    let (pool, _dir) = setup().await;
+    let mut track = make_track("meta1");
+    track.rating = Some(3);
+    track.play_count = 7;
+    db::insert_track(&pool, &track, true).await.unwrap();
+
+    // The client's copy is stale: it predates a rating change and two plays.
+    db::update_rating(&pool, "meta1", Some(5)).await.unwrap();
+    let edited = Track {
+        title: "Edited".to_string(),
+        rating: Some(3),
+        play_count: 5,
+        ..track.clone()
+    };
+    db::update_track_metadata(&pool, "meta1", &edited)
+        .await
+        .unwrap();
+
+    let fetched = db::get_track(&pool, "meta1").await.unwrap().unwrap();
+    assert_eq!(fetched.title, "Edited");
+    assert_eq!(fetched.rating, Some(5));
+    assert_eq!(fetched.play_count, 7);
+}
+
+#[tokio::test]
+async fn test_update_track_metadata_rekeys_but_never_overwrites_another_track() {
+    let (pool, _dir) = setup().await;
+    let mut first = make_track("first");
+    first.rating = Some(4);
+    db::insert_track(&pool, &first, true).await.unwrap();
+    let mut second = make_track("second");
+    second.rating = Some(1);
+    db::insert_track(&pool, &second, true).await.unwrap();
+
+    let clash = Track {
+        yt_id: "second".to_string(),
+        ..first.clone()
+    };
+    assert!(db::update_track_metadata(&pool, "first", &clash)
+        .await
+        .is_err());
+    let untouched = db::get_track(&pool, "second").await.unwrap().unwrap();
+    assert_eq!(untouched.rating, Some(1));
+    assert!(db::track_exists(&pool, "first").await.unwrap());
+
+    let rekeyed = Track {
+        yt_id: "third".to_string(),
+        ..first.clone()
+    };
+    db::update_track_metadata(&pool, "first", &rekeyed)
+        .await
+        .unwrap();
+    assert!(!db::track_exists(&pool, "first").await.unwrap());
+    let moved = db::get_track(&pool, "third").await.unwrap().unwrap();
+    assert_eq!(moved.rating, Some(4));
+}
+
+#[tokio::test]
+async fn test_existing_yt_ids() {
+    let (pool, _dir) = setup().await;
+    for id in ["a", "b", "c"] {
+        db::insert_track(&pool, &make_track(id), true)
+            .await
+            .unwrap();
+    }
+    let ids: Vec<String> = ["b", "x", "c", "y"].map(String::from).to_vec();
+    let mut found = db::existing_yt_ids(&pool, &ids).await.unwrap();
+    found.sort();
+    assert_eq!(found, ["b", "c"]);
+    assert!(db::existing_yt_ids(&pool, &[]).await.unwrap().is_empty());
+}

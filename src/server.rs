@@ -298,7 +298,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
             }
             SessionEvent::Internal(event) => (
                 None,
-                handle_internal(&mut state, &server_tx, &repos_dir, event).await,
+                handle_internal(&mut state, &server_tx, &event_tx, &repos_dir, event).await,
             ),
         };
         if let Err(e) = result {
@@ -310,8 +310,16 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
         }
     }
 
-    // WebSocket disconnected
-    if let Some(task) = state.search_task.take() {
+    // WebSocket disconnected: stop work whose only consumer was this client. A running repo
+    // sync is left to finish so it can't be interrupted halfway through a merge.
+    for task in [
+        state.search_task.take(),
+        state.youtube_playlist_task.take(),
+        state.fixup_task.take(),
+    ]
+    .into_iter()
+    .flatten()
+    {
         task.abort();
     }
     if let Some(pool) = state.pool.take() {
@@ -566,6 +574,38 @@ async fn schedule_collection_sync(state: &SessionState, tx: &mpsc::Sender<MsgSer
     }
 }
 
+fn repo_sync_running(state: &SessionState) -> bool {
+    state
+        .repo_sync_task
+        .as_ref()
+        .is_some_and(|task| !task.is_finished())
+}
+
+/// Makes `repo` the session's repo and syncs it, allowing upstream changes to be applied. Its
+/// collections are sent once the sync is done (`RepoSynced`), and the client reopens one then.
+async fn activate_repo(
+    state: &mut SessionState,
+    tx: &mpsc::Sender<MsgServer>,
+    events: &mpsc::Sender<SessionEvent>,
+    repo: PathBuf,
+    resolution: Option<crate::message::GitConflictStrategy>,
+    status: &str,
+) {
+    if let Some(old_pool) = state.pool.take() {
+        old_pool.close().await;
+    }
+    state.collection = None;
+    state.repo = Some(repo.clone());
+    // The sync below commits pending changes anyway.
+    cancel_scheduled_sync(&repo);
+    // Taken before spawning so that a `SetCollection` can't open this repo's databases until the
+    // sync (which may replace them) is done.
+    let guard = git::lock_repository(&repo).await;
+    state.repo_sync_task = Some(spawn_update_sync(
+        tx, events, guard, repo, resolution, status,
+    ));
+}
+
 /// Repo containing a collection file, if that file lives directly in a git repo.
 fn collection_repo(path: &Path) -> Option<PathBuf> {
     path.parent()
@@ -576,6 +616,7 @@ fn collection_repo(path: &Path) -> Option<PathBuf> {
 async fn handle_internal(
     state: &mut SessionState,
     tx: &mpsc::Sender<MsgServer>,
+    events: &mpsc::Sender<SessionEvent>,
     home: &Path,
     event: InternalEvent,
 ) -> anyhow::Result<()> {
@@ -598,29 +639,24 @@ async fn handle_internal(
         InternalEvent::CloneFinished { id, repo } => {
             let path = repo.as_ref().map(|r| r.to_string_lossy().to_string());
             if let Some(repo) = repo {
-                if let Some(old_pool) = state.pool.take() {
-                    old_pool.close().await;
-                }
-                state.collection = None;
-                state.repo = Some(repo.clone());
                 // Sent before `Repos` so the client adopts the new repo before it re-selects one
                 // from the updated repo list.
                 let _ = tx.send(MsgServer::CloneRepoReply { id, path }).await;
-                let _ = tx
-                    .send(MsgServer::Collections {
-                        collections: utils::list_repo_collections(&repo),
-                    })
-                    .await;
-                let _ = tx
-                    .send(MsgServer::GitRemote {
-                        url: git::get_remote(&repo).await,
-                    })
-                    .await;
                 let _ = tx
                     .send(MsgServer::Repos {
                         repos: utils::list_repos(home).await,
                     })
                     .await;
+                // A reused clone may be behind its remote.
+                activate_repo(
+                    state,
+                    tx,
+                    events,
+                    repo,
+                    None,
+                    "Checking for upstream changes",
+                )
+                .await;
             } else {
                 let _ = tx.send(MsgServer::CloneRepoReply { id, path: None }).await;
             }
@@ -669,33 +705,20 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 notify(tx, "Invalid repo path", "error").await;
                 return Ok(());
             }
-            // The client re-selects its repo whenever the repo list changes; don't stack
-            // another update sync on one that is still running for the same repo.
-            if state.repo.as_deref() == Some(repo_path.as_path())
-                && state
-                    .repo_sync_task
-                    .as_ref()
-                    .is_some_and(|task| !task.is_finished())
-            {
+            // Don't stack another update sync on one still running for the same repo (e.g. a
+            // client re-sending its selection after a reconnect).
+            if state.repo.as_deref() == Some(repo_path.as_path()) && repo_sync_running(state) {
                 return Ok(());
             }
-            if let Some(old_pool) = state.pool.take() {
-                old_pool.close().await;
-            }
-            state.collection = None;
-            state.repo = Some(repo_path.clone());
-            cancel_scheduled_sync(&repo_path);
-            // Taken before spawning so that a `SetCollection` can't open this repo's databases
-            // until the sync (which may replace them) is done.
-            let guard = git::lock_repository(&repo_path).await;
-            state.repo_sync_task = Some(spawn_update_sync(
+            activate_repo(
+                state,
                 tx,
                 events,
-                guard,
                 repo_path,
                 None,
                 "Checking for upstream changes",
-            ));
+            )
+            .await;
         }
 
         MsgClient::CloneRepo { id, url } => {
@@ -773,12 +796,28 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                             repos: utils::list_repos(home).await,
                         })
                         .await;
-                    let tx = tx.clone();
-                    let git_dir = git_dir.to_path_buf();
-                    tokio::spawn(async move {
-                        let report = git::sync_repository(git_dir, None, false, None).await;
-                        send_git_status(&tx, report).await;
-                    });
+                    match state.repo.clone() {
+                        // Pull in whatever the new remote already has.
+                        Some(repo) if !repo_sync_running(state) => {
+                            activate_repo(
+                                state,
+                                tx,
+                                events,
+                                repo,
+                                None,
+                                "Synchronizing with the new remote",
+                            )
+                            .await;
+                        }
+                        _ => {
+                            let tx = tx.clone();
+                            let git_dir = git_dir.to_path_buf();
+                            tokio::spawn(async move {
+                                let report = git::sync_repository(git_dir, None, false, None).await;
+                                send_git_status(&tx, report).await;
+                            });
+                        }
+                    }
                 }
                 Err(e) => notify(tx, &format!("Failed to set git remote: {e}"), "error").await,
             }
@@ -789,32 +828,23 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 notify(tx, "No repo selected", "error").await;
                 return Ok(());
             };
-            if state
-                .repo_sync_task
-                .as_ref()
-                .is_some_and(|task| !task.is_finished())
-            {
+            if repo_sync_running(state) {
                 notify(tx, "Repository sync already in progress", "info").await;
                 return Ok(());
             }
-            if let Some(pool) = state.pool.take() {
-                pool.close().await;
-            }
-            state.collection = None;
-            cancel_scheduled_sync(&repo);
             let resolution = match sync_msg {
                 MsgClient::ResolveGitConflict { strategy } => Some(strategy),
                 _ => None,
             };
-            let guard = git::lock_repository(&repo).await;
-            state.repo_sync_task = Some(spawn_update_sync(
+            activate_repo(
+                state,
                 tx,
                 events,
-                guard,
                 repo,
                 resolution,
                 "Synchronizing repository",
-            ));
+            )
+            .await;
         }
 
         MsgClient::GetSpotifySession { id } => {
@@ -1463,23 +1493,20 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         MsgClient::UpdateTrack { old, new } => {
             let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
-                db::insert_track(pool, &new, false).await?;
-                if old.yt_id != new.yt_id {
-                    db::delete_track(pool, &old.yt_id).await?;
-                }
+                db::update_track_metadata(pool, &old.yt_id, &new).await?;
                 update_collection_info(state, tx).await;
                 schedule_collection_sync(state, tx).await;
             }
         }
 
-        MsgClient::CollectionContainsId { id, yt_id } => {
+        MsgClient::CollectionContainsIds { id, yt_ids } => {
             let Some(pool) = state.pool() else {
                 reply_error(tx, id, "No collection open").await;
                 return Ok(());
             };
-            let contains_id = db::track_exists(pool, &yt_id).await?;
+            let contained = db::existing_yt_ids(pool, &yt_ids).await?;
             let _ = tx
-                .send(MsgServer::CollectionContainsIdResponse { id, contains_id })
+                .send(MsgServer::CollectionContainsIdsResponse { id, contained })
                 .await;
         }
 

@@ -75,7 +75,7 @@ export type ClientMsg =
   | { type: "validate-track"; track: unknown; id?: number }
   | { type: "check-spotify-id"; sp_id: string; id?: number }
   | { type: "create-collection"; name: string }
-  | { type: "collection-contains-id"; yt_id: string }
+  | { type: "collection-contains-ids"; yt_ids: string[] }
   | { type: "get-track-info"; yt_id: string }
   | { type: "import-from"; path: string; keep_user_data: boolean }
   | { type: "check-import-from"; path: string }
@@ -227,9 +227,9 @@ export type ServerMsg =
   | { type: "search-complete"; query_id: number }
   | { type: "import-from-valid"; path: string; is_valid: boolean }
   | {
-      type: "collection-contains-id-response";
+      type: "collection-contains-ids-response";
       id: number;
-      contains_id: boolean;
+      contained: string[];
     }
   | { type: "git-remote"; url: string | null }
   | {

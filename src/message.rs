@@ -80,9 +80,10 @@ pub enum MsgServer {
     SearchComplete {
         query_id: i64,
     },
-    CollectionContainsIdResponse {
+    /// Reply to `CollectionContainsIds`: the subset of the requested ids in the collection.
+    CollectionContainsIdsResponse {
         id: i64,
-        contains_id: bool,
+        contained: Vec<String>,
     },
     ImportFromValid {
         path: String,
@@ -342,9 +343,9 @@ pub enum MsgClient {
         limit: i64,
     },
     SearchCancelAll {},
-    CollectionContainsId {
+    CollectionContainsIds {
         id: i64,
-        yt_id: String,
+        yt_ids: Vec<String>,
     },
     CheckImportFrom {
         path: String,
@@ -483,7 +484,7 @@ impl MsgClient {
             Self::GetRowIndex(content) => Some(content.id),
             Self::SetCollection { id, .. }
             | Self::GetPathCompletions { id, .. }
-            | Self::CollectionContainsId { id, .. }
+            | Self::CollectionContainsIds { id, .. }
             | Self::CreateYtAnonPlaylist { id, .. }
             | Self::GetSpotifySession { id }
             | Self::SetSpotifySession { id, .. }
