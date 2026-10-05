@@ -75,9 +75,17 @@ async fn test_yt_import_playlist() {
     .await
     .unwrap();
     assert_eq!(playlist.name, "Indie");
-    assert_eq!(playlist.tracks.len(), 34);
-    assert!(!playlist.tracks[0].yt_id.is_empty());
-    assert!(!playlist.tracks[0].title.is_empty());
+    // The playlist is live and shrinks as videos are taken down (34 tracks when this test was
+    // written, 33 by 2026-10), so check for a plausible size rather than an exact count.
+    assert!(
+        playlist.tracks.len() > 25,
+        "only {} tracks imported",
+        playlist.tracks.len()
+    );
+    assert!(playlist
+        .tracks
+        .iter()
+        .all(|t| !t.yt_id.is_empty() && !t.title.is_empty()));
 }
 
 // ── Beatport ─────────────────────────────────────────────────────────────────
