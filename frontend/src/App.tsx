@@ -408,28 +408,25 @@ const reducer = (state: State, action: Action): State => {
         search_results: undefined,
         search_results_selection: undefined,
         search_busy: false,
+        search_query_id: undefined,
       };
 
+    // Results and completions are only accepted for the search that is currently active
+    // (set by "set-search-busy"); anything else is a straggler from a cancelled search.
     case "search-result": {
+      if (action.query_id !== state.search_query_id) return state;
       const track = { ...action.track, source: action.source };
       return {
         ...state,
-        search_results:
-          action.query_id === state.search_query_id
-            ? [...(state.search_results ?? []), track]
-            : [track],
-        search_query_id: action.query_id,
+        search_results: [...(state.search_results ?? []), track],
       };
     }
 
     case "search-results":
+      if (action.query_id !== state.search_query_id) return state;
       return {
         ...state,
-        search_results:
-          action.query_id === state.search_query_id
-            ? [...(state.search_results ?? []), ...action.tracks]
-            : action.tracks,
-        search_query_id: action.query_id,
+        search_results: [...(state.search_results ?? []), ...action.tracks],
       };
 
     case "set-search-failure":
@@ -441,13 +438,15 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "search-complete":
-      if (!state.search_query_id || state.search_query_id === action.query_id) {
-        return { ...state, search_busy: false };
-      }
-      return { ...state };
+      if (action.query_id !== state.search_query_id) return state;
+      return {
+        ...state,
+        search_busy: false,
+        search_results: state.search_results ?? [],
+      };
 
     case "set-search-busy":
-      return { ...state, search_busy: true };
+      return { ...state, search_busy: true, search_query_id: action.query_id };
 
     case "set-search-limit":
       return { ...state, search_limit: action.limit };
@@ -537,6 +536,7 @@ const reducer = (state: State, action: Action): State => {
     case "check-spotify-id-reply":
     case "spotify-playlist-info":
     case "youtube-playlist-info":
+    case "clone-repo-reply":
       return { ...state };
 
     case "start-spotify-backfill":
@@ -563,11 +563,12 @@ const reducer = (state: State, action: Action): State => {
       return {
         ...state,
         spotify_backfill_running: false,
-        notification_kind: "info",
+        notification_kind: action.error_message ? "error" : "info",
         notification_msg:
-          action.total === 0
+          action.error_message ??
+          (action.total === 0
             ? "No tracks needed a Spotify ID"
-            : `Spotify backfill complete: ${action.matched}/${action.total} tracks matched`,
+            : `Spotify backfill complete: ${action.matched}/${action.total} tracks matched`),
         notification_show: true,
       };
 
@@ -599,7 +600,7 @@ const reducer = (state: State, action: Action): State => {
         notification_kind: action.url ? "info" : "error",
         notification_msg: action.url
           ? `Created Spotify playlist with ${action.matched}/${action.total} matched tracks`
-          : "Failed to create Spotify playlist",
+          : (action.error_message ?? "Failed to create Spotify playlist"),
         notification_show: true,
       };
 
@@ -1235,7 +1236,7 @@ function App() {
     if (state.search_kind === "new-releases") {
       const query_id = ++queryId.current;
       dispatch({ type: "clear-search-results" });
-      dispatch({ type: "set-search-busy" });
+      dispatch({ type: "set-search-busy", query_id });
       sendMsg({
         type: "search-new-releases",
         query_id,
@@ -1250,7 +1251,7 @@ function App() {
     if (query.length > 0) {
       const query_id = ++queryId.current;
       dispatch({ type: "clear-search-results" });
-      dispatch({ type: "set-search-busy" });
+      dispatch({ type: "set-search-busy", query_id });
       sendMsg({
         type: "search",
         query,
@@ -1914,11 +1915,11 @@ function App() {
 
   const handleArtistClick = useCallback(
     (name: string) => {
+      const query_id = ++queryId.current;
       dispatch({ type: "set-search-kind", kind: "by-artist" });
       dispatch({ type: "search-box-input", input: name });
       dispatch({ type: "clear-search-results" });
-      dispatch({ type: "set-search-busy" });
-      const query_id = ++queryId.current;
+      dispatch({ type: "set-search-busy", query_id });
       sendMsg({
         type: "search",
         query: name,
@@ -1933,11 +1934,11 @@ function App() {
 
   const handleLabelClick = useCallback(
     (name: string) => {
+      const query_id = ++queryId.current;
       dispatch({ type: "set-search-kind", kind: "by-label" });
       dispatch({ type: "search-box-input", input: name });
       dispatch({ type: "clear-search-results" });
-      dispatch({ type: "set-search-busy" });
-      const query_id = ++queryId.current;
+      dispatch({ type: "set-search-busy", query_id });
       sendMsg({
         type: "search",
         query: name,
@@ -1957,7 +1958,7 @@ function App() {
       dispatch({ type: "set-search-kind", kind: "fuzzy" });
       dispatch({ type: "search-box-input", input: query });
       dispatch({ type: "clear-search-results" });
-      dispatch({ type: "set-search-busy" });
+      dispatch({ type: "set-search-busy", query_id });
       sendMsg({
         type: "search-shazam-similar",
         query_id,
@@ -2013,17 +2014,16 @@ function App() {
                 sendMsg({ type: "set-repo", path });
               }}
               onClone={(url) => {
-                if (state.home_dir) {
-                  const name =
-                    url
-                      .replace(/\/$/, "")
-                      .replace(/\.git$/, "")
-                      .split("/")
-                      .pop() ?? "repo";
-                  const path = `${state.home_dir}/${name}`;
-                  setSettings({ ...settings, repoPath: path });
-                }
-                sendMsg({ type: "clone-repo", url });
+                // The server replies with the activated repo's path before it sends the
+                // updated repo list, so the auto-select effect picks the new repo.
+                requestReply({ type: "clone-repo", url }, (msg) => {
+                  if (msg.type === "clone-repo-reply" && "path" in msg) {
+                    const path = msg.path;
+                    if (path) {
+                      setSettings((s) => ({ ...s, repoPath: path }));
+                    }
+                  }
+                });
               }}
               syncState={state.git_sync_state}
               syncMessage={state.git_sync_message}
@@ -2125,7 +2125,8 @@ function App() {
                     }}
                     onMoveToCollection={(path) => {
                       if (state.track_info && state.current_id) {
-                        const idToDelete = state.current_id;
+                        // The server removes the track from the source collection only
+                        // once it has been written to the target.
                         sendMsg({
                           type: "export-tracks-to-collection",
                           tracks: [state.track_info],
@@ -2133,7 +2134,6 @@ function App() {
                           source_collection: settings.collectionPath,
                         });
                         dispatch({ type: "play-next-track" });
-                        sendMsg({ type: "delete-tracks", ids: [idToDelete] });
                       }
                     }}
                     onDeleteFromCollection={() => {

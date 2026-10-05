@@ -284,6 +284,14 @@ fn escape_like(s: &str) -> String {
         .replace('_', "\\_")
 }
 
+/// ag-Grid's date filter sends `YYYY-MM-DD hh:mm:ss`, but dates are stored as `YYYY-MM-DD`
+/// text and compared as strings, so the time part must be dropped — otherwise `equals` never
+/// matches and the boundary day is mis-handled by every range comparison.
+fn date_param(value: Option<&str>) -> SqlParam {
+    let value = value.unwrap_or_default();
+    SqlParam::Text(value.get(..10).unwrap_or(value).to_string())
+}
+
 fn build_condition_clause(field: &str, item: &FilterModelItem) -> (Vec<String>, Vec<SqlParam>) {
     let mut clauses: Vec<String> = Vec::new();
     let mut params: Vec<SqlParam> = Vec::new();
@@ -374,32 +382,32 @@ fn build_condition_clause(field: &str, item: &FilterModelItem) -> (Vec<String>, 
             "date" => match item.filter_op.as_str() {
                 "equals" => {
                     clauses.push(format!("{field} = ?"));
-                    params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
+                    params.push(date_param(item.date_from.as_deref()));
                 }
                 "notEqual" => {
                     clauses.push(format!("{field} <> ?"));
-                    params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
+                    params.push(date_param(item.date_from.as_deref()));
                 }
                 "greaterThan" => {
                     clauses.push(format!("{field} > ?"));
-                    params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
+                    params.push(date_param(item.date_from.as_deref()));
                 }
                 "greaterThanOrEqual" => {
                     clauses.push(format!("{field} >= ?"));
-                    params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
+                    params.push(date_param(item.date_from.as_deref()));
                 }
                 "lessThan" => {
                     clauses.push(format!("{field} < ?"));
-                    params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
+                    params.push(date_param(item.date_from.as_deref()));
                 }
                 "lessThanOrEqual" => {
                     clauses.push(format!("{field} <= ?"));
-                    params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
+                    params.push(date_param(item.date_from.as_deref()));
                 }
                 "inRange" => {
                     clauses.push(format!("{field} >= ? AND {field} <= ?"));
-                    params.push(SqlParam::Text(item.date_from.clone().unwrap_or_default()));
-                    params.push(SqlParam::Text(item.date_to.clone().unwrap_or_default()));
+                    params.push(date_param(item.date_from.as_deref()));
+                    params.push(date_param(item.date_to.as_deref()));
                 }
                 "blank" => clauses.push(format!("{field} IS NULL")),
                 "notBlank" => clauses.push(format!("{field} IS NOT NULL")),

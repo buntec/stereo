@@ -645,3 +645,58 @@ async fn test_track_roundtrip_preserves_dates() {
     assert_eq!(fetched.last_played, track.last_played);
     assert_eq!(fetched.play_count, 7);
 }
+
+#[tokio::test]
+async fn test_get_rows_date_filter_ignores_ag_grid_time_suffix() {
+    let (pool, _dir) = setup().await;
+    for (id, day) in [("may31", 31), ("jun01", 1), ("jun02", 2)] {
+        let mut t = make_track(id);
+        let month = if day == 31 { 5 } else { 6 };
+        t.release_date = Some(NaiveDate::from_ymd_opt(2024, month, day).unwrap());
+        db::insert_track(&pool, &t, true).await.unwrap();
+    }
+
+    // ag-Grid's date filter always sends `YYYY-MM-DD hh:mm:ss`.
+    let ids = |op: &str, from: &str, to: Option<&str>| {
+        let filter: FilterModelMap = [(
+            "release_date".to_string(),
+            FilterModel::Simple(FilterModelItem {
+                filter_type: "date".to_string(),
+                filter_op: op.to_string(),
+                filter: None,
+                filter_to: None,
+                date_from: Some(from.to_string()),
+                date_to: to.map(str::to_string),
+            }),
+        )]
+        .into_iter()
+        .collect();
+        let pool = pool.clone();
+        async move {
+            let sort = [SortModelItem {
+                col_id: "release_date".to_string(),
+                sort: "asc".to_string(),
+                sort_type: None,
+            }];
+            db::get_rows(&pool, 0, 100, &sort, &filter)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|t| t.yt_id)
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let day = "2024-06-01 00:00:00";
+    assert_eq!(ids("equals", day, None).await, ["jun01"]);
+    assert_eq!(ids("lessThan", day, None).await, ["may31"]);
+    assert_eq!(ids("greaterThan", day, None).await, ["jun02"]);
+    assert_eq!(
+        ids("greaterThanOrEqual", day, None).await,
+        ["jun01", "jun02"]
+    );
+    assert_eq!(
+        ids("inRange", day, Some("2024-06-02 00:00:00")).await,
+        ["jun01", "jun02"]
+    );
+}

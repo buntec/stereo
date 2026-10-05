@@ -40,6 +40,11 @@ pub enum MsgServer {
     Repos {
         repos: Vec<Repo>,
     },
+    /// Reply to `CloneRepo`: the path of the repo that is now active, or `None` if cloning failed.
+    CloneRepoReply {
+        id: i64,
+        path: Option<String>,
+    },
     Collections {
         collections: Vec<Collection>,
     },
@@ -99,6 +104,7 @@ pub enum MsgServer {
         url: Option<String>,
         matched: i64,
         total: i64,
+        error_message: Option<String>,
     },
     SpotifyPlaylistProgress {
         id: i64,
@@ -154,6 +160,7 @@ pub enum MsgServer {
         id: i64,
         matched: i64,
         total: i64,
+        error_message: Option<String>,
     },
     #[serde(rename = "youtube-session")]
     YouTubeSession {
@@ -383,6 +390,7 @@ pub enum MsgClient {
         path: String,
     },
     CloneRepo {
+        id: i64,
         url: String,
     },
     ListRepos,

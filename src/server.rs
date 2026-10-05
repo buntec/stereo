@@ -475,7 +475,7 @@ async fn handle_msg(
                 .await;
         }
 
-        MsgClient::CloneRepo { url } => {
+        MsgClient::CloneRepo { id, url } => {
             let repo_name = git::repo_name_from_url(&url);
             let repo_path = home.join(&repo_name);
 
@@ -504,10 +504,12 @@ async fn handle_msg(
                     "error",
                 )
                 .await;
+                let _ = tx.send(MsgServer::CloneRepoReply { id, path: None }).await;
                 return Ok(());
             } else {
                 if let Err(e) = git::clone_repo(&url, &repo_path).await {
                     notify(tx, &format!("Clone failed: {e}"), "error").await;
+                    let _ = tx.send(MsgServer::CloneRepoReply { id, path: None }).await;
                     return Ok(());
                 }
                 if !git::check_push_access(&repo_path).await {
@@ -525,6 +527,14 @@ async fn handle_msg(
             }
             state.collection = None;
             state.repo = Some(repo_path.clone());
+            // Sent before `Repos` so the client adopts the new repo before it re-selects one
+            // from the updated repo list.
+            let _ = tx
+                .send(MsgServer::CloneRepoReply {
+                    id,
+                    path: Some(repo_path.to_string_lossy().to_string()),
+                })
+                .await;
             let _ = tx
                 .send(MsgServer::Collections {
                     collections: utils::list_repo_collections(&repo_path),
@@ -769,6 +779,28 @@ async fn handle_msg(
         } => {
             if !tracks.is_empty() {
                 let path = std::path::PathBuf::from(&collection);
+                // A move deletes the tracks from the currently open collection once they're
+                // safely in the target, so refuse anything that isn't a move out of the open
+                // collection into a different one — otherwise "already present" tracks would be
+                // deleted from their only copy.
+                if let Some(source) = source_collection.as_deref() {
+                    let is_open = state
+                        .collection
+                        .as_ref()
+                        .is_some_and(|c| c.path == std::path::Path::new(source));
+                    if !is_open || std::path::Path::new(source) == path {
+                        notify(
+                            tx,
+                            &format!(
+                                "Move failed: can only move from the open collection to a different one ({})",
+                                utils::collection_label(source)
+                            ),
+                            "error",
+                        )
+                        .await;
+                        return Ok(());
+                    }
+                }
                 let target_repo = path
                     .parent()
                     .filter(|parent| parent.join(".git").is_dir())
@@ -807,6 +839,28 @@ async fn handle_msg(
                         let report =
                             git::sync_repository(repo, Some(path.clone()), false, None).await;
                         send_git_status(tx, report).await;
+                    }
+
+                    if source_collection.is_some() {
+                        let ids: Vec<String> = tracks.iter().map(|t| t.yt_id.clone()).collect();
+                        let _repo_guard = lock_current_repo(state).await;
+                        if let Some(pool) = state.pool() {
+                            if let Err(e) = db::delete_tracks(pool, &ids).await {
+                                notify(
+                                    tx,
+                                    &format!(
+                                        "Copied to {} but failed to remove from the source collection: {e}",
+                                        utils::collection_label(&collection)
+                                    ),
+                                    "error",
+                                )
+                                .await;
+                                return Ok(());
+                            }
+                            let _ = tx.send(MsgServer::ReloadTracks {}).await;
+                            update_collection_info(state, tx).await;
+                            git_spawn(state, tx);
+                        }
                     }
 
                     let target_label = utils::collection_label(&collection);
@@ -857,7 +911,15 @@ async fn handle_msg(
             existing_playlist,
         } => {
             let Some(session) = spotify::SpotifySession::load(data_home).await else {
-                notify(tx, "Connect a Spotify account first", "error").await;
+                let _ = tx
+                    .send(MsgServer::SpotifyPlaylist {
+                        id,
+                        url: None,
+                        matched: 0,
+                        total: tracks.len() as i64,
+                        error_message: Some("Connect a Spotify account first".into()),
+                    })
+                    .await;
                 return Ok(());
             };
             let client = Arc::clone(client);
@@ -934,16 +996,22 @@ async fn handle_msg(
                                 url: Some(url),
                                 matched,
                                 total,
+                                error_message: None,
                             })
                             .await;
                     }
                     Err(e) => {
-                        notify(
-                            &tx,
-                            &format!("Failed to create Spotify playlist: {e}"),
-                            "error",
-                        )
-                        .await;
+                        let _ = tx
+                            .send(MsgServer::SpotifyPlaylist {
+                                id,
+                                url: None,
+                                matched,
+                                total,
+                                error_message: Some(format!(
+                                    "Failed to create Spotify playlist: {e}"
+                                )),
+                            })
+                            .await;
                     }
                 }
             });
@@ -951,7 +1019,14 @@ async fn handle_msg(
 
         MsgClient::BackfillSpotifyIds { id } => {
             let (Some(pool), Some(col)) = (state.pool.clone(), state.collection.clone()) else {
-                notify(tx, "No collection open", "error").await;
+                let _ = tx
+                    .send(MsgServer::SpotifyBackfillComplete {
+                        id,
+                        matched: 0,
+                        total: 0,
+                        error_message: Some("No collection open".into()),
+                    })
+                    .await;
                 return Ok(());
             };
             let repo = state.repo.clone();
@@ -961,7 +1036,14 @@ async fn handle_msg(
                 let tracks = match db::get_tracks_missing_sp_id(&pool).await {
                     Ok(t) => t,
                     Err(e) => {
-                        notify(&tx, &format!("Spotify backfill failed: {e}"), "error").await;
+                        let _ = tx
+                            .send(MsgServer::SpotifyBackfillComplete {
+                                id,
+                                matched: 0,
+                                total: 0,
+                                error_message: Some(format!("Spotify backfill failed: {e}")),
+                            })
+                            .await;
                         return;
                     }
                 };
@@ -1035,6 +1117,7 @@ async fn handle_msg(
                         id,
                         matched: matched_n,
                         total,
+                        error_message: None,
                     })
                     .await;
             });

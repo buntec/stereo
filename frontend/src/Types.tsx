@@ -146,7 +146,7 @@ export type ClientMsg =
   | { type: "get-spotify-playlist-info"; id?: number; url: string }
   | { type: "get-youtube-playlist"; id?: number; url: string }
   | { type: "set-repo"; path: string }
-  | { type: "clone-repo"; url: string }
+  | { type: "clone-repo"; url: string; id?: number }
   | { type: "list-repos" }
   | { type: "list-collections" }
   | { type: "fixup-track"; track: ITrack; id?: number }
@@ -245,6 +245,7 @@ export type ServerMsg =
       url: string | null;
       matched: number;
       total: number;
+      error_message: string | null;
     }
   | {
       type: "spotify-playlist-progress";
@@ -266,6 +267,7 @@ export type ServerMsg =
       error_message: string | null;
     }
   | { type: "repos"; repos: IRepo[] }
+  | { type: "clone-repo-reply"; id: number; path: string | null }
   | { type: "collections"; collections: ICollection[] }
   | {
       type: "collection-stats";
@@ -301,6 +303,7 @@ export type ServerMsg =
       id: number;
       matched: number;
       total: number;
+      error_message: string | null;
     }
   | {
       type: "youtube-session";
@@ -340,7 +343,7 @@ export type Action =
   | { type: "set-track-rating"; yt_id: string; rating: number | null }
   | { type: "clear-search-results" }
   | { type: "set-search-failure" }
-  | { type: "set-search-busy" }
+  | { type: "set-search-busy"; query_id: number }
   | { type: "set-search-limit"; limit: number }
   | { type: "set-search-kind"; kind: SearchBoxKind }
   | { type: "set-search-sources"; sources: TrackSource[] }
