@@ -25,6 +25,9 @@ pub fn create_client() -> anyhow::Result<Client> {
     Ok(Client::builder()
         .emulation(Emulation::Chrome124)
         .redirect(wreq::redirect::Policy::limited(10))
+        // Without these a stalled upstream hangs a search, fixup or export indefinitely.
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
         .build()?)
 }
 

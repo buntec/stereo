@@ -1,7 +1,9 @@
 use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicI64, Ordering},
-        Arc,
+        Arc, LazyLock, Mutex,
     },
     time::Duration,
 };
@@ -29,11 +31,48 @@ use crate::{
     youtube,
 };
 
+/// How long collection changes wait before being committed and pushed, so that a burst of
+/// edits/ratings/plays becomes one commit and one network round-trip instead of one per change.
+const GIT_SYNC_DELAY: Duration = Duration::from_secs(5 * 60);
+
+/// Pending debounced syncs, keyed by canonical repo path. An entry exists only while its task is
+/// still waiting out `GIT_SYNC_DELAY`; the task removes it before it starts syncing.
+static SCHEDULED_SYNCS: LazyLock<Mutex<HashMap<PathBuf, tokio::task::JoinHandle<()>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Work for a session's message loop: a message from the browser, or a follow-up posted by a task
+/// the session spawned. Slow work (network, git) runs in spawned tasks so the loop stays
+/// responsive, while any session-state changes it implies still happen in order on the loop.
+enum SessionEvent {
+    Client(Box<MsgClient>),
+    Internal(InternalEvent),
+}
+
+enum InternalEvent {
+    /// A sync that may have updated the repo's working tree finished; the repo's collection list
+    /// is re-sent so the client reopens its collection.
+    RepoSynced {
+        repo: PathBuf,
+    },
+    CloneFinished {
+        id: i64,
+        repo: Option<PathBuf>,
+    },
+    ImportDownloaded {
+        url: String,
+        db_path: PathBuf,
+        keep_user_data: bool,
+        /// Keeps the downloaded file alive until the import has run.
+        _dir: tempfile::TempDir,
+    },
+}
+
 #[derive(Default)]
 struct SessionState {
     pool: Option<sqlx::SqlitePool>,
     collection: Option<Collection>,
     repo: Option<std::path::PathBuf>,
+    repo_sync_task: Option<tokio::task::JoinHandle<()>>,
     search_task: Option<tokio::task::JoinHandle<()>>,
     youtube_playlist_task: Option<tokio::task::JoinHandle<()>>,
     fixup_task: Option<tokio::task::JoinHandle<()>>,
@@ -195,7 +234,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
     tracing::info!("WS connected: {uid}");
 
     let (server_tx, server_rx) = mpsc::channel::<MsgServer>(10_000);
-    let (client_tx, client_rx) = mpsc::channel::<MsgClient>(10_000);
+    let (event_tx, event_rx) = mpsc::channel::<SessionEvent>(10_000);
 
     let home = settings.home_dir();
     let repos_dir = home.join("gitrepos");
@@ -204,7 +243,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
     }
 
     // Spawn send / recv tasks
-    let recv_task = tokio::spawn(recv_loop(ws_stream, client_tx));
+    let recv_task = tokio::spawn(recv_loop(ws_stream, event_tx.clone()));
     let send_task = tokio::spawn(send_loop(server_rx, ws_sink));
 
     // Send initial messages
@@ -243,12 +282,31 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
         }
     });
 
-    let mut client_rx = client_rx;
-    while let Some(msg) = client_rx.recv().await {
-        if let Err(e) =
-            handle_msg(&mut state, &server_tx, &http_client, &home, &repos_dir, msg).await
-        {
-            tracing::error!("Message handling error: {e}");
+    let mut event_rx = event_rx;
+    while let Some(event) = event_rx.recv().await {
+        let (request_id, result) = match event {
+            SessionEvent::Client(msg) => {
+                let request_id = msg.request_id();
+                let ctx = Ctx {
+                    tx: &server_tx,
+                    events: &event_tx,
+                    client: &http_client,
+                    data_home: &home,
+                    home: &repos_dir,
+                };
+                (request_id, handle_msg(&mut state, &ctx, *msg).await)
+            }
+            SessionEvent::Internal(event) => (
+                None,
+                handle_internal(&mut state, &server_tx, &repos_dir, event).await,
+            ),
+        };
+        if let Err(e) = result {
+            tracing::error!("Message handling error: {e:#}");
+            if let Some(id) = request_id {
+                reply_error(&server_tx, id, &format!("{e:#}")).await;
+            }
+            notify(&server_tx, &format!("{e:#}"), "error").await;
         }
     }
 
@@ -266,7 +324,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
 
 async fn recv_loop(
     mut stream: futures::stream::SplitStream<WebSocket>,
-    tx: mpsc::Sender<MsgClient>,
+    tx: mpsc::Sender<SessionEvent>,
 ) {
     while let Some(result) = stream.next().await {
         match result {
@@ -281,7 +339,7 @@ async fn recv_loop(
                 );
                 match serde_json::from_str::<MsgClient>(&text) {
                     Ok(msg) => {
-                        if tx.send(msg).await.is_err() {
+                        if tx.send(SessionEvent::Client(Box::new(msg))).await.is_err() {
                             break;
                         }
                     }
@@ -338,6 +396,29 @@ async fn send_loop(
 }
 
 // ── Message dispatch ──────────────────────────────────────────────────────────
+
+/// Everything a message handler needs besides the session state.
+#[derive(Clone, Copy)]
+struct Ctx<'a> {
+    tx: &'a mpsc::Sender<MsgServer>,
+    /// The session's own event queue, for spawned tasks to post follow-ups.
+    events: &'a mpsc::Sender<SessionEvent>,
+    client: &'a Arc<wreq::Client>,
+    /// Stereo's data dir (account sessions live here).
+    data_home: &'a Path,
+    /// The directory holding the git repos.
+    home: &'a Path,
+}
+
+/// Fails a request/reply message so the client's callback fires instead of waiting forever.
+async fn reply_error(tx: &mpsc::Sender<MsgServer>, id: i64, message: &str) {
+    let _ = tx
+        .send(MsgServer::ErrorReply {
+            id,
+            message: message.to_string(),
+        })
+        .await;
+}
 
 async fn notify(tx: &mpsc::Sender<MsgServer>, msg: &str, kind: &str) {
     let _ = tx
@@ -410,38 +491,173 @@ async fn lock_current_repo(state: &SessionState) -> Option<tokio::sync::OwnedMut
     }
 }
 
-fn git_spawn(state: &SessionState, tx: &mpsc::Sender<MsgServer>) {
-    if let (Some(col), Some(repo)) = (&state.collection, &state.repo) {
-        if !col.path.starts_with(repo) {
-            return;
+fn sync_key(repo: &Path) -> PathBuf {
+    std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf())
+}
+
+/// Commits and pushes `db_path`'s repo after `GIT_SYNC_DELAY`, coalescing with an already pending
+/// sync of that repo. Changes that are still uncommitted if the server stops are picked up by the
+/// startup sync (`git::recover_pending_repositories`).
+async fn schedule_git_sync(tx: &mpsc::Sender<MsgServer>, repo: PathBuf, db_path: PathBuf) {
+    if !db_path.starts_with(&repo) {
+        return;
+    }
+    let key = sync_key(&repo);
+    let newly_scheduled = {
+        let mut scheduled = SCHEDULED_SYNCS.lock().expect("sync schedule poisoned");
+        if scheduled.get(&key).is_some_and(|task| !task.is_finished()) {
+            false
+        } else {
+            let tx = tx.clone();
+            let task_key = key.clone();
+            let task = tokio::spawn(async move {
+                tokio::time::sleep(GIT_SYNC_DELAY).await;
+                SCHEDULED_SYNCS
+                    .lock()
+                    .expect("sync schedule poisoned")
+                    .remove(&task_key);
+                send_git_status(
+                    &tx,
+                    git::SyncReport {
+                        state: crate::message::GitSyncState::Syncing,
+                        message: "Saving collection changes".into(),
+                        retryable: false,
+                    },
+                )
+                .await;
+                let report = git::sync_repository(repo, Some(db_path), false, None).await;
+                send_git_status(&tx, report).await;
+            });
+            scheduled.insert(key, task);
+            true
         }
-        let repo = repo.clone();
-        let db_path = col.path.clone();
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            send_git_status(
-                &tx,
-                git::SyncReport {
-                    state: crate::message::GitSyncState::Syncing,
-                    message: "Saving collection changes".into(),
-                    retryable: false,
-                },
-            )
-            .await;
-            let report = git::sync_repository(repo, Some(db_path), false, None).await;
-            send_git_status(&tx, report).await;
-        });
+    };
+    if newly_scheduled {
+        send_git_status(
+            tx,
+            git::SyncReport {
+                state: crate::message::GitSyncState::LocalChanges,
+                message: format!(
+                    "Changes will be synced within {} minutes",
+                    GIT_SYNC_DELAY.as_secs() / 60
+                ),
+                retryable: true,
+            },
+        )
+        .await;
     }
 }
 
-async fn handle_msg(
+/// Drops a pending debounced sync of `repo`, for callers about to sync it right away.
+fn cancel_scheduled_sync(repo: &Path) {
+    if let Some(task) = SCHEDULED_SYNCS
+        .lock()
+        .expect("sync schedule poisoned")
+        .remove(&sync_key(repo))
+    {
+        task.abort();
+    }
+}
+
+/// Schedules a sync for the open collection after it was written to.
+async fn schedule_collection_sync(state: &SessionState, tx: &mpsc::Sender<MsgServer>) {
+    if let (Some(col), Some(repo)) = (&state.collection, &state.repo) {
+        schedule_git_sync(tx, repo.clone(), col.path.clone()).await;
+    }
+}
+
+/// Repo containing a collection file, if that file lives directly in a git repo.
+fn collection_repo(path: &Path) -> Option<PathBuf> {
+    path.parent()
+        .filter(|parent| parent.join(".git").is_dir())
+        .map(Path::to_path_buf)
+}
+
+async fn handle_internal(
     state: &mut SessionState,
     tx: &mpsc::Sender<MsgServer>,
-    client: &Arc<wreq::Client>,
-    data_home: &std::path::Path,
-    home: &std::path::Path,
-    msg: MsgClient,
+    home: &Path,
+    event: InternalEvent,
 ) -> anyhow::Result<()> {
+    match event {
+        InternalEvent::RepoSynced { repo } => {
+            if state.repo.as_deref() == Some(repo.as_path()) {
+                let _ = tx
+                    .send(MsgServer::Collections {
+                        collections: utils::list_repo_collections(&repo),
+                    })
+                    .await;
+                let _ = tx
+                    .send(MsgServer::GitRemote {
+                        url: git::get_remote(&repo).await,
+                    })
+                    .await;
+            }
+        }
+
+        InternalEvent::CloneFinished { id, repo } => {
+            let path = repo.as_ref().map(|r| r.to_string_lossy().to_string());
+            if let Some(repo) = repo {
+                if let Some(old_pool) = state.pool.take() {
+                    old_pool.close().await;
+                }
+                state.collection = None;
+                state.repo = Some(repo.clone());
+                // Sent before `Repos` so the client adopts the new repo before it re-selects one
+                // from the updated repo list.
+                let _ = tx.send(MsgServer::CloneRepoReply { id, path }).await;
+                let _ = tx
+                    .send(MsgServer::Collections {
+                        collections: utils::list_repo_collections(&repo),
+                    })
+                    .await;
+                let _ = tx
+                    .send(MsgServer::GitRemote {
+                        url: git::get_remote(&repo).await,
+                    })
+                    .await;
+                let _ = tx
+                    .send(MsgServer::Repos {
+                        repos: utils::list_repos(home).await,
+                    })
+                    .await;
+            } else {
+                let _ = tx.send(MsgServer::CloneRepoReply { id, path: None }).await;
+            }
+        }
+
+        InternalEvent::ImportDownloaded {
+            url,
+            db_path,
+            keep_user_data,
+            _dir,
+        } => {
+            let _repo_guard = lock_current_repo(state).await;
+            let Some(pool) = state.pool() else {
+                notify(
+                    tx,
+                    &format!("Import of {url} skipped: no collection open"),
+                    "error",
+                )
+                .await;
+                return Ok(());
+            };
+            db::import_from_db(pool, &db_path, keep_user_data).await?;
+            update_collection_info(state, tx).await;
+            schedule_collection_sync(state, tx).await;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> anyhow::Result<()> {
+    let Ctx {
+        tx,
+        events,
+        client,
+        data_home,
+        home,
+    } = *ctx;
     match msg {
         MsgClient::Heartbeat { timestamp } => {
             let _ = tx.send(MsgServer::Heartbeat { timestamp }).await;
@@ -453,103 +669,49 @@ async fn handle_msg(
                 notify(tx, "Invalid repo path", "error").await;
                 return Ok(());
             }
+            // The client re-selects its repo whenever the repo list changes; don't stack
+            // another update sync on one that is still running for the same repo.
+            if state.repo.as_deref() == Some(repo_path.as_path())
+                && state
+                    .repo_sync_task
+                    .as_ref()
+                    .is_some_and(|task| !task.is_finished())
+            {
+                return Ok(());
+            }
             if let Some(old_pool) = state.pool.take() {
                 old_pool.close().await;
             }
             state.collection = None;
-            send_git_status(
-                tx,
-                git::sync_repository(repo_path.clone(), None, true, None).await,
-            )
-            .await;
             state.repo = Some(repo_path.clone());
-            let _ = tx
-                .send(MsgServer::Collections {
-                    collections: utils::list_repo_collections(&repo_path),
-                })
-                .await;
-            let _ = tx
-                .send(MsgServer::GitRemote {
-                    url: git::get_remote(&repo_path).await,
-                })
-                .await;
+            cancel_scheduled_sync(&repo_path);
+            // Taken before spawning so that a `SetCollection` can't open this repo's databases
+            // until the sync (which may replace them) is done.
+            let guard = git::lock_repository(&repo_path).await;
+            state.repo_sync_task = Some(spawn_update_sync(
+                tx,
+                events,
+                guard,
+                repo_path,
+                None,
+                "Checking for upstream changes",
+            ));
         }
 
         MsgClient::CloneRepo { id, url } => {
             let repo_name = git::repo_name_from_url(&url);
             let repo_path = home.join(&repo_name);
-
-            if repo_path.join(".git").exists() {
-                // Already a git repo — activate it (may have a different remote)
-                let existing = git::get_remote(&repo_path).await;
-                if existing.as_deref() != Some(&url) {
-                    if existing.is_none() {
-                        // No remote set — add the provided URL
-                        let _ = git::set_remote(&repo_path, Some(&url)).await;
-                    } else {
-                        notify(
-                            tx,
-                            &format!(
-                                "{repo_name}/ already cloned with a different remote — activating it"
-                            ),
-                            "info",
-                        )
-                        .await;
-                    }
-                }
-            } else if repo_path.exists() {
-                notify(
-                    tx,
-                    &format!("Directory {repo_name}/ exists but is not a git repo"),
-                    "error",
-                )
-                .await;
-                let _ = tx.send(MsgServer::CloneRepoReply { id, path: None }).await;
-                return Ok(());
-            } else {
-                if let Err(e) = git::clone_repo(&url, &repo_path).await {
-                    notify(tx, &format!("Clone failed: {e}"), "error").await;
-                    let _ = tx.send(MsgServer::CloneRepoReply { id, path: None }).await;
-                    return Ok(());
-                }
-                if !git::check_push_access(&repo_path).await {
-                    notify(
-                        tx,
-                        "No push access to this repo — changes will be stored locally only",
-                        "warn",
-                    )
+            let tx = tx.clone();
+            let events = events.clone();
+            tokio::spawn(async move {
+                let repo = clone_or_reuse_repo(&tx, &url, &repo_name, repo_path).await;
+                let _ = events
+                    .send(SessionEvent::Internal(InternalEvent::CloneFinished {
+                        id,
+                        repo,
+                    }))
                     .await;
-                }
-            }
-
-            if let Some(old_pool) = state.pool.take() {
-                old_pool.close().await;
-            }
-            state.collection = None;
-            state.repo = Some(repo_path.clone());
-            // Sent before `Repos` so the client adopts the new repo before it re-selects one
-            // from the updated repo list.
-            let _ = tx
-                .send(MsgServer::CloneRepoReply {
-                    id,
-                    path: Some(repo_path.to_string_lossy().to_string()),
-                })
-                .await;
-            let _ = tx
-                .send(MsgServer::Collections {
-                    collections: utils::list_repo_collections(&repo_path),
-                })
-                .await;
-            let _ = tx
-                .send(MsgServer::GitRemote {
-                    url: git::get_remote(&repo_path).await,
-                })
-                .await;
-            let _ = tx
-                .send(MsgServer::Repos {
-                    repos: utils::list_repos(home).await,
-                })
-                .await;
+            });
         }
 
         MsgClient::ListRepos => {
@@ -611,11 +773,12 @@ async fn handle_msg(
                             repos: utils::list_repos(home).await,
                         })
                         .await;
-                    send_git_status(
-                        tx,
-                        git::sync_repository(git_dir.to_path_buf(), None, false, None).await,
-                    )
-                    .await;
+                    let tx = tx.clone();
+                    let git_dir = git_dir.to_path_buf();
+                    tokio::spawn(async move {
+                        let report = git::sync_repository(git_dir, None, false, None).await;
+                        send_git_status(&tx, report).await;
+                    });
                 }
                 Err(e) => notify(tx, &format!("Failed to set git remote: {e}"), "error").await,
             }
@@ -626,34 +789,32 @@ async fn handle_msg(
                 notify(tx, "No repo selected", "error").await;
                 return Ok(());
             };
-            let collection_path = state.collection.as_ref().map(|c| c.path.clone());
+            if state
+                .repo_sync_task
+                .as_ref()
+                .is_some_and(|task| !task.is_finished())
+            {
+                notify(tx, "Repository sync already in progress", "info").await;
+                return Ok(());
+            }
             if let Some(pool) = state.pool.take() {
                 pool.close().await;
             }
             state.collection = None;
+            cancel_scheduled_sync(&repo);
             let resolution = match sync_msg {
                 MsgClient::ResolveGitConflict { strategy } => Some(strategy),
                 _ => None,
             };
-            let report = git::sync_repository(repo.clone(), None, true, resolution).await;
-            let synchronized = matches!(
-                report.state,
-                crate::message::GitSyncState::Synced | crate::message::GitSyncState::LocalOnly
-            );
-            send_git_status(tx, report).await;
-            if let Some(path) = collection_path.filter(|path| path.exists()) {
-                if state.set_collection(path, true).await? {
-                    let _ = tx.send(MsgServer::ReloadTracks {}).await;
-                    update_collection_info(state, tx).await;
-                }
-            }
-            if synchronized {
-                let _ = tx
-                    .send(MsgServer::Collections {
-                        collections: utils::list_repo_collections(&repo),
-                    })
-                    .await;
-            }
+            let guard = git::lock_repository(&repo).await;
+            state.repo_sync_task = Some(spawn_update_sync(
+                tx,
+                events,
+                guard,
+                repo,
+                resolution,
+                "Synchronizing repository",
+            ));
         }
 
         MsgClient::GetSpotifySession { id } => {
@@ -765,10 +926,12 @@ async fn handle_msg(
         MsgClient::DeleteTracks { ids } => {
             let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
-                db::delete_tracks(pool, &ids).await?;
+                let deleted = db::delete_tracks(pool, &ids).await?;
                 let _ = tx.send(MsgServer::ReloadTracks {}).await;
                 update_collection_info(state, tx).await;
-                git_spawn(state, tx);
+                if deleted > 0 {
+                    schedule_collection_sync(state, tx).await;
+                }
             }
         }
 
@@ -801,10 +964,7 @@ async fn handle_msg(
                         return Ok(());
                     }
                 }
-                let target_repo = path
-                    .parent()
-                    .filter(|parent| parent.join(".git").is_dir())
-                    .map(std::path::Path::to_path_buf);
+                let target_repo = collection_repo(&path);
                 let target_guard = match &target_repo {
                     Some(repo) => Some(git::lock_repository(repo).await),
                     None => None,
@@ -836,9 +996,9 @@ async fn handle_msg(
                     export_pool.close().await;
                     drop(target_guard);
                     if let Some(repo) = target_repo {
-                        let report =
-                            git::sync_repository(repo, Some(path.clone()), false, None).await;
-                        send_git_status(tx, report).await;
+                        if !new_tracks.is_empty() {
+                            schedule_git_sync(tx, repo, path.clone()).await;
+                        }
                     }
 
                     if source_collection.is_some() {
@@ -859,7 +1019,7 @@ async fn handle_msg(
                             }
                             let _ = tx.send(MsgServer::ReloadTracks {}).await;
                             update_collection_info(state, tx).await;
-                            git_spawn(state, tx);
+                            schedule_collection_sync(state, tx).await;
                         }
                     }
 
@@ -1108,8 +1268,7 @@ async fn handle_msg(
                 if matched_n > 0 {
                     let _ = tx.send(MsgServer::ReloadTracks {}).await;
                     if let Some(repo) = repo {
-                        let report = git::sync_repository(repo, Some(col.path), false, None).await;
-                        send_git_status(&tx, report).await;
+                        schedule_git_sync(&tx, repo, col.path).await;
                     }
                 }
                 let _ = tx
@@ -1285,12 +1444,20 @@ async fn handle_msg(
         }
 
         MsgClient::CreateYtAnonPlaylist { id, yt_ids } => {
-            match scraper::yt_create_anon_playlist(client, &yt_ids).await {
-                Ok(url) => {
-                    let _ = tx.send(MsgServer::YtAnonPlaylist { id, url }).await;
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                match scraper::yt_create_anon_playlist(&client, &yt_ids).await {
+                    Ok(url) => {
+                        let _ = tx.send(MsgServer::YtAnonPlaylist { id, url }).await;
+                    }
+                    Err(e) => {
+                        let message = format!("Failed to create playlist: {e}");
+                        reply_error(&tx, id, &message).await;
+                        notify(&tx, &message, "error").await;
+                    }
                 }
-                Err(e) => notify(tx, &format!("Failed to create playlist: {e}"), "error").await,
-            }
+            });
         }
 
         MsgClient::UpdateTrack { old, new } => {
@@ -1301,17 +1468,19 @@ async fn handle_msg(
                     db::delete_track(pool, &old.yt_id).await?;
                 }
                 update_collection_info(state, tx).await;
-                git_spawn(state, tx);
+                schedule_collection_sync(state, tx).await;
             }
         }
 
         MsgClient::CollectionContainsId { id, yt_id } => {
-            if let Some(pool) = state.pool() {
-                let contains_id = db::track_exists(pool, &yt_id).await?;
-                let _ = tx
-                    .send(MsgServer::CollectionContainsIdResponse { id, contains_id })
-                    .await;
-            }
+            let Some(pool) = state.pool() else {
+                reply_error(tx, id, "No collection open").await;
+                return Ok(());
+            };
+            let contains_id = db::track_exists(pool, &yt_id).await?;
+            let _ = tx
+                .send(MsgServer::CollectionContainsIdResponse { id, contains_id })
+                .await;
         }
 
         MsgClient::SearchCancelAll {} => {
@@ -1393,6 +1562,9 @@ async fn handle_msg(
                     ));
                     state.search_task = Some(handle);
                 }
+            } else {
+                notify(tx, "Open a collection to search for new releases", "info").await;
+                let _ = tx.send(MsgServer::SearchComplete { query_id }).await;
             }
         }
 
@@ -1417,25 +1589,24 @@ async fn handle_msg(
         }
 
         MsgClient::FixupTrack { id, track } => {
-            match scraper::fixup_track(client.clone(), track).await {
-                Ok(found @ Some(_)) => {
-                    let _ = tx
-                        .send(MsgServer::FixupTrackReply { id, track: found })
-                        .await;
-                }
-                Ok(None) => {
-                    notify(tx, "Fixup found no matching track", "info").await;
-                    let _ = tx
-                        .send(MsgServer::FixupTrackReply { id, track: None })
-                        .await;
-                }
-                Err(e) => {
-                    notify(tx, &format!("Fixup failed: {e}"), "error").await;
-                    let _ = tx
-                        .send(MsgServer::FixupTrackReply { id, track: None })
-                        .await;
-                }
-            }
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let found = match scraper::fixup_track(client, track).await {
+                    Ok(found @ Some(_)) => found,
+                    Ok(None) => {
+                        notify(&tx, "Fixup found no matching track", "info").await;
+                        None
+                    }
+                    Err(e) => {
+                        notify(&tx, &format!("Fixup failed: {e}"), "error").await;
+                        None
+                    }
+                };
+                let _ = tx
+                    .send(MsgServer::FixupTrackReply { id, track: found })
+                    .await;
+            });
         }
 
         MsgClient::FixupTracks { id, tracks } => {
@@ -1507,11 +1678,12 @@ async fn handle_msg(
         MsgClient::UpdateRating { yt_id, rating } => {
             let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
-                db::update_rating(pool, &yt_id, rating).await?;
-                if let Some(track) = db::get_track(pool, &yt_id).await? {
-                    let _ = tx.send(MsgServer::TrackUpdate { track }).await;
+                if db::update_rating(pool, &yt_id, rating).await? > 0 {
+                    if let Some(track) = db::get_track(pool, &yt_id).await? {
+                        let _ = tx.send(MsgServer::TrackUpdate { track }).await;
+                    }
+                    schedule_collection_sync(state, tx).await;
                 }
-                git_spawn(state, tx);
             }
         }
 
@@ -1519,53 +1691,57 @@ async fn handle_msg(
             let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
                 let last_played = chrono::Local::now().date_naive();
-                db::inc_play_count(pool, &yt_id, last_played).await?;
-                if let Some(track) = db::get_track(pool, &yt_id).await? {
-                    let _ = tx.send(MsgServer::TrackUpdate { track }).await;
+                // Plays of tracks that aren't in the collection (e.g. search results) are no-ops.
+                if db::inc_play_count(pool, &yt_id, last_played).await? > 0 {
+                    if let Some(track) = db::get_track(pool, &yt_id).await? {
+                        let _ = tx.send(MsgServer::TrackUpdate { track }).await;
+                    }
+                    schedule_collection_sync(state, tx).await;
                 }
-                git_spawn(state, tx);
             }
         }
 
         MsgClient::GetRows(content) => {
-            if let Some(pool) = state.pool() {
-                let n = db::count_rows(pool, &content.filter_model).await?;
-                let rows = db::get_rows(
-                    pool,
-                    content.start_row,
-                    content.end_row,
-                    &content.sort_model,
-                    &content.filter_model,
-                )
-                .await?;
-                let _ = tx
-                    .send(MsgServer::Rows {
-                        id: content.id,
-                        rows,
-                        last_row: Some(n),
-                    })
-                    .await;
-            }
+            let Some(pool) = state.pool() else {
+                reply_error(tx, content.id, "No collection open").await;
+                return Ok(());
+            };
+            let n = db::count_rows(pool, &content.filter_model).await?;
+            let rows = db::get_rows(
+                pool,
+                content.start_row,
+                content.end_row,
+                &content.sort_model,
+                &content.filter_model,
+            )
+            .await?;
+            let _ = tx
+                .send(MsgServer::Rows {
+                    id: content.id,
+                    rows,
+                    last_row: Some(n),
+                })
+                .await;
         }
 
         MsgClient::GetRowIndex(content) => {
-            if let Some(pool) = state.pool() {
-                if !content.sort_model.is_empty() {
-                    let index = db::get_row_index(
-                        pool,
-                        &content.yt_id,
-                        &content.sort_model,
-                        &content.filter_model,
-                    )
-                    .await?;
-                    let _ = tx
-                        .send(MsgServer::RowIndex {
-                            id: content.id,
-                            index,
-                        })
-                        .await;
-                }
-            }
+            let Some(pool) = state.pool() else {
+                reply_error(tx, content.id, "No collection open").await;
+                return Ok(());
+            };
+            let index = db::get_row_index(
+                pool,
+                &content.yt_id,
+                &content.sort_model,
+                &content.filter_model,
+            )
+            .await?;
+            let _ = tx
+                .send(MsgServer::RowIndex {
+                    id: content.id,
+                    index,
+                })
+                .await;
         }
 
         MsgClient::AddTrack {
@@ -1577,7 +1753,7 @@ async fn handle_msg(
                 db::insert_track(pool, &track, !overwrite_existing).await?;
                 let _ = tx.send(MsgServer::TrackUpdate { track }).await;
                 update_collection_info(state, tx).await;
-                git_spawn(state, tx);
+                schedule_collection_sync(state, tx).await;
             }
         }
 
@@ -1590,7 +1766,7 @@ async fn handle_msg(
                 db::insert_tracks(pool, &tracks, !overwrite_existing).await?;
                 let _ = tx.send(MsgServer::ReloadTracks {}).await;
                 update_collection_info(state, tx).await;
-                git_spawn(state, tx);
+                schedule_collection_sync(state, tx).await;
             }
         }
 
@@ -1645,12 +1821,18 @@ async fn handle_msg(
                     path_completions: None,
                 })
                 .await;
-            git_spawn(state, tx);
+            schedule_collection_sync(state, tx).await;
         }
 
         MsgClient::SetCollection { id, path } => {
             let p = std::path::PathBuf::from(&path);
+            // Don't open a database while an update sync may still be replacing it.
+            let repo_guard = match collection_repo(&p) {
+                Some(repo) => Some(git::lock_repository(&repo).await),
+                None => None,
+            };
             let valid = state.set_collection(p.clone(), true).await?;
+            drop(repo_guard);
             if valid {
                 let _ = tx
                     .send(MsgServer::CollectionInfo {
@@ -1682,86 +1864,161 @@ async fn handle_msg(
         MsgClient::ImportFrom {
             path,
             keep_user_data,
-        } => {
-            let _repo_guard = lock_current_repo(state).await;
-            let src = match utils::is_file_or_url(&path) {
-                Some(k) => k,
-                None => {
-                    notify(
-                        tx,
-                        &format!("Import source {path} is neither file path nor URL"),
-                        "error",
-                    )
-                    .await;
-                    return Ok(());
-                }
-            };
-
-            if let Some(pool) = state.pool() {
-                let db_path = if src == PathKind::Url {
-                    let tmp = tempfile::tempdir()?;
-                    let dest = tmp.path().join("temp-collection.db");
-                    if let Err(e) = utils::download_file(&path, &dest).await {
-                        notify(tx, &format!("Download failed: {e}"), "error").await;
+        } => match utils::is_file_or_url(&path) {
+            None => {
+                notify(
+                    tx,
+                    &format!("Import source {path} is neither file path nor URL"),
+                    "error",
+                )
+                .await;
+            }
+            Some(PathKind::Url) => {
+                // Download off the loop; the import itself runs back on it (it needs the pool).
+                let tx = tx.clone();
+                let events = events.clone();
+                tokio::spawn(async move {
+                    match download_collection(&path).await {
+                        Ok((dir, db_path)) => {
+                            let _ = events
+                                .send(SessionEvent::Internal(InternalEvent::ImportDownloaded {
+                                    url: path,
+                                    db_path,
+                                    keep_user_data,
+                                    _dir: dir,
+                                }))
+                                .await;
+                        }
+                        Err(e) => notify(&tx, &format!("Import failed: {e:#}"), "error").await,
+                    }
+                });
+            }
+            Some(PathKind::File) => {
+                let _repo_guard = lock_current_repo(state).await;
+                if let Some(pool) = state.pool() {
+                    let db_path = std::path::PathBuf::from(&path);
+                    if !db::validate_db_schema(&db_path).await {
+                        notify(tx, &format!("Invalid collection: {path}"), "error").await;
                         return Ok(());
                     }
-                    // keep tmp alive until we're done
-                    let result = if db::validate_db_schema(&dest).await {
-                        db::import_from_db(pool, &dest, keep_user_data).await
-                    } else {
-                        notify(tx, &format!("Invalid collection at {path}"), "error").await;
-                        return Ok(());
-                    };
-                    drop(tmp);
-                    result?;
+                    db::import_from_db(pool, &db_path, keep_user_data).await?;
                     update_collection_info(state, tx).await;
-                    git_spawn(state, tx);
-                    return Ok(());
-                } else {
-                    std::path::PathBuf::from(&path)
-                };
-
-                if !db::validate_db_schema(&db_path).await {
-                    notify(tx, &format!("Invalid collection: {path}"), "error").await;
-                    return Ok(());
+                    schedule_collection_sync(state, tx).await;
                 }
-                db::import_from_db(pool, &db_path, keep_user_data).await?;
-                update_collection_info(state, tx).await;
-                git_spawn(state, tx);
             }
-        }
+        },
 
         MsgClient::CheckImportFrom { path } => {
-            let is_valid = match utils::is_file_or_url(&path) {
-                None => false,
-                Some(PathKind::File) => {
-                    db::validate_db_schema(&std::path::PathBuf::from(&path)).await
-                }
-                Some(PathKind::Url) => {
-                    let tmp = match tempfile::tempdir() {
-                        Ok(t) => t,
-                        Err(_) => {
-                            let _ = tx
-                                .send(MsgServer::ImportFromValid {
-                                    path,
-                                    is_valid: false,
-                                })
-                                .await;
-                            return Ok(());
-                        }
-                    };
-                    let dest = tmp.path().join("temp-collection.db");
-                    match utils::download_file(&path, &dest).await {
-                        Ok(()) => db::validate_db_schema(&dest).await,
-                        Err(_) => false,
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let is_valid = match utils::is_file_or_url(&path) {
+                    None => false,
+                    Some(PathKind::File) => {
+                        db::validate_db_schema(&std::path::PathBuf::from(&path)).await
                     }
-                }
-            };
-            let _ = tx.send(MsgServer::ImportFromValid { path, is_valid }).await;
+                    Some(PathKind::Url) => download_collection(&path).await.is_ok(),
+                };
+                let _ = tx.send(MsgServer::ImportFromValid { path, is_valid }).await;
+            });
         }
     }
 
     Ok(())
+}
+
+/// Downloads a collection into a fresh temp dir and checks that it is a valid collection.
+async fn download_collection(url: &str) -> anyhow::Result<(tempfile::TempDir, PathBuf)> {
+    let dir = tempfile::tempdir()?;
+    let dest = dir.path().join("temp-collection.db");
+    utils::download_file(url, &dest)
+        .await
+        .context("download failed")?;
+    anyhow::ensure!(
+        db::validate_db_schema(&dest).await,
+        "{url} is not a valid collection"
+    );
+    Ok((dir, dest))
+}
+
+/// Runs a sync that may update the repo's working tree (the caller has closed its pool and holds
+/// the repo lock), then posts `RepoSynced` so the session re-sends the repo's collections.
+fn spawn_update_sync(
+    tx: &mpsc::Sender<MsgServer>,
+    events: &mpsc::Sender<SessionEvent>,
+    guard: tokio::sync::OwnedMutexGuard<()>,
+    repo: PathBuf,
+    resolution: Option<crate::message::GitConflictStrategy>,
+    status: &str,
+) -> tokio::task::JoinHandle<()> {
+    let tx = tx.clone();
+    let events = events.clone();
+    let status = status.to_string();
+    tokio::spawn(async move {
+        send_git_status(
+            &tx,
+            git::SyncReport {
+                state: crate::message::GitSyncState::Syncing,
+                message: status,
+                retryable: false,
+            },
+        )
+        .await;
+        let report =
+            git::sync_repository_with_guard(guard, repo.clone(), None, true, resolution).await;
+        send_git_status(&tx, report).await;
+        let _ = events
+            .send(SessionEvent::Internal(InternalEvent::RepoSynced { repo }))
+            .await;
+    })
+}
+
+/// Clones `url` into `repo_path`, or activates an existing clone there. Returns the repo to
+/// activate, or `None` (after notifying the client) if there is none.
+async fn clone_or_reuse_repo(
+    tx: &mpsc::Sender<MsgServer>,
+    url: &str,
+    repo_name: &str,
+    repo_path: PathBuf,
+) -> Option<PathBuf> {
+    if repo_path.join(".git").exists() {
+        // Already a git repo — activate it (may have a different remote)
+        let existing = git::get_remote(&repo_path).await;
+        if existing.as_deref() != Some(url) {
+            if existing.is_none() {
+                // No remote set — add the provided URL
+                let _ = git::set_remote(&repo_path, Some(url)).await;
+            } else {
+                notify(
+                    tx,
+                    &format!("{repo_name}/ already cloned with a different remote — activating it"),
+                    "info",
+                )
+                .await;
+            }
+        }
+    } else if repo_path.exists() {
+        notify(
+            tx,
+            &format!("Directory {repo_name}/ exists but is not a git repo"),
+            "error",
+        )
+        .await;
+        return None;
+    } else {
+        if let Err(e) = git::clone_repo(url, &repo_path).await {
+            notify(tx, &format!("Clone failed: {e}"), "error").await;
+            return None;
+        }
+        if !git::check_push_access(&repo_path).await {
+            notify(
+                tx,
+                "No push access to this repo — changes will be stored locally only",
+                "warn",
+            )
+            .await;
+        }
+    }
+    Some(repo_path)
 }
 
 #[cfg(test)]

@@ -40,6 +40,11 @@ pub enum MsgServer {
     Repos {
         repos: Vec<Repo>,
     },
+    /// Generic failure reply to a request/reply message (see `MsgClient::request_id`).
+    ErrorReply {
+        id: i64,
+        message: String,
+    },
     /// Reply to `CloneRepo`: the path of the repo that is now active, or `None` if cloning failed.
     CloneRepoReply {
         id: i64,
@@ -465,4 +470,35 @@ pub enum MsgClient {
 pub enum GitConflictStrategy {
     KeepLocal,
     KeepUpstream,
+}
+
+impl MsgClient {
+    /// The id of a request the client is awaiting a reply to (sent via its `requestReply`), so a
+    /// failed request can be answered with `MsgServer::ErrorReply`. Messages whose `id` is a
+    /// job id from a separate client-side counter (exports, fixups, backfills) are excluded, as
+    /// their ids could collide with pending request ids.
+    pub fn request_id(&self) -> Option<i64> {
+        match self {
+            Self::GetRows(content) => Some(content.id),
+            Self::GetRowIndex(content) => Some(content.id),
+            Self::SetCollection { id, .. }
+            | Self::GetPathCompletions { id, .. }
+            | Self::CollectionContainsId { id, .. }
+            | Self::CreateYtAnonPlaylist { id, .. }
+            | Self::GetSpotifySession { id }
+            | Self::SetSpotifySession { id, .. }
+            | Self::DetectSpotifySession { id }
+            | Self::GetSpotifyPlaylistInfo { id, .. }
+            | Self::GetYouTubePlaylist { id, .. }
+            | Self::CloneRepo { id, .. }
+            | Self::ValidateTrack { id, .. }
+            | Self::CheckSpotifyId { id, .. }
+            | Self::FixupTrack { id, .. }
+            | Self::GetYouTubeSession { id }
+            | Self::SetYouTubeCredentials { id, .. }
+            | Self::DisconnectYouTubeSession { id }
+            | Self::ExchangeYouTubeCode { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
 }

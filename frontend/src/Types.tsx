@@ -268,6 +268,7 @@ export type ServerMsg =
     }
   | { type: "repos"; repos: IRepo[] }
   | { type: "clone-repo-reply"; id: number; path: string | null }
+  | { type: "error-reply"; id: number; message: string }
   | { type: "collections"; collections: ICollection[] }
   | {
       type: "collection-stats";

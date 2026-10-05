@@ -212,26 +212,28 @@ pub async fn update_rating(
     pool: &SqlitePool,
     yt_id: &str,
     rating: Option<i64>,
-) -> anyhow::Result<()> {
-    sqlx::query("UPDATE tracks SET rating = ? WHERE yt_id = ?")
+) -> anyhow::Result<u64> {
+    Ok(sqlx::query("UPDATE tracks SET rating = ? WHERE yt_id = ?")
         .bind(rating)
         .bind(yt_id)
         .execute(pool)
-        .await?;
-    Ok(())
+        .await?
+        .rows_affected())
 }
 
 pub async fn inc_play_count(
     pool: &SqlitePool,
     yt_id: &str,
     last_played: chrono::NaiveDate,
-) -> anyhow::Result<()> {
-    sqlx::query("UPDATE tracks SET play_count = play_count + 1, last_played = ? WHERE yt_id = ?")
-        .bind(last_played.format("%Y-%m-%d").to_string())
-        .bind(yt_id)
-        .execute(pool)
-        .await?;
-    Ok(())
+) -> anyhow::Result<u64> {
+    Ok(sqlx::query(
+        "UPDATE tracks SET play_count = play_count + 1, last_played = ? WHERE yt_id = ?",
+    )
+    .bind(last_played.format("%Y-%m-%d").to_string())
+    .bind(yt_id)
+    .execute(pool)
+    .await?
+    .rows_affected())
 }
 
 pub async fn get_tracks_missing_sp_id(pool: &SqlitePool) -> anyhow::Result<Vec<Track>> {

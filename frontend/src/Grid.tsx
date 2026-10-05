@@ -266,11 +266,7 @@ const SearchPlayControlRenderer: React.FC<
       context.requestReply(
         { type: "collection-contains-id", yt_id: data.yt_id },
         (msg) => {
-          if ("contains_id" in msg) {
-            setExists(msg.contains_id);
-          } else {
-            throw new Error("unexpected response shape");
-          }
+          setExists("contains_id" in msg ? msg.contains_id : null);
         },
       );
     }

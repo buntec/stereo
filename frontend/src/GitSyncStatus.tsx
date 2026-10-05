@@ -35,6 +35,9 @@ export default function GitSyncStatus({
     return null;
   }
   const label = gitSyncLabels[state];
+  // Pending local changes are synced on a timer; the button syncs them right away.
+  const retryLabel =
+    state === "local-changes" ? "Sync now" : "Retry repository synchronization";
 
   return (
     <>
@@ -48,8 +51,8 @@ export default function GitSyncStatus({
           <IconButton
             size="sm"
             variant="ghost"
-            label="Retry repository synchronization"
-            tooltip="Retry repository synchronization"
+            label={retryLabel}
+            tooltip={retryLabel}
             icon={<ReloadIcon />}
             onClick={onRetry}
           />

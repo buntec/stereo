@@ -537,6 +537,7 @@ const reducer = (state: State, action: Action): State => {
     case "spotify-playlist-info":
     case "youtube-playlist-info":
     case "clone-repo-reply":
+    case "error-reply": // the server also sends a notification with the reason
       return { ...state };
 
     case "start-spotify-backfill":

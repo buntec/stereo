@@ -46,26 +46,33 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         onOpen?.();
       };
 
+      // A throwing reply callback must not stop the rest of the batch from being handled.
+      const resolveCallback = (msg: { id?: unknown }) => {
+        if (typeof msg.id !== "number") return;
+        const cb = callbacks.current.get(msg.id);
+        callbacks.current.delete(msg.id);
+        try {
+          cb?.(msg as TMsgI);
+        } catch (err) {
+          logger.error(`Reply callback for request ${msg.id} failed`, err);
+        }
+      };
+
       ws.current.onmessage = (event) => {
+        let data;
         try {
           logger.debug(`Received WS message: ${event.data}`);
-          const data = JSON.parse(event.data);
-          if (Object.hasOwn(data, "id")) {
-            callbacks.current.get(data.id)?.(data);
-            callbacks.current.delete(data.id);
-          }
-          if (Array.isArray(data)) {
-            data.forEach((msg) => {
-              if (Object.hasOwn(msg, "id")) {
-                callbacks.current.get(msg.id)?.(msg);
-                callbacks.current.delete(msg.id);
-              }
-            });
-          }
-          onMessage(data);
+          data = JSON.parse(event.data);
         } catch {
           logger.warn(`Failed to parse WS message to JSON: ${event.data}`);
+          return;
         }
+        if (Array.isArray(data)) {
+          data.forEach(resolveCallback);
+        } else {
+          resolveCallback(data);
+        }
+        onMessage(data);
       };
 
       ws.current.onerror = (err: Event) => {

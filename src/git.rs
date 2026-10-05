@@ -9,7 +9,10 @@ use std::{
 use anyhow::Context;
 use serde_json::Value;
 use sqlx::{sqlite::SqliteConnectOptions, Connection};
-use tokio::{process::Command, sync::Mutex as AsyncMutex};
+use tokio::{
+    process::Command,
+    sync::{Mutex as AsyncMutex, OwnedMutexGuard},
+};
 
 use crate::{
     db,
@@ -23,7 +26,13 @@ const DIRTY_FILE: &str = "stereo-dirty";
 const MERGE_MARKER: &str = "stereo-merge-in-progress";
 const NEEDS_SYNC_FILE: &str = "stereo-needs-sync";
 
+/// Guards a repo's working tree and index: held by anything that writes collection databases or
+/// runs Git commands that touch tracked files.
 static REPO_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Serializes a repo's network phase (fetch, merge with upstream, push). Background syncs drop
+/// the repo lock before taking this one, so database writes never wait on the network.
+static NETWORK_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static RETRY_WORKERS: LazyLock<Mutex<HashSet<PathBuf>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -66,13 +75,24 @@ impl std::fmt::Display for GitFailure {
 
 impl std::error::Error for GitFailure {}
 
-fn repo_lock(repo: &Path) -> Arc<AsyncMutex<()>> {
+fn lock_for(
+    registry: &Mutex<HashMap<PathBuf, Arc<AsyncMutex<()>>>>,
+    repo: &Path,
+) -> Arc<AsyncMutex<()>> {
     let key = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
-    let mut locks = REPO_LOCKS.lock().expect("repo lock registry poisoned");
+    let mut locks = registry.lock().expect("lock registry poisoned");
     locks
         .entry(key)
         .or_insert_with(|| Arc::new(AsyncMutex::new(())))
         .clone()
+}
+
+fn repo_lock(repo: &Path) -> Arc<AsyncMutex<()>> {
+    lock_for(&REPO_LOCKS, repo)
+}
+
+fn network_lock(repo: &Path) -> Arc<AsyncMutex<()>> {
+    lock_for(&NETWORK_LOCKS, repo)
 }
 
 async fn run_git(repo: &Path, args: &[&str], timeout: Duration) -> Result<Output, GitFailure> {
@@ -852,8 +872,12 @@ async fn merge_diverged(
     ))
 }
 
+/// Runs a sync while holding the repo lock in `repo_guard`. Without `allow_update` nothing past
+/// the local commit touches the working tree or index, so the repo lock is released at that
+/// point and only the network lock is held for fetch/push.
 async fn sync_locked(
     repo: &Path,
+    repo_guard: &mut Option<OwnedMutexGuard<()>>,
     db_path: Option<&Path>,
     allow_update: bool,
     resolution: Option<GitConflictStrategy>,
@@ -918,6 +942,9 @@ async fn sync_locked(
             true,
         );
     }
+    if !allow_update {
+        repo_guard.take();
+    }
     if get_remote(repo).await.is_none() {
         return SyncReport::new(
             GitSyncState::LocalOnly,
@@ -925,6 +952,8 @@ async fn sync_locked(
             false,
         );
     }
+    let network = network_lock(repo);
+    let _network_guard = network.lock().await;
     let mut branch = match current_branch(repo).await {
         Ok(branch) => branch,
         Err(e) => return failure_report(&e),
@@ -1080,10 +1109,29 @@ pub async fn sync_repository(
     allow_update: bool,
     resolution: Option<GitConflictStrategy>,
 ) -> SyncReport {
-    let lock = repo_lock(&repo);
-    let _guard = lock.lock().await;
-    let report = sync_locked(&repo, db_path.as_deref(), allow_update, resolution).await;
-    drop(_guard);
+    let guard = lock_repository(&repo).await;
+    sync_repository_with_guard(guard, repo, db_path, allow_update, resolution).await
+}
+
+/// Like [`sync_repository`], for a caller that already holds the repo lock — e.g. so that it can
+/// close its database pool and be sure nothing reopens one before the sync has taken over.
+pub async fn sync_repository_with_guard(
+    guard: OwnedMutexGuard<()>,
+    repo: PathBuf,
+    db_path: Option<PathBuf>,
+    allow_update: bool,
+    resolution: Option<GitConflictStrategy>,
+) -> SyncReport {
+    let mut guard = Some(guard);
+    let report = sync_locked(
+        &repo,
+        &mut guard,
+        db_path.as_deref(),
+        allow_update,
+        resolution,
+    )
+    .await;
+    drop(guard);
     if report.state == GitSyncState::Offline {
         schedule_offline_retry(repo);
     }
@@ -1202,6 +1250,51 @@ mod tests {
             .await
             .unwrap();
         assert!(ids.contains("two"));
+    }
+
+    #[tokio::test]
+    async fn background_sync_releases_repo_lock_during_network_phase() {
+        let temp = tempfile::tempdir().unwrap();
+        let remote = temp.path().join("remote.git");
+        std::fs::create_dir(&remote).unwrap();
+        command(&remote, &["init", "--bare"]);
+        let repo = temp.path().join("repo");
+        init_if_needed(&repo).await.unwrap();
+        set_remote(&repo, Some(remote.to_str().unwrap()))
+            .await
+            .unwrap();
+        let db_path = repo.join("music.db");
+        create_collection(&db_path, &track("one")).await;
+
+        // Stall the sync at its network phase, as a slow fetch/push would.
+        let network = network_lock(&repo);
+        let network_guard = network.lock().await;
+        let sync = tokio::spawn(sync_repository(
+            repo.clone(),
+            Some(db_path.clone()),
+            false,
+            None,
+        ));
+
+        // Wait for the local commit, which the sync makes just before its network phase.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !git_ok(&repo, &["rev-parse", "--verify", "HEAD"]).await {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("sync should commit locally");
+
+        // A database writer can still take the repo lock while the sync waits on the network.
+        let repo_guard = tokio::time::timeout(Duration::from_secs(5), lock_repository(&repo))
+            .await
+            .expect("repo lock should be released before the network phase");
+        assert!(!sync.is_finished());
+        drop(repo_guard);
+
+        drop(network_guard);
+        let report = sync.await.unwrap();
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
     }
 
     #[tokio::test]
