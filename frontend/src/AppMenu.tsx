@@ -1,13 +1,19 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "@astryxdesign/core/DropdownMenu";
 import { Divider } from "@astryxdesign/core/Divider";
 import { HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import { GearIcon, MoonIcon } from "@radix-ui/react-icons";
+import {
+  DesktopIcon,
+  GearIcon,
+  MoonIcon,
+  SunIcon,
+} from "@radix-ui/react-icons";
 import { MenuCheck, MenuHeading } from "./Menu.tsx";
 import SpotifyIcon from "./SpotifyIcon.tsx";
 import YouTubeIcon from "./YouTubeIcon.tsx";
@@ -29,6 +35,16 @@ type AppMenuProps = {
   spotifyBackfillTotal?: number;
   onSpotifyBackfill: () => void;
 };
+
+const appearanceOptions: {
+  value: AppearanceType;
+  label: string;
+  icon: ReactNode;
+}[] = [
+  { value: "system", label: "System", icon: <DesktopIcon /> },
+  { value: "light", label: "Light", icon: <SunIcon /> },
+  { value: "dark", label: "Dark", icon: <MoonIcon /> },
+];
 
 function connectionLabel(connected: boolean) {
   return connected ? "Connected" : "Not connected";
@@ -101,13 +117,22 @@ function AppMenu({
 
         <Divider />
 
-        <DropdownMenuCheckboxItem
-          icon={<MoonIcon />}
-          label="Dark mode"
-          value={appearance === "dark"}
-          onChange={(checked) => setAppearance(checked ? "dark" : "light")}
-          endContent={<MenuCheck isChecked={appearance === "dark"} />}
-        />
+        <MenuHeading>Appearance</MenuHeading>
+        <DropdownMenuRadioGroup
+          aria-label="Appearance"
+          value={appearance}
+          onChange={(v) => setAppearance(v as AppearanceType)}
+        >
+          {appearanceOptions.map(({ value, label, icon }) => (
+            <DropdownMenuRadioItem
+              key={value}
+              value={value}
+              label={label}
+              icon={icon}
+              endContent={<MenuCheck isChecked={appearance === value} />}
+            />
+          ))}
+        </DropdownMenuRadioGroup>
 
         <Divider />
 

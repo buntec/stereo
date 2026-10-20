@@ -374,7 +374,7 @@ export type RequestReply = (
   timeout?: number,
 ) => void;
 
-export type AppearanceType = "light" | "dark";
+export type AppearanceType = "system" | "light" | "dark";
 
 export type Settings = {
   appearance: AppearanceType;

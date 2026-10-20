@@ -36,6 +36,7 @@ import {
 } from "ag-grid-community";
 
 import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
+import { useTheme } from "@astryxdesign/core/theme";
 
 import {
   useState,
@@ -306,6 +307,17 @@ const SearchPlayControlRenderer: React.FC<
   );
 };
 
+// ag-Grid themes itself, so follow the effective Astryx mode (which resolves
+// "system" to the OS preference and tracks changes to it).
+function useGridTheme() {
+  const { mode } = useTheme();
+  return useMemo(
+    () =>
+      mode === "dark" ? themeQuartz.withPart(colorSchemeDark) : themeQuartz,
+    [mode],
+  );
+}
+
 interface SearchResultsGridProps {
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
   currentId?: string;
@@ -317,7 +329,6 @@ interface SearchResultsGridProps {
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
   addTrack: (track: ITrack) => void;
-  appearance: "light" | "dark";
 }
 
 type SearchResultsGridContext = {
@@ -344,7 +355,6 @@ export const SearchResultsGrid = ({
   onArtistClick,
   onLabelClick,
   addTrack,
-  appearance,
 }: SearchResultsGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -442,11 +452,7 @@ export const SearchResultsGrid = ({
     };
   }, []);
 
-  const theme = useMemo(() => {
-    return appearance === "dark"
-      ? themeQuartz.withPart(colorSchemeDark)
-      : themeQuartz;
-  }, [appearance]);
+  const theme = useGridTheme();
 
   const columnTypes = useMemo(() => {
     return {
@@ -658,7 +664,6 @@ interface TracksGridProps {
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
   onShazamSimilar: (track: ITrack) => void;
-  appearance: "light" | "dark";
 }
 
 type TracksGridContext = {
@@ -686,7 +691,6 @@ export const TracksGrid = ({
   onArtistClick,
   onLabelClick,
   onShazamSimilar,
-  appearance,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -812,11 +816,7 @@ export const TracksGrid = ({
     };
   }, []);
 
-  const theme = useMemo(() => {
-    return appearance === "dark"
-      ? themeQuartz.withPart(colorSchemeDark)
-      : themeQuartz;
-  }, [appearance]);
+  const theme = useGridTheme();
 
   const columnTypes = useMemo(() => {
     return {

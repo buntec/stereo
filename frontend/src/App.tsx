@@ -163,7 +163,7 @@ const getVideoData = (player: YT.Player): YT.VideoData | undefined => {
 };
 
 const defaultSettings: Settings = {
-  appearance: "dark",
+  appearance: "system",
   repoPath: "",
   collectionPath: "",
   video: false,
@@ -2516,7 +2516,6 @@ function App() {
               onArtistClick={handleArtistClick}
               onLabelClick={handleLabelClick}
               addTrack={addSearchResultTrack}
-              appearance={settings.appearance}
             />
           ) : (
             <TracksGrid
@@ -2534,7 +2533,6 @@ function App() {
               onArtistClick={handleArtistClick}
               onLabelClick={handleLabelClick}
               onShazamSimilar={handleShazamSimilar}
-              appearance={settings.appearance}
             />
           )}
         </StackItem>
