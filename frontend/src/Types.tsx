@@ -43,6 +43,13 @@ export interface IScoredName {
   weighted_avg_days_since_release: number;
 }
 
+export interface INewReleasesCandidate {
+  name: string;
+  five_star: number;
+  four_plus: number;
+  is_default: boolean;
+}
+
 export interface ICollectionStats {
   top_artists_five_star: IScoredName[];
   top_artists_four_plus: IScoredName[];
@@ -113,12 +120,15 @@ export type ClientMsg =
       limit: number;
       sources: TrackSource[];
     }
+  | { type: "get-new-releases-candidates" }
   | {
       type: "search-new-releases";
       query_id: number;
       days: number;
       limit: number;
       sources: TrackSource[];
+      artists: string[];
+      labels: string[];
     }
   | {
       type: "search-shazam-similar";
@@ -276,6 +286,12 @@ export type ServerMsg =
       top_artists_four_plus: IScoredName[];
       top_labels_five_star: IScoredName[];
       top_labels_four_plus: IScoredName[];
+    }
+  | {
+      type: "new-releases-candidates";
+      id: number;
+      artists: INewReleasesCandidate[];
+      labels: INewReleasesCandidate[];
     }
   | { type: "fixup-track-reply"; id: number; track?: ITrack }
   | {

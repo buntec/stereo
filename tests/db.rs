@@ -774,3 +774,63 @@ async fn test_existing_yt_ids() {
     assert_eq!(found, ["b", "c"]);
     assert!(db::existing_yt_ids(&pool, &[]).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn test_new_releases_candidates() {
+    let (pool, _dir) = setup().await;
+    // Twelve artists/labels with three 4-star tracks each; later ones are more recent, which
+    // breaks the tie in their favour.
+    for n in 0..12u32 {
+        for i in 0..3 {
+            let mut t = make_track(&format!("four{n}-{i}"));
+            t.artists = vec![format!("Four {n}")];
+            t.label = Some(format!("L{n}"));
+            t.release_date = NaiveDate::from_ymd_opt(2024, 1, n + 1);
+            t.rating = Some(4);
+            db::insert_track(&pool, &t, true).await.unwrap();
+        }
+    }
+    let mut t = make_track("five");
+    t.artists = vec!["Five".to_string()];
+    t.label = Some("LFive".to_string());
+    t.rating = Some(5);
+    db::insert_track(&pool, &t, true).await.unwrap();
+    let mut t = make_track("low");
+    t.artists = vec!["Low".to_string()];
+    t.rating = Some(3);
+    db::insert_track(&pool, &t, true).await.unwrap();
+
+    let c = db::get_new_releases_candidates(&pool).await.unwrap();
+
+    let artists: Vec<(&str, bool)> = c
+        .artists
+        .iter()
+        .map(|a| (a.name.as_str(), a.is_default))
+        .collect();
+    let mut expected: Vec<(String, bool)> = (0..12)
+        .rev()
+        .map(|n| (format!("Four {n}"), n >= 2))
+        .collect();
+    // Only one 4+-star track, but it's a top 5-star artist.
+    expected.push(("Five".to_string(), true));
+    assert_eq!(
+        artists,
+        expected
+            .iter()
+            .map(|(n, d)| (n.as_str(), *d))
+            .collect::<Vec<_>>()
+    );
+    let five = c.artists.last().unwrap();
+    assert_eq!((five.five_star, five.four_plus), (1, 1));
+
+    // Labels default to the top ten by 4+-star count only.
+    let label_defaults: Vec<&str> = c
+        .labels
+        .iter()
+        .filter(|l| l.is_default)
+        .map(|l| l.name.as_str())
+        .collect();
+    assert_eq!(label_defaults.len(), 10);
+    assert!(!label_defaults.contains(&"LFive"));
+    assert!(c.labels.iter().any(|l| l.name == "LFive"));
+}

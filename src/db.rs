@@ -11,7 +11,7 @@ use sqlx::{
 
 use crate::{
     message::{FilterModel, FilterModelItem, FilterModelMap, SortModelItem},
-    models::{ScoredName, Track},
+    models::{NewReleasesCandidate, ScoredName, Track},
 };
 
 const VALID_COLUMNS: &[&str] = &[
@@ -761,9 +761,9 @@ fn accumulate(
     }
 }
 
-fn top_by_count(counts: HashMap<String, NameAcc>) -> Vec<ScoredName> {
+fn top_by_count(counts: &HashMap<String, NameAcc>, limit: usize) -> Vec<ScoredName> {
     let mut top: Vec<ScoredName> = counts
-        .into_iter()
+        .iter()
         .map(|(name, acc)| {
             let weighted_avg_days_since_release = if acc.weight_sum > 0.0 {
                 acc.weighted_days_since_release_sum / acc.weight_sum
@@ -771,7 +771,7 @@ fn top_by_count(counts: HashMap<String, NameAcc>) -> Vec<ScoredName> {
                 0.0
             };
             ScoredName {
-                name,
+                name: name.clone(),
                 count: acc.count,
                 weighted_avg_days_since_release,
             }
@@ -787,11 +787,19 @@ fn top_by_count(counts: HashMap<String, NameAcc>) -> Vec<ScoredName> {
                 .unwrap_or(std::cmp::Ordering::Equal),
         )
     });
-    top.truncate(10);
+    top.truncate(limit);
     top
 }
 
-pub async fn get_collection_stats(pool: &SqlitePool) -> anyhow::Result<CollectionStats> {
+#[derive(Default)]
+struct RatingCounts {
+    artist_five_star: HashMap<String, NameAcc>,
+    artist_four_plus: HashMap<String, NameAcc>,
+    label_five_star: HashMap<String, NameAcc>,
+    label_four_plus: HashMap<String, NameAcc>,
+}
+
+async fn get_rating_counts(pool: &SqlitePool) -> anyhow::Result<RatingCounts> {
     let rows =
         sqlx::query("SELECT artists, label, rating, release_date FROM tracks WHERE rating > 0")
             .fetch_all(pool)
@@ -799,10 +807,7 @@ pub async fn get_collection_stats(pool: &SqlitePool) -> anyhow::Result<Collectio
 
     let today = chrono::Local::now().date_naive();
 
-    let mut artist_five_star: HashMap<String, NameAcc> = HashMap::new();
-    let mut artist_four_plus: HashMap<String, NameAcc> = HashMap::new();
-    let mut label_five_star: HashMap<String, NameAcc> = HashMap::new();
-    let mut label_four_plus: HashMap<String, NameAcc> = HashMap::new();
+    let mut c = RatingCounts::default();
 
     for row in &rows {
         let artists_str: String = row.try_get("artists").unwrap_or_default();
@@ -817,27 +822,85 @@ pub async fn get_collection_stats(pool: &SqlitePool) -> anyhow::Result<Collectio
 
         for artist in &artists {
             if rating >= 4 {
-                accumulate(&mut artist_four_plus, artist, days_since_release, rating);
+                accumulate(&mut c.artist_four_plus, artist, days_since_release, rating);
             }
             if rating == 5 {
-                accumulate(&mut artist_five_star, artist, days_since_release, rating);
+                accumulate(&mut c.artist_five_star, artist, days_since_release, rating);
             }
         }
         if let Some(label) = label.filter(|l| !l.is_empty()) {
             if rating >= 4 {
-                accumulate(&mut label_four_plus, &label, days_since_release, rating);
+                accumulate(&mut c.label_four_plus, &label, days_since_release, rating);
             }
             if rating == 5 {
-                accumulate(&mut label_five_star, &label, days_since_release, rating);
+                accumulate(&mut c.label_five_star, &label, days_since_release, rating);
             }
         }
     }
 
+    Ok(c)
+}
+
+pub async fn get_collection_stats(pool: &SqlitePool) -> anyhow::Result<CollectionStats> {
+    let c = get_rating_counts(pool).await?;
     Ok(CollectionStats {
-        top_artists_five_star: top_by_count(artist_five_star),
-        top_artists_four_plus: top_by_count(artist_four_plus),
-        top_labels_five_star: top_by_count(label_five_star),
-        top_labels_four_plus: top_by_count(label_four_plus),
+        top_artists_five_star: top_by_count(&c.artist_five_star, TOP_NAMES),
+        top_artists_four_plus: top_by_count(&c.artist_four_plus, TOP_NAMES),
+        top_labels_five_star: top_by_count(&c.label_five_star, TOP_NAMES),
+        top_labels_four_plus: top_by_count(&c.label_four_plus, TOP_NAMES),
+    })
+}
+
+/// How many top names the collection stats show, and how many of them a new-releases search
+/// selects by default.
+const TOP_NAMES: usize = 10;
+/// How many artists/labels the new-releases dialog offers, beyond the default selection.
+const NEW_RELEASES_CANDIDATES: usize = 50;
+
+pub struct NewReleasesCandidates {
+    pub artists: Vec<NewReleasesCandidate>,
+    pub labels: Vec<NewReleasesCandidate>,
+}
+
+/// Ranks names by their 4+-star track count (the same ranking as the stats) and marks the
+/// default selection: the top artists by 5-star and by 4+-star count, and the top labels by
+/// 4+-star count. Default-selected names are always included, even past the candidate limit.
+fn rank_candidates(
+    five_star: &HashMap<String, NameAcc>,
+    four_plus: &HashMap<String, NameAcc>,
+    include_five_star_top: bool,
+) -> Vec<NewReleasesCandidate> {
+    let mut defaults: HashSet<String> = top_by_count(four_plus, TOP_NAMES)
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    if include_five_star_top {
+        defaults.extend(
+            top_by_count(five_star, TOP_NAMES)
+                .into_iter()
+                .map(|s| s.name),
+        );
+    }
+    top_by_count(four_plus, usize::MAX)
+        .into_iter()
+        .enumerate()
+        .filter(|(i, s)| *i < NEW_RELEASES_CANDIDATES || defaults.contains(&s.name))
+        .map(|(_, s)| NewReleasesCandidate {
+            five_star: five_star.get(&s.name).map_or(0, |a| a.count),
+            four_plus: s.count,
+            is_default: defaults.contains(&s.name),
+            name: s.name,
+        })
+        .collect()
+}
+
+pub async fn get_new_releases_candidates(
+    pool: &SqlitePool,
+) -> anyhow::Result<NewReleasesCandidates> {
+    let c = get_rating_counts(pool).await?;
+    Ok(NewReleasesCandidates {
+        artists: rank_candidates(&c.artist_five_star, &c.artist_four_plus, true),
+        labels: rank_candidates(&c.label_five_star, &c.label_four_plus, false),
     })
 }
 

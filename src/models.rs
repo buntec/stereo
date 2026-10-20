@@ -285,3 +285,13 @@ pub struct ScoredName {
     pub count: usize,
     pub weighted_avg_days_since_release: f64,
 }
+
+/// An artist or label offered for a new-releases search, with its rated-track counts and
+/// whether it is selected by default.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NewReleasesCandidate {
+    pub name: String,
+    pub five_star: usize,
+    pub four_plus: usize,
+    pub is_default: bool,
+}

@@ -85,6 +85,9 @@ import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
 import NowPlayingMenu from "./NowPlayingMenu.tsx";
 import CollectionSummary from "./CollectionSummary.tsx";
+import NewReleasesDialog, {
+  type NewReleasesOverrides,
+} from "./NewReleasesDialog.tsx";
 import GitSyncStatus from "./GitSyncStatus.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
@@ -538,6 +541,7 @@ const reducer = (state: State, action: Action): State => {
     case "spotify-playlist-info":
     case "youtube-playlist-info":
     case "clone-repo-reply":
+    case "new-releases-candidates":
     case "error-reply": // the server also sends a notification with the reason
       return { ...state };
 
@@ -753,6 +757,12 @@ function App() {
   );
 
   const [statsOpen, setStatsOpen] = useState(false);
+
+  const [newReleasesOpen, setNewReleasesOpen] = useState(false);
+  // Keyed by collection path.
+  const [newReleasesOverrides, setNewReleasesOverrides] = useLocalStorage<
+    Record<string, NewReleasesOverrides>
+  >("stereo_new_releases_overrides", {});
 
   const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
     "stereo_app_grid_state",
@@ -1246,8 +1256,12 @@ function App() {
     }
   }, [sendMsg, state.search_box_input]);
 
-  const handleSearch = useCallback(() => {
-    if (state.search_kind === "new-releases") {
+  const handleNewReleasesSearch = useCallback(
+    (artists: string[], labels: string[], overrides: NewReleasesOverrides) => {
+      setNewReleasesOverrides((prev) => ({
+        ...prev,
+        [settings.collectionPath]: overrides,
+      }));
       const query_id = ++queryId.current;
       dispatch({ type: "clear-search-results" });
       dispatch({ type: "set-search-busy", query_id });
@@ -1257,7 +1271,23 @@ function App() {
         days: state.new_releases_days,
         limit: state.search_limit,
         sources: state.search_sources,
+        artists,
+        labels,
       });
+    },
+    [
+      sendMsg,
+      setNewReleasesOverrides,
+      settings.collectionPath,
+      state.new_releases_days,
+      state.search_limit,
+      state.search_sources,
+    ],
+  );
+
+  const handleSearch = useCallback(() => {
+    if (state.search_kind === "new-releases") {
+      setNewReleasesOpen(true);
       return;
     }
 
@@ -1281,7 +1311,6 @@ function App() {
     state.search_kind,
     state.search_limit,
     state.search_sources,
-    state.new_releases_days,
   ]);
 
   const handleExitSearch = useCallback(() => {
@@ -2585,6 +2614,14 @@ function App() {
         checked={state.spotify_playlist_checked ?? 0}
         matched={state.spotify_playlist_matched ?? 0}
         total={state.spotify_playlist_total ?? 0}
+      />
+      <NewReleasesDialog
+        isOpen={newReleasesOpen}
+        onOpenChange={setNewReleasesOpen}
+        days={state.new_releases_days}
+        requestReply={requestReply}
+        overrides={newReleasesOverrides[settings.collectionPath]}
+        onSearch={handleNewReleasesSearch}
       />
       {state.collection_stats && (
         <CollectionSummary

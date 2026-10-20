@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::{Collection, Repo, ScoredName, Track, TrackSource};
+use crate::models::{Collection, NewReleasesCandidate, Repo, ScoredName, Track, TrackSource};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -151,6 +151,12 @@ pub enum MsgServer {
         top_artists_four_plus: Vec<ScoredName>,
         top_labels_five_star: Vec<ScoredName>,
         top_labels_four_plus: Vec<ScoredName>,
+    },
+    /// Reply to `GetNewReleasesCandidates`.
+    NewReleasesCandidates {
+        id: i64,
+        artists: Vec<NewReleasesCandidate>,
+        labels: Vec<NewReleasesCandidate>,
     },
     FixupTrackReply {
         id: i64,
@@ -331,11 +337,16 @@ pub enum MsgClient {
         kind: SearchKind,
         sources: Vec<TrackSource>,
     },
+    GetNewReleasesCandidates {
+        id: i64,
+    },
     SearchNewReleases {
         query_id: i64,
         days: i64,
         limit: i64,
         sources: Vec<TrackSource>,
+        artists: Vec<String>,
+        labels: Vec<String>,
     },
     SearchShazamSimilar {
         query_id: i64,
@@ -485,6 +496,7 @@ impl MsgClient {
             Self::SetCollection { id, .. }
             | Self::GetPathCompletions { id, .. }
             | Self::CollectionContainsIds { id, .. }
+            | Self::GetNewReleasesCandidates { id }
             | Self::CreateYtAnonPlaylist { id, .. }
             | Self::GetSpotifySession { id }
             | Self::SetSpotifySession { id, .. }

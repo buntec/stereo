@@ -471,17 +471,6 @@ async fn send_collection_stats(state: &SessionState, tx: &mpsc::Sender<MsgServer
 }
 
 /// Merges two `ScoredName` lists into a deduplicated name list, preserving first-seen order.
-fn union_names(
-    a: Vec<crate::models::ScoredName>,
-    b: Vec<crate::models::ScoredName>,
-) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    a.into_iter()
-        .chain(b)
-        .filter_map(|s| seen.insert(s.name.clone()).then_some(s.name))
-        .collect()
-}
-
 async fn send_git_status(tx: &mpsc::Sender<MsgServer>, report: git::SyncReport) {
     let _ = tx
         .send(MsgServer::GitSyncStatus {
@@ -1545,28 +1534,37 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             }
         }
 
+        MsgClient::GetNewReleasesCandidates { id } => {
+            let pool = state
+                .pool()
+                .context("Open a collection to search for new releases")?;
+            let candidates = db::get_new_releases_candidates(pool).await?;
+            let _ = tx
+                .send(MsgServer::NewReleasesCandidates {
+                    id,
+                    artists: candidates.artists,
+                    labels: candidates.labels,
+                })
+                .await;
+        }
+
         MsgClient::SearchNewReleases {
             query_id,
             days,
             limit,
             sources,
+            artists,
+            labels,
         } => {
             if let Some(task) = state.search_task.take() {
                 task.abort();
             }
             if let Some(pool) = state.pool() {
-                let stats = db::get_collection_stats(pool).await?;
-                let artists = union_names(stats.top_artists_five_star, stats.top_artists_four_plus);
-                let labels: Vec<String> = stats
-                    .top_labels_four_plus
-                    .into_iter()
-                    .map(|s| s.name)
-                    .collect();
                 let existing_yt_ids = db::get_all_yt_ids(pool).await?;
                 if artists.is_empty() && labels.is_empty() {
                     notify(
                         tx,
-                        "No rated tracks yet to base a new-releases search on",
+                        "Select at least one artist or label to search for new releases",
                         "info",
                     )
                     .await;
