@@ -201,6 +201,7 @@ type State = {
   should_purge_grid: boolean;
 
   search_busy: boolean;
+  search_is_chart: boolean;
   search_query_id?: number;
   search_results?: ITrack[];
   search_results_selection?: ITrack[];
@@ -415,13 +416,18 @@ const reducer = (state: State, action: Action): State => {
         search_results_selection: undefined,
         search_busy: false,
         search_query_id: undefined,
+        search_is_chart: false,
       };
 
     // Results and completions are only accepted for the search that is currently active
     // (set by "set-search-busy"); anything else is a straggler from a cancelled search.
     case "search-result": {
       if (action.query_id !== state.search_query_id) return state;
-      const track = { ...action.track, source: action.source };
+      const track = {
+        ...action.track,
+        source: action.source,
+        chart_position: action.chart_position,
+      };
       return {
         ...state,
         search_results: [...(state.search_results ?? []), track],
@@ -452,7 +458,12 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "set-search-busy":
-      return { ...state, search_busy: true, search_query_id: action.query_id };
+      return {
+        ...state,
+        search_busy: true,
+        search_query_id: action.query_id,
+        search_is_chart: !!action.is_chart,
+      };
 
     case "set-search-limit":
       return { ...state, search_limit: action.limit };
@@ -737,6 +748,7 @@ function App() {
     should_refresh_grid: false,
     should_purge_grid: false,
     search_busy: false,
+    search_is_chart: false,
     search_limit: 100,
     search_kind: "fuzzy",
     search_sources: ["beatport", "volumo", "traxsource"],
@@ -1301,7 +1313,7 @@ function App() {
     if (state.search_kind === "beatport-top-100") {
       const query_id = ++queryId.current;
       dispatch({ type: "clear-search-results" });
-      dispatch({ type: "set-search-busy", query_id });
+      dispatch({ type: "set-search-busy", query_id, is_chart: true });
       sendMsg({
         type: "search-beatport-top100",
         query_id,
@@ -2553,6 +2565,9 @@ function App() {
         <StackItem size="fill" className="grid-container">
           {isSearchGridActive ? (
             <SearchResultsGrid
+              // Chart results get different columns and default sort; remounting applies them.
+              key={state.search_is_chart ? "chart" : "search"}
+              isChart={state.search_is_chart}
               gridRef={searchGridRef}
               currentId={state.current_id}
               playId={playId}

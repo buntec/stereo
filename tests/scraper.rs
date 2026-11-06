@@ -120,8 +120,9 @@ async fn test_bp_get_genre_top100() {
         "expected ~100 chart entries, got {}",
         tracks.len()
     );
-    assert!(!tracks[0].track_name.is_empty());
-    assert!(!tracks[0].artists.is_empty());
+    assert_eq!(tracks[0].0, 1, "positions start at 1");
+    assert!(!tracks[0].1.track_name.is_empty());
+    assert!(!tracks[0].1.artists.is_empty());
 }
 
 // ── Shazam ──────────────────────────────────────────────────────────────────

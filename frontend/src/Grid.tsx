@@ -319,6 +319,9 @@ function useGridTheme() {
 }
 
 interface SearchResultsGridProps {
+  // Chart results (Beatport top 100) get a chart-position column and are sorted by it.
+  // Read on mount only — remount the grid (via `key`) when it changes.
+  isChart?: boolean;
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
   currentId?: string;
   playId: (id: string) => void;
@@ -355,8 +358,22 @@ export const SearchResultsGrid = ({
   onArtistClick,
   onLabelClick,
   addTrack,
+  isChart = false,
 }: SearchResultsGridProps) => {
-  const [colDefs] = useState<ColDef[]>([
+  const [colDefs] = useState<ColDef[]>(() => [
+    ...(isChart
+      ? [
+          {
+            field: "chart_position",
+            headerName: "#",
+            headerTooltip: "Chart position",
+            sortable: true,
+            initialSort: "asc",
+            ...fixedWidth(72),
+            cellStyle: { textAlign: "right" },
+          } satisfies ColDef,
+        ]
+      : []),
     {
       field: "yt_id",
       headerName: "",
@@ -392,7 +409,7 @@ export const SearchResultsGrid = ({
       field: "release_date",
       headerName: "Release",
       sortable: true,
-      initialSort: "desc",
+      initialSort: isChart ? undefined : "desc",
       filter: true,
       ...fixedWidth(120),
     },

@@ -24,6 +24,8 @@ export interface ITrack {
   // Only ever set on search-result tracks (see ServerMsg's "search-result"); not persisted
   // on tracks read back from the collection.
   source?: TrackSource;
+  // Like `source`, only set on search results — and only for chart searches (Beatport top 100).
+  chart_position?: number;
 }
 
 export interface ISearchResult {
@@ -242,6 +244,7 @@ export type ServerMsg =
       query_id: number;
       track: ITrack;
       source: TrackSource;
+      chart_position?: number;
     }
   | { type: "search-results"; query_id: number; tracks: ITrack[] }
   | { type: "search-complete"; query_id: number }
@@ -370,7 +373,8 @@ export type Action =
   | { type: "set-track-rating"; yt_id: string; rating: number | null }
   | { type: "clear-search-results" }
   | { type: "set-search-failure" }
-  | { type: "set-search-busy"; query_id: number }
+  // `is_chart` marks a chart search, whose results are shown in chart order.
+  | { type: "set-search-busy"; query_id: number; is_chart?: boolean }
   | { type: "set-search-limit"; limit: number }
   | { type: "set-search-kind"; kind: SearchBoxKind }
   | { type: "set-search-sources"; sources: TrackSource[] }

@@ -76,6 +76,9 @@ pub enum MsgServer {
         query_id: i64,
         track: Track,
         source: TrackSource,
+        /// 1-based position in the chart, for chart searches (Beatport top 100).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chart_position: Option<usize>,
     },
     SearchComplete {
         query_id: i64,

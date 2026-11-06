@@ -564,9 +564,11 @@ pub async fn bp_get_artist_releases(
     bp_get_releases(client, &url, &params).await
 }
 
-/// Extracts the chart from a genre's top-100 page `__NEXT_DATA__`, in chart order. The chart's
-/// query key looks like `genre-6-top-100-tracks-per_page=100&hype=false`.
-fn parse_bp_top100(json: &serde_json::Value) -> Option<Vec<BPTrack>> {
+/// Extracts the chart from a genre's top-100 page `__NEXT_DATA__` as (1-based chart position,
+/// track) pairs, in chart order. The position is taken before unparseable entries are dropped,
+/// so a skipped entry leaves a gap instead of shifting everything below it. The chart's query
+/// key looks like `genre-6-top-100-tracks-per_page=100&hype=false`.
+fn parse_bp_top100(json: &serde_json::Value) -> Option<Vec<(usize, BPTrack)>> {
     let queries = json["props"]["pageProps"]["dehydratedState"]["queries"].as_array()?;
     let chart = queries.iter().find(|q| {
         q["queryKey"]
@@ -579,14 +581,18 @@ fn parse_bp_top100(json: &serde_json::Value) -> Option<Vec<BPTrack>> {
     Some(
         results
             .iter()
-            .filter_map(parse_bp_track_from_releases)
+            .enumerate()
+            .filter_map(|(i, item)| Some((i + 1, parse_bp_track_from_releases(item)?)))
             .collect(),
     )
 }
 
 /// Fetches the Beatport top-100 chart for a genre. Only the id identifies the genre — Beatport
 /// ignores the slug in the URL, so a placeholder is used.
-pub async fn bp_get_genre_top100(client: &Client, genre_id: i64) -> anyhow::Result<Vec<BPTrack>> {
+pub async fn bp_get_genre_top100(
+    client: &Client,
+    genre_id: i64,
+) -> anyhow::Result<Vec<(usize, BPTrack)>> {
     let url = format!("https://www.beatport.com/genre/genre/{genre_id}/top-100");
     tracing::info!("Fetching Beatport top 100: {url}");
     let html = client.get(&url).send().await?.text().await?;
@@ -2038,7 +2044,8 @@ async fn stream_raw_tracks(
     limit: usize,
     raw_tracks: Vec<RawTrack>,
 ) {
-    stream_matched_tracks(client, tx, query_id, &mut HashSet::new(), limit, raw_tracks).await;
+    let ranked = raw_tracks.into_iter().map(|raw| (raw, None)).collect();
+    stream_matched_tracks(client, tx, query_id, &mut HashSet::new(), limit, ranked).await;
 }
 
 async fn resolve_shazam_track(client: Arc<Client>, candidate: ShazamTrack) -> Option<Track> {
@@ -2076,6 +2083,7 @@ pub async fn search_shazam_similar(
                     query_id,
                     track,
                     source: TrackSource::Shazam,
+                    chart_position: None,
                 })
                 .await
                 .is_err()
@@ -2407,24 +2415,25 @@ async fn gather_new_release_raw_tracks(
 /// YouTube-matches are resolved `MATCH_CONCURRENCY`-wide via `buffered`, which preserves
 /// `raw_tracks`' order while overlapping the network round-trips — the dominant cost here, since
 /// every candidate needs its own YouTube search. The dedup/send loop itself stays sequential
-/// since it's cheap and mutates `seen`.
+/// since it's cheap and mutates `seen`. Each raw track may carry a chart position, which is passed
+/// on to the client as-is.
 async fn stream_matched_tracks(
     client: &Client,
     tx: &mpsc::Sender<MsgServer>,
     query_id: i64,
     seen: &mut HashSet<String>,
     limit: usize,
-    raw_tracks: Vec<RawTrack>,
+    raw_tracks: Vec<(RawTrack, Option<usize>)>,
 ) {
     let mut matches = stream::iter(raw_tracks)
-        .map(|raw| async move {
+        .map(|(raw, chart_position)| async move {
             let vid = find_best_match(client, &raw).await;
-            (raw, vid)
+            (raw, chart_position, vid)
         })
         .buffered(MATCH_CONCURRENCY);
 
     let mut count = 0;
-    while let Some((raw, vid)) = matches.next().await {
+    while let Some((raw, chart_position, vid)) = matches.next().await {
         let Some(vid) = vid else {
             continue;
         };
@@ -2438,6 +2447,7 @@ async fn stream_matched_tracks(
                 query_id,
                 track,
                 source,
+                chart_position,
             })
             .await
             .is_err()
@@ -2513,14 +2523,16 @@ pub async fn search_new_releases(
         let mut raw_tracks: Vec<RawTrack> = per_name.into_iter().flatten().collect();
         raw_tracks.sort_by_key(|t| std::cmp::Reverse(t.release_date()));
 
+        let ranked = raw_tracks.into_iter().map(|raw| (raw, None)).collect();
         let mut seen = existing_yt_ids;
-        stream_matched_tracks(&client, &tx, query_id, &mut seen, limit, raw_tracks).await;
+        stream_matched_tracks(&client, &tx, query_id, &mut seen, limit, ranked).await;
         Ok(())
     })
     .await;
 }
 
-/// Streams the YouTube matches of a genre's Beatport top-100 chart, in chart order. Unlike a
+/// Streams the YouTube matches of a genre's Beatport top-100 chart, in chart order and tagged
+/// with their chart position. Unlike a
 /// new-releases search, tracks already in the collection are kept — it's the chart as a whole
 /// that's of interest, and the results grid marks the ones already collected.
 pub async fn search_beatport_top100(
@@ -2531,9 +2543,12 @@ pub async fn search_beatport_top100(
     limit: usize,
 ) {
     run_search(&tx, query_id, "search_beatport_top100", || async {
-        let tracks = bp_get_genre_top100(&client, genre_id).await?;
-        let raw_tracks = tracks.into_iter().map(RawTrack::Bp).collect();
-        stream_raw_tracks(&client, &tx, query_id, limit, raw_tracks).await;
+        let chart = bp_get_genre_top100(&client, genre_id).await?;
+        let ranked = chart
+            .into_iter()
+            .map(|(position, track)| (RawTrack::Bp(track), Some(position)))
+            .collect();
+        stream_matched_tracks(&client, &tx, query_id, &mut HashSet::new(), limit, ranked).await;
         Ok(())
     })
     .await;
@@ -2568,12 +2583,16 @@ mod top100_tests {
                 ]}}
             }
         ]}}}});
-        let tracks = parse_bp_top100(&json).unwrap();
+        let chart = parse_bp_top100(&json).unwrap();
         assert_eq!(
-            tracks.iter().map(|t| t.track_id).collect::<Vec<_>>(),
-            [2, 1],
-            "chart order is kept and unparseable entries are skipped"
+            chart
+                .iter()
+                .map(|(pos, t)| (*pos, t.track_id))
+                .collect::<Vec<_>>(),
+            [(1, 2), (3, 1)],
+            "chart order and positions are kept; an unparseable entry leaves a gap"
         );
+        let tracks: Vec<BPTrack> = chart.into_iter().map(|(_, t)| t).collect();
         assert_eq!(tracks[0].track_name, "We Come 1");
         assert_eq!(tracks[0].mix_name, "Adam Beyer Remix");
         assert_eq!(tracks[0].artists, ["Faithless"]);
