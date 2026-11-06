@@ -353,6 +353,12 @@ pub enum MsgClient {
         track: Track,
         limit: i64,
     },
+    /// Beatport's top-100 chart for a genre, identified by its Beatport genre id.
+    SearchBeatportTop100 {
+        query_id: i64,
+        genre_id: i64,
+        limit: i64,
+    },
     SearchCancelAll {},
     CollectionContainsIds {
         id: i64,

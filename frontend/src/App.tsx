@@ -52,6 +52,8 @@ import type {
   ServerMsg,
   Settings,
 } from "./Types.tsx";
+import { isQuerylessSearchKind } from "./Types.tsx";
+import { DEFAULT_BEATPORT_GENRE_ID } from "./BeatportGenres.tsx";
 
 import { useWebSocket } from "./WebSocket.tsx";
 import { useYTPlayer, type YTPlayerOptions } from "./YT.tsx";
@@ -764,6 +766,11 @@ function App() {
     Record<string, NewReleasesOverrides>
   >("stereo_new_releases_overrides", {});
 
+  const [beatportGenreId, setBeatportGenreId] = useLocalStorage<number>(
+    "stereo_beatport_top100_genre",
+    DEFAULT_BEATPORT_GENRE_ID,
+  );
+
   const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
     "stereo_app_grid_state",
     undefined,
@@ -1291,6 +1298,19 @@ function App() {
       return;
     }
 
+    if (state.search_kind === "beatport-top-100") {
+      const query_id = ++queryId.current;
+      dispatch({ type: "clear-search-results" });
+      dispatch({ type: "set-search-busy", query_id });
+      sendMsg({
+        type: "search-beatport-top100",
+        query_id,
+        genre_id: beatportGenreId,
+        limit: state.search_limit,
+      });
+      return;
+    }
+
     const query = state.search_box_input?.trim() ?? "";
     if (query.length > 0) {
       const query_id = ++queryId.current;
@@ -1307,6 +1327,7 @@ function App() {
     }
   }, [
     sendMsg,
+    beatportGenreId,
     state.search_box_input,
     state.search_kind,
     state.search_limit,
@@ -1822,9 +1843,10 @@ function App() {
     [settings, setSettings],
   );
 
+  const hasSearchInput =
+    isQuerylessSearchKind(state.search_kind) || !!state.search_box_input;
   const isSearchGridActive =
-    (state.search_results !== undefined || state.search_busy) &&
-    (state.search_kind === "new-releases" || !!state.search_box_input);
+    (state.search_results !== undefined || state.search_busy) && hasSearchInput;
 
   const centerGridAroundCurrentTrack = useCallback(() => {
     if (!state.current_id) {
@@ -2131,11 +2153,9 @@ function App() {
             setNewReleasesDays={(days: number) =>
               dispatch({ type: "set-new-releases-days", days })
             }
-            searchBusy={
-              (state.search_kind === "new-releases" ||
-                !!state.search_box_input) &&
-              state.search_busy
-            }
+            beatportGenreId={beatportGenreId}
+            setBeatportGenreId={setBeatportGenreId}
+            searchBusy={hasSearchInput && state.search_busy}
             errorMessage={state.search_error_message}
           />
           <HStack vAlign="center" hAlign="end" className="toolbar-side">
@@ -2387,8 +2407,7 @@ function App() {
         >
           <div ref={playerRef} />
         </div>
-        {(state.search_results !== undefined || state.search_busy) &&
-        (state.search_kind === "new-releases" || !!state.search_box_input) ? (
+        {isSearchGridActive ? (
           <HStack width="100%" gap={2} padding={2}>
             <IconButton
               variant="primary"
@@ -2532,8 +2551,7 @@ function App() {
           </HStack>
         )}
         <StackItem size="fill" className="grid-container">
-          {(state.search_results !== undefined || state.search_busy) &&
-          (state.search_kind === "new-releases" || !!state.search_box_input) ? (
+          {isSearchGridActive ? (
             <SearchResultsGrid
               gridRef={searchGridRef}
               currentId={state.current_id}

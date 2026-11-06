@@ -75,7 +75,11 @@ export type GitSyncState =
   | "error";
 
 export type SearchKind = "fuzzy" | "by-label" | "by-artist";
-export type SearchBoxKind = SearchKind | "new-releases";
+export type SearchBoxKind = SearchKind | "new-releases" | "beatport-top-100";
+
+/// Search kinds that run without a typed query.
+export const isQuerylessSearchKind = (kind: SearchBoxKind) =>
+  kind === "new-releases" || kind === "beatport-top-100";
 
 export type ClientMsg =
   | { type: "set-collection"; path: string }
@@ -134,6 +138,12 @@ export type ClientMsg =
       type: "search-shazam-similar";
       query_id: number;
       track: ITrack;
+      limit: number;
+    }
+  | {
+      type: "search-beatport-top100";
+      query_id: number;
+      genre_id: number;
       limit: number;
     }
   | { type: "get-git-remote" }

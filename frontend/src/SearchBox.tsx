@@ -16,7 +16,12 @@ import {
 } from "@radix-ui/react-icons";
 
 import { MenuCheck, MenuHeading } from "./Menu.tsx";
-import { type SearchBoxKind, type TrackSource } from "./Types.tsx";
+import {
+  isQuerylessSearchKind,
+  type SearchBoxKind,
+  type TrackSource,
+} from "./Types.tsx";
+import { BEATPORT_GENRES } from "./BeatportGenres.tsx";
 
 export interface ISearchBoxProps {
   value: string;
@@ -30,6 +35,8 @@ export interface ISearchBoxProps {
   setSearchSources: (value: TrackSource[]) => void;
   newReleasesDays: number;
   setNewReleasesDays: (days: number) => void;
+  beatportGenreId: number;
+  setBeatportGenreId: (id: number) => void;
   searchBusy: boolean;
   errorMessage?: string;
 }
@@ -39,7 +46,13 @@ const SEARCH_KIND_OPTIONS = [
   { value: "by-label", label: "Label" },
   { value: "by-artist", label: "Artist" },
   { value: "new-releases", label: "Latest releases" },
+  { value: "beatport-top-100", label: "Beatport Top 100" },
 ];
+
+const GENRE_OPTIONS = BEATPORT_GENRES.map((g) => ({
+  value: `${g.id}`,
+  label: g.name,
+}));
 
 const LIMIT_OPTIONS = [10, 25, 50, 100, 500, 1000];
 
@@ -63,6 +76,8 @@ function toSearchKind(s: string): SearchBoxKind {
       return "by-artist";
     case "new-releases":
       return "new-releases";
+    case "beatport-top-100":
+      return "beatport-top-100";
   }
 
   throw new Error(`cannot convert ${s} to search kind!`);
@@ -80,10 +95,13 @@ function SearchBox({
   setSearchSources,
   newReleasesDays,
   setNewReleasesDays,
+  beatportGenreId,
+  setBeatportGenreId,
   searchBusy,
   errorMessage,
 }: ISearchBoxProps) {
-  const isNewReleases = searchKind === "new-releases";
+  // The top-100 chart comes from Beatport alone, so the sources option doesn't apply.
+  const isTop100 = searchKind === "beatport-top-100";
 
   const toggleSearchSource = (source: TrackSource, checked: boolean) => {
     setSearchSources(
@@ -93,7 +111,9 @@ function SearchBox({
     );
   };
 
-  const optionsSummary = `Up to ${searchLimit} results from ${searchSources.length} source${searchSources.length === 1 ? "" : "s"}`;
+  const optionsSummary = isTop100
+    ? `Up to ${searchLimit} results`
+    : `Up to ${searchLimit} results from ${searchSources.length} source${searchSources.length === 1 ? "" : "s"}`;
 
   return (
     <HStack gap={1} vAlign="center" className="search-box">
@@ -114,7 +134,7 @@ function SearchBox({
           // Size to its label instead of splitting the group evenly.
           style={{ flex: "none", width: "auto" }}
         />
-        {isNewReleases ? (
+        {searchKind === "new-releases" ? (
           <Selector
             label="Released within"
             isLabelHidden
@@ -124,6 +144,14 @@ function SearchBox({
             }))}
             value={`${newReleasesDays}`}
             onChange={(v) => setNewReleasesDays(parseInt(v))}
+          />
+        ) : isTop100 ? (
+          <Selector
+            label="Genre"
+            isLabelHidden
+            options={GENRE_OPTIONS}
+            value={`${beatportGenreId}`}
+            onChange={(v) => setBeatportGenreId(parseInt(v))}
           />
         ) : (
           <TextInput
@@ -168,20 +196,24 @@ function SearchBox({
           ))}
         </DropdownMenuRadioGroup>
 
-        <Divider />
+        {!isTop100 && (
+          <>
+            <Divider />
 
-        <MenuHeading>Sources</MenuHeading>
-        {ALL_SEARCH_SOURCES.map((s) => (
-          <DropdownMenuCheckboxItem
-            key={s.value}
-            label={s.label}
-            value={searchSources.includes(s.value)}
-            onChange={(checked) => toggleSearchSource(s.value, checked)}
-            endContent={
-              <MenuCheck isChecked={searchSources.includes(s.value)} />
-            }
-          />
-        ))}
+            <MenuHeading>Sources</MenuHeading>
+            {ALL_SEARCH_SOURCES.map((s) => (
+              <DropdownMenuCheckboxItem
+                key={s.value}
+                label={s.label}
+                value={searchSources.includes(s.value)}
+                onChange={(checked) => toggleSearchSource(s.value, checked)}
+                endContent={
+                  <MenuCheck isChecked={searchSources.includes(s.value)} />
+                }
+              />
+            ))}
+          </>
+        )}
       </DropdownMenu>
 
       <IconButton
@@ -190,7 +222,9 @@ function SearchBox({
         tooltip="Search"
         icon={<MagnifyingGlassIcon />}
         isLoading={searchBusy}
-        isDisabled={!isNewReleases && value.trim().length === 0}
+        isDisabled={
+          !isQuerylessSearchKind(searchKind) && value.trim().length === 0
+        }
         onClick={onSearch}
       />
     </HStack>

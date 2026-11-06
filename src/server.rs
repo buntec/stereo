@@ -1613,6 +1613,24 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             state.search_task = Some(handle);
         }
 
+        MsgClient::SearchBeatportTop100 {
+            query_id,
+            genre_id,
+            limit,
+        } => {
+            if let Some(task) = state.search_task.take() {
+                task.abort();
+            }
+            let handle = tokio::spawn(scraper::search_beatport_top100(
+                client.clone(),
+                tx.clone(),
+                genre_id,
+                query_id,
+                limit.max(0) as usize,
+            ));
+            state.search_task = Some(handle);
+        }
+
         MsgClient::FixupTrack { id, track } => {
             let client = Arc::clone(client);
             let tx = tx.clone();

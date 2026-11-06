@@ -16,9 +16,9 @@ use stereo_backend::{
     message::MsgServer,
     models::{Track, TrackSource},
     scraper::{
-        self, bp_search_artist, bp_search_tracks, create_client, shazam_similar_tracks,
-        shazam_similar_tracks_for_track, yt_create_anon_playlist, yt_import_playlist,
-        yt_search_simple,
+        self, bp_get_genre_top100, bp_search_artist, bp_search_tracks, create_client,
+        shazam_similar_tracks, shazam_similar_tracks_for_track, yt_create_anon_playlist,
+        yt_import_playlist, yt_search_simple,
     },
 };
 
@@ -107,6 +107,21 @@ async fn test_bp_search_artist() {
     let artists = bp_search_artist(&c, "kadosh", 10).await.unwrap();
     assert!(!artists.is_empty(), "expected Beatport artist results");
     assert!(!artists[0].display_name.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "hits real Beatport API (may be blocked without TLS impersonation)"]
+async fn test_bp_get_genre_top100() {
+    let c = client();
+    // 6 = Techno (Peak Time / Driving)
+    let tracks = bp_get_genre_top100(&c, 6).await.unwrap();
+    assert!(
+        tracks.len() >= 90,
+        "expected ~100 chart entries, got {}",
+        tracks.len()
+    );
+    assert!(!tracks[0].track_name.is_empty());
+    assert!(!tracks[0].artists.is_empty());
 }
 
 // ── Shazam ──────────────────────────────────────────────────────────────────

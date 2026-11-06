@@ -564,6 +564,38 @@ pub async fn bp_get_artist_releases(
     bp_get_releases(client, &url, &params).await
 }
 
+/// Extracts the chart from a genre's top-100 page `__NEXT_DATA__`, in chart order. The chart's
+/// query key looks like `genre-6-top-100-tracks-per_page=100&hype=false`.
+fn parse_bp_top100(json: &serde_json::Value) -> Option<Vec<BPTrack>> {
+    let queries = json["props"]["pageProps"]["dehydratedState"]["queries"].as_array()?;
+    let chart = queries.iter().find(|q| {
+        q["queryKey"]
+            .as_array()
+            .and_then(|k| k.first())
+            .and_then(|k| k.as_str())
+            .is_some_and(|k| k.contains("top-100-tracks"))
+    })?;
+    let results = chart["state"]["data"]["results"].as_array()?;
+    Some(
+        results
+            .iter()
+            .filter_map(parse_bp_track_from_releases)
+            .collect(),
+    )
+}
+
+/// Fetches the Beatport top-100 chart for a genre. Only the id identifies the genre — Beatport
+/// ignores the slug in the URL, so a placeholder is used.
+pub async fn bp_get_genre_top100(client: &Client, genre_id: i64) -> anyhow::Result<Vec<BPTrack>> {
+    let url = format!("https://www.beatport.com/genre/genre/{genre_id}/top-100");
+    tracing::info!("Fetching Beatport top 100: {url}");
+    let html = client.get(&url).send().await?.text().await?;
+    get_next_data(&html)
+        .as_ref()
+        .and_then(parse_bp_top100)
+        .with_context(|| format!("no top-100 chart found for genre {genre_id}"))
+}
+
 // ── SoundCloud ───────────────────────────────────────────────────────────────
 
 // SoundCloud's public API requires an unofficial `client_id` that's embedded in one of
@@ -2486,6 +2518,77 @@ pub async fn search_new_releases(
         Ok(())
     })
     .await;
+}
+
+/// Streams the YouTube matches of a genre's Beatport top-100 chart, in chart order. Unlike a
+/// new-releases search, tracks already in the collection are kept — it's the chart as a whole
+/// that's of interest, and the results grid marks the ones already collected.
+pub async fn search_beatport_top100(
+    client: Arc<Client>,
+    tx: mpsc::Sender<MsgServer>,
+    genre_id: i64,
+    query_id: i64,
+    limit: usize,
+) {
+    run_search(&tx, query_id, "search_beatport_top100", || async {
+        let tracks = bp_get_genre_top100(&client, genre_id).await?;
+        let raw_tracks = tracks.into_iter().map(RawTrack::Bp).collect();
+        stream_raw_tracks(&client, &tx, query_id, limit, raw_tracks).await;
+        Ok(())
+    })
+    .await;
+}
+
+#[cfg(test)]
+mod top100_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_bp_top100() {
+        let json = serde_json::json!({"props": {"pageProps": {"dehydratedState": {"queries": [
+            {"queryKey": ["genre-6"], "state": {"data": {"id": 6, "name": "Techno"}}},
+            {
+                "queryKey": ["genre-6-top-100-tracks-per_page=100&hype=false"],
+                "state": {"data": {"results": [
+                    {
+                        "id": 2, "name": "We Come 1", "mix_name": "Adam Beyer Remix",
+                        "new_release_date": "2026-09-25", "bpm": 134,
+                        "artists": [{"name": "Faithless"}],
+                        "key": {"name": "Bb Major"},
+                        "genre": {"name": "Techno (Peak Time / Driving)"},
+                        "release": {"label": {"name": "Drumcode"}},
+                        "isrc": "GBUR62001398"
+                    },
+                    {"id": 3, "name": "Missing required fields"},
+                    {
+                        "id": 1, "name": "Second", "mix_name": "Original Mix",
+                        "new_release_date": "2026-10-01", "artists": [],
+                        "release": {"label": {"name": "Label"}}
+                    }
+                ]}}
+            }
+        ]}}}});
+        let tracks = parse_bp_top100(&json).unwrap();
+        assert_eq!(
+            tracks.iter().map(|t| t.track_id).collect::<Vec<_>>(),
+            [2, 1],
+            "chart order is kept and unparseable entries are skipped"
+        );
+        assert_eq!(tracks[0].track_name, "We Come 1");
+        assert_eq!(tracks[0].mix_name, "Adam Beyer Remix");
+        assert_eq!(tracks[0].artists, ["Faithless"]);
+        assert_eq!(tracks[0].label, "Drumcode");
+        assert_eq!(tracks[0].key.as_deref(), Some("Bb Major"));
+        assert_eq!(tracks[0].genre, ["Techno (Peak Time / Driving)"]);
+    }
+
+    #[test]
+    fn test_parse_bp_top100_without_chart() {
+        let json = serde_json::json!({"props": {"pageProps": {"dehydratedState": {"queries": [
+            {"queryKey": ["genre-6"], "state": {"data": {}}}
+        ]}}}});
+        assert!(parse_bp_top100(&json).is_none());
+    }
 }
 
 #[cfg(test)]
