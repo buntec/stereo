@@ -17,6 +17,7 @@ import {
 
 import { MenuCheck, MenuHeading } from "./Menu.tsx";
 import {
+  isChartSearchKind,
   isQuerylessSearchKind,
   type SearchBoxKind,
   type TrackSource,
@@ -47,6 +48,7 @@ const SEARCH_KIND_OPTIONS = [
   { value: "by-artist", label: "Artist" },
   { value: "new-releases", label: "Latest releases" },
   { value: "beatport-top-100", label: "Beatport Top 100" },
+  { value: "traxsource-top-100", label: "Traxsource Top 100" },
 ];
 
 const GENRE_OPTIONS = BEATPORT_GENRES.map((g) => ({
@@ -78,6 +80,8 @@ function toSearchKind(s: string): SearchBoxKind {
       return "new-releases";
     case "beatport-top-100":
       return "beatport-top-100";
+    case "traxsource-top-100":
+      return "traxsource-top-100";
   }
 
   throw new Error(`cannot convert ${s} to search kind!`);
@@ -100,8 +104,8 @@ function SearchBox({
   searchBusy,
   errorMessage,
 }: ISearchBoxProps) {
-  // The top-100 chart comes from Beatport alone, so the sources option doesn't apply.
-  const isTop100 = searchKind === "beatport-top-100";
+  // A top-100 chart comes from a single store, so the sources option doesn't apply.
+  const isTop100 = isChartSearchKind(searchKind);
 
   const toggleSearchSource = (source: TrackSource, checked: boolean) => {
     setSearchSources(
@@ -152,13 +156,23 @@ function SearchBox({
               value={`${newReleasesDays}`}
               onChange={(v) => setNewReleasesDays(parseInt(v))}
             />
-          ) : isTop100 ? (
+          ) : searchKind === "beatport-top-100" ? (
             <Selector
               label="Genre"
               isLabelHidden
               options={GENRE_OPTIONS}
               value={`${beatportGenreId}`}
               onChange={(v) => setBeatportGenreId(parseInt(v))}
+            />
+          ) : searchKind === "traxsource-top-100" ? (
+            // Traxsource's chart spans all genres, so there is nothing to pick here.
+            <Selector
+              label="Genre"
+              isLabelHidden
+              options={[{ value: "all", label: "All genres" }]}
+              value="all"
+              isDisabled
+              disabledMessage="Traxsource's top 100 spans all genres"
             />
           ) : (
             <TextInput

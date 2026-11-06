@@ -305,7 +305,7 @@ function useGridTheme() {
 }
 
 interface SearchResultsGridProps {
-  // Chart results (Beatport top 100) get a chart-position column and are sorted by it.
+  // Chart results (Beatport/Traxsource top 100) get a chart-position column and are sorted by it.
   // Read on mount only — remount the grid (via `key`) when it changes.
   isChart?: boolean;
   isSearching: boolean;

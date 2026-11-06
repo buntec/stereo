@@ -62,7 +62,7 @@ import type {
   Settings,
   AppNotification,
 } from "./Types.tsx";
-import { isQuerylessSearchKind } from "./Types.tsx";
+import { isChartSearchKind, isQuerylessSearchKind } from "./Types.tsx";
 import { DEFAULT_BEATPORT_GENRE_ID } from "./BeatportGenres.tsx";
 
 import { useWebSocket } from "./WebSocket.tsx";
@@ -1354,10 +1354,7 @@ function App() {
   );
 
   const handleSearch = useCallback(() => {
-    if (
-      state.search_kind !== "beatport-top-100" &&
-      !state.search_sources.length
-    )
+    if (!isChartSearchKind(state.search_kind) && !state.search_sources.length)
       return;
     if (state.search_kind === "new-releases") {
       setNewReleasesOpen(true);
@@ -1372,6 +1369,18 @@ function App() {
         type: "search-beatport-top100",
         query_id,
         genre_id: beatportGenreId,
+        limit: state.search_limit,
+      });
+      return;
+    }
+
+    if (state.search_kind === "traxsource-top-100") {
+      const query_id = ++queryId.current;
+      dispatch({ type: "clear-search-results" });
+      dispatch({ type: "set-search-busy", query_id, is_chart: true });
+      sendMsg({
+        type: "search-traxsource-top100",
+        query_id,
         limit: state.search_limit,
       });
       return;

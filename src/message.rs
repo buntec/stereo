@@ -76,7 +76,7 @@ pub enum MsgServer {
         query_id: i64,
         track: Track,
         source: TrackSource,
-        /// 1-based position in the chart, for chart searches (Beatport top 100).
+        /// 1-based position in the chart, for chart searches (Beatport/Traxsource top 100).
         #[serde(skip_serializing_if = "Option::is_none")]
         chart_position: Option<usize>,
     },
@@ -360,6 +360,11 @@ pub enum MsgClient {
     SearchBeatportTop100 {
         query_id: i64,
         genre_id: i64,
+        limit: i64,
+    },
+    /// Traxsource's top-100 chart, across all genres.
+    SearchTraxsourceTop100 {
+        query_id: i64,
         limit: i64,
     },
     SearchCancelAll {},

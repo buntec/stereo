@@ -17,8 +17,8 @@ use stereo_backend::{
     models::{Track, TrackSource},
     scraper::{
         self, bp_get_genre_top100, bp_search_artist, bp_search_tracks, create_client,
-        shazam_similar_tracks, shazam_similar_tracks_for_track, yt_create_anon_playlist,
-        yt_import_playlist, yt_search_simple,
+        shazam_similar_tracks, shazam_similar_tracks_for_track, tx_get_top100,
+        yt_create_anon_playlist, yt_import_playlist, yt_search_simple,
     },
 };
 
@@ -115,6 +115,21 @@ async fn test_bp_get_genre_top100() {
     let c = client();
     // 6 = Techno (Peak Time / Driving)
     let tracks = bp_get_genre_top100(&c, 6).await.unwrap();
+    assert!(
+        tracks.len() >= 90,
+        "expected ~100 chart entries, got {}",
+        tracks.len()
+    );
+    assert_eq!(tracks[0].0, 1, "positions start at 1");
+    assert!(!tracks[0].1.track_name.is_empty());
+    assert!(!tracks[0].1.artists.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "hits real Traxsource site"]
+async fn test_tx_get_top100() {
+    let c = client();
+    let tracks = tx_get_top100(&c).await.unwrap();
     assert!(
         tracks.len() >= 90,
         "expected ~100 chart entries, got {}",

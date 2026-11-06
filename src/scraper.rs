@@ -1011,6 +1011,40 @@ pub async fn tx_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<TX
     Ok(tracks)
 }
 
+/// Extracts the cross-genre top-100 chart from Traxsource's `/top/tracks` page as (1-based chart
+/// position, track) pairs, in chart order. The rows are the same `div.trk-row` markup as the search
+/// page, plus a `div.tnum` position cell (and no key/BPM cell). The page's own position is used,
+/// falling back to the row's index, so an unparseable row leaves a gap instead of shifting
+/// everything below it.
+fn parse_tx_top100(html: &str) -> Vec<(usize, TXTrack)> {
+    let doc = Html::parse_document(html);
+    let row_sel = Selector::parse("div.trk-row[data-trid]").unwrap();
+    let pos_sel = Selector::parse("div.tnum").unwrap();
+    doc.select(&row_sel)
+        .enumerate()
+        .filter_map(|(i, row)| {
+            let position = row
+                .select(&pos_sel)
+                .next()
+                .and_then(|el| el.text().collect::<String>().trim().parse().ok())
+                .unwrap_or(i + 1);
+            Some((position, parse_tx_track(&row)?))
+        })
+        .collect()
+}
+
+/// Fetches Traxsource's top-100 chart across all genres.
+pub async fn tx_get_top100(client: &Client) -> anyhow::Result<Vec<(usize, TXTrack)>> {
+    let url = "https://www.traxsource.com/top/tracks";
+    tracing::info!("Fetching Traxsource top 100: {url}");
+    let html = client.get(url).send().await?.text().await?;
+    let chart = parse_tx_top100(&html);
+    if chart.is_empty() {
+        anyhow::bail!("no top-100 chart found on {url}");
+    }
+    Ok(chart)
+}
+
 // ── YouTube ───────────────────────────────────────────────────────────────────
 
 const YT_CLIENTS: &[(&str, &str)] = &[
@@ -2554,6 +2588,26 @@ pub async fn search_beatport_top100(
     .await;
 }
 
+/// Streams the YouTube matches of Traxsource's (cross-genre) top-100 chart, in chart order and
+/// tagged with their chart position. Like the Beatport chart, collected tracks are kept.
+pub async fn search_traxsource_top100(
+    client: Arc<Client>,
+    tx: mpsc::Sender<MsgServer>,
+    query_id: i64,
+    limit: usize,
+) {
+    run_search(&tx, query_id, "search_traxsource_top100", || async {
+        let chart = tx_get_top100(&client).await?;
+        let ranked = chart
+            .into_iter()
+            .map(|(position, track)| (RawTrack::Tx(track), Some(position)))
+            .collect();
+        stream_matched_tracks(&client, &tx, query_id, &mut HashSet::new(), limit, ranked).await;
+        Ok(())
+    })
+    .await;
+}
+
 #[cfg(test)]
 mod top100_tests {
     use super::*;
@@ -2599,6 +2653,52 @@ mod top100_tests {
         assert_eq!(tracks[0].label, "Drumcode");
         assert_eq!(tracks[0].key.as_deref(), Some("Bb Major"));
         assert_eq!(tracks[0].genre, ["Techno (Peak Time / Driving)"]);
+    }
+
+    #[test]
+    fn test_parse_tx_top100() {
+        let row = |pos: &str, id: &str, title: &str, date: &str| {
+            format!(
+                r#"<div data-trid="{id}" class="trk-row play-trk">
+                  <div class="trk-cell tnum-pos"><div class="tnum">{pos}</div></div>
+                  <div class="trk-cell title"><img src="x.svg"><a href="/track/{id}/x">{title}</a>
+                    <span class="version">Extended Remix <span class="duration">(5:51)</span></span>
+                  </div>
+                  <div class="trk-cell artists">
+                    <a href="/artist/1/a" class="com-artists">Lovebirds</a>,
+                    <a href="/artist/2/b" class="com-artists">Stee Downes</a>
+                    <a href="/artist/3/c" class="com-remixers">Schmoov!</a>
+                  </div>
+                  <div class="trk-cell label"><a href="/label/847/w">Winding Road</a></div>
+                  <div class="trk-cell genre"><a href="/genre/3/s">Soul / Funk / Disco</a></div>
+                  <div class="trk-cell r-date">{date}</div>
+                </div>"#
+            )
+        };
+        let html = format!(
+            r#"<div class="trklist">
+              <div class="trk-row hdr"><div class="trk-cell tnum-pos">POS.</div></div>
+              {}{}{}
+            </div>"#,
+            row("1", "15133019", "Want You In My Soul", "2026-11-13"),
+            row("2", "15122054", "Missing date", ""),
+            row("3", "15004120", "Vibin'", "2026-10-30"),
+        );
+        let chart = parse_tx_top100(&html);
+        assert_eq!(
+            chart
+                .iter()
+                .map(|(pos, t)| (*pos, t.track_id))
+                .collect::<Vec<_>>(),
+            [(1, 15133019), (3, 15004120)],
+            "chart order and positions are kept; an unparseable row leaves a gap"
+        );
+        let t = &chart[0].1;
+        assert_eq!(t.track_name, "Want You In My Soul");
+        assert_eq!(t.mix_name, "Extended Remix");
+        assert_eq!(t.artists, ["Lovebirds", "Stee Downes"]);
+        assert_eq!(t.label, "Winding Road");
+        assert_eq!(t.genre.as_deref(), Some("Soul / Funk / Disco"));
     }
 
     #[test]

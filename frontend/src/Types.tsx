@@ -24,7 +24,7 @@ export interface ITrack {
   // Only ever set on search-result tracks (see ServerMsg's "search-result"); not persisted
   // on tracks read back from the collection.
   source?: TrackSource;
-  // Like `source`, only set on search results — and only for chart searches (Beatport top 100).
+  // Like `source`, only set on search results — and only for chart searches (Beatport/Traxsource top 100).
   chart_position?: number;
 }
 
@@ -77,11 +77,19 @@ export type GitSyncState =
   | "error";
 
 export type SearchKind = "fuzzy" | "by-label" | "by-artist";
-export type SearchBoxKind = SearchKind | "new-releases" | "beatport-top-100";
+export type SearchBoxKind =
+  | SearchKind
+  | "new-releases"
+  | "beatport-top-100"
+  | "traxsource-top-100";
+
+/// Chart search kinds, which come from a single store and ignore the search sources.
+export const isChartSearchKind = (kind: SearchBoxKind) =>
+  kind === "beatport-top-100" || kind === "traxsource-top-100";
 
 /// Search kinds that run without a typed query.
 export const isQuerylessSearchKind = (kind: SearchBoxKind) =>
-  kind === "new-releases" || kind === "beatport-top-100";
+  kind === "new-releases" || isChartSearchKind(kind);
 
 export type ClientMsg =
   | { type: "set-collection"; path: string }
@@ -148,6 +156,7 @@ export type ClientMsg =
       genre_id: number;
       limit: number;
     }
+  | { type: "search-traxsource-top100"; query_id: number; limit: number }
   | { type: "get-git-remote" }
   | { type: "set-git-remote"; url: string | null }
   | { type: "retry-git-sync" }
