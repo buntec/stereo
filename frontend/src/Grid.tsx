@@ -198,9 +198,10 @@ const PlayControlRenderer: React.FC<
     <HStack gap={1} vAlign="center" className="track-control-cell">
       <Tooltip content="Open in YouTube">
         <Link
-          label={`Open ${data.title} in YouTube`}
+          // Plain new-tab link: isExternalLink would add an icon next to every thumbnail.
+          label={`Open ${data.title} in YouTube (opens in new tab)`}
           href={`https://www.youtube.com/watch?v=${data.yt_id}`}
-          isExternalLink
+          target="_blank"
         >
           <img
             className="yt-thumbnail"
