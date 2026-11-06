@@ -368,25 +368,78 @@ test("grid arrow keys move between rows without skipping playback", async ({
   ).toHaveLength(before);
 });
 
-test("expanded and fullscreen playback preserve player instances and grid selection", async ({
+async function enableVideo(page: Page) {
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      "stereo_app_settings",
+      JSON.stringify({
+        appearance: "dark",
+        repoPath: "/audit",
+        collectionPath: "/audit/collection.db",
+        video: true,
+        backgroundVideo: true,
+        shufflePlay: false,
+        fullScreen: false,
+      }),
+    ),
+  );
+}
+
+async function expectUnclippedVideo(page: Page) {
+  const player = (await page.locator(".player").boundingBox())!;
+  const iframe = (await page
+    .locator(".player iframe[title='YouTube player']")
+    .boundingBox())!;
+  const footer = (await page.locator(".playback-footer").boundingBox())!;
+  // The iframe fills a 16:9 frame that ends above the transport footer.
+  expect(Math.abs(player.width / player.height - 16 / 9)).toBeLessThan(0.02);
+  expect(iframe).toEqual(player);
+  expect(player.y).toBeGreaterThanOrEqual(0);
+  expect(player.y + player.height).toBeLessThanOrEqual(footer.y);
+  return player;
+}
+
+for (const [width, height] of [
+  [1280, 720],
+  [390, 844],
+]) {
+  test(`video is sized to fit and leaves room for the grid at ${width}x${height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height });
+    await enableVideo(page);
+    await openApp(page, { playback: true });
+    await expect(
+      page.getByRole("slider", { name: "Playback progress", exact: true }),
+    ).toBeEnabled();
+    const player = await expectUnclippedVideo(page);
+    expect(player.x + player.width).toBeLessThanOrEqual(width);
+    const grid = (await page.locator(".grid").boundingBox())!;
+    expect(grid.height).toBeGreaterThan(200);
+  });
+}
+
+test("fullscreen enlarges the video and preserves player instances and grid selection", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await enableVideo(page);
   await openApp(page, { playback: true });
   await expect(
     page.getByRole("slider", { name: "Playback progress", exact: true }),
   ).toBeEnabled();
   await page.locator('.ag-row[row-index="0"]').getByRole("checkbox").check();
   await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
-  await page
-    .getByRole("button", { name: "Expand player", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Collapse player", exact: true }),
-  ).toBeVisible();
+  const windowed = await expectUnclippedVideo(page);
   await page
     .getByRole("button", { name: "Toggle fullscreen mode", exact: true })
     .click();
   await expect(page.locator(".grid")).toBeHidden();
+  await expect(
+    page.getByRole("heading", { name: "Example track 1", exact: true }),
+  ).toBeVisible();
+  const fullscreen = await expectUnclippedVideo(page);
+  expect(fullscreen.width).toBeGreaterThan(windowed.width);
   await page
     .getByRole("button", { name: "Toggle fullscreen mode", exact: true })
     .click();
@@ -398,6 +451,23 @@ test("expanded and fullscreen playback preserve player instances and grid select
   expect(
     await page.evaluate(() => Reflect.get(window, "__playerDestroys")),
   ).toBe(0);
+});
+
+test("single-key shortcuts still work after clicking a button or a grid row", async ({
+  page,
+}) => {
+  await openApp(page, { playback: true });
+  const video = page.getByRole("button", { name: "Toggle video", exact: true });
+  const shuffle = page.getByRole("button", {
+    name: "Toggle shuffle play",
+    exact: true,
+  });
+  await page.locator(".play-pause-button").click();
+  await page.keyboard.press("v");
+  await expect(video).toHaveAttribute("aria-pressed", "true");
+  await page.locator('.ag-row[row-index="2"] [col-id="title"]').click();
+  await page.keyboard.press("s");
+  await expect(shuffle).toHaveAttribute("aria-pressed", "true");
 });
 
 test("slider arrow keys seek one slider step instead of triggering global shortcuts", async ({

@@ -42,6 +42,14 @@ export function EditTrackDialog({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isFixingUp, setIsFixingUp] = useState(false);
 
+  // Partial release dates (YYYY, YYYY-MM) need a free-form field. Once the dialog has
+  // shown one it keeps it until reopened, so typing or clearing never swaps inputs
+  // (and focus) mid-edit.
+  const [freeformDate, setFreeformDate] = useState(false);
+  const hasPartialDate =
+    !!value.release_date && !isCalendarDate(value.release_date);
+  if (hasPartialDate && !freeformDate) setFreeformDate(true);
+
   const [spotifyIdStatus, setSpotifyIdStatus] =
     useState<SpotifyIdStatus>("idle");
   const spotifyIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -88,6 +96,7 @@ export function EditTrackDialog({
         icon={<Pencil1Icon />}
         onClick={() => {
           resetValue();
+          setFreeformDate(false);
           setDialogOpen(true);
         }}
       />
@@ -172,11 +181,11 @@ export function EditTrackDialog({
                   }
                 />
 
-                {value.release_date && !isCalendarDate(value.release_date) ? (
+                {freeformDate ? (
                   <TextInput
                     label="Release date"
-                    description="This source supplied a partial date. Use YYYY, YYYY-MM, or YYYY-MM-DD."
-                    value={value.release_date}
+                    description="Use YYYY, YYYY-MM, or YYYY-MM-DD."
+                    value={value.release_date ?? ""}
                     onChange={(release_date) =>
                       setValue({
                         ...value,

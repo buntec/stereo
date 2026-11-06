@@ -361,7 +361,6 @@ export type Action =
   | { type: "set-title"; title?: string }
   | { type: "set-import-from"; path: string }
   | { type: "set-import-keep-user-data"; keep: boolean }
-  | { type: "set-notification-show"; show: boolean }
   | { type: "consume-notifications"; ids: number[] }
   | { type: "dismiss-connection-closed-notification" }
   | { type: "clear-title" }

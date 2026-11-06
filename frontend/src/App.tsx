@@ -26,8 +26,6 @@ import {
   TrackNextIcon,
   PauseIcon,
   TrackPreviousIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
 } from "@radix-ui/react-icons";
 
 import { Theme } from "@astryxdesign/core/theme";
@@ -229,9 +227,6 @@ type State = {
 
   notification_queue: AppNotification[];
   notification_next_id: number;
-  notification_msg?: string;
-  notification_show: boolean;
-  notification_kind?: "info" | "warn" | "warning" | "error";
 
   import_from?: string;
   import_from_keep_user_data?: boolean;
@@ -274,7 +269,27 @@ type State = {
   youtube_fixup_tracks?: ITrack[];
 };
 
-const reduceState = (state: State, action: Action): State => {
+// Queues a toast; the Notification component shows and then consumes queued entries.
+const notify = (
+  state: State,
+  message: string,
+  kind?: AppNotification["kind"],
+): State => ({
+  ...state,
+  notification_next_id: state.notification_next_id + 1,
+  notification_queue: [
+    ...state.notification_queue,
+    { id: state.notification_next_id, message, kind },
+  ],
+});
+
+const NO_SEARCH_SOURCES_MESSAGE =
+  "Choose at least one source in Search options before searching.";
+
+const isConnectionClosedMessage = (message: string) =>
+  message.startsWith("WebSocket connection closed");
+
+const reducer = (state: State, action: Action): State => {
   switch (action.type) {
     case "set-playlist": {
       if (
@@ -512,36 +527,32 @@ const reduceState = (state: State, action: Action): State => {
     case "track-info":
       return { ...state, track_info: action.track };
 
-    case "consume-notifications": {
-      const pending = state.notification_queue.filter(
-        (item) => !action.ids.includes(item.id),
-      );
+    case "consume-notifications":
       return {
         ...state,
-        notification_queue: pending,
-        notification_show: pending.length > 0,
+        notification_queue: state.notification_queue.filter(
+          (item) => !action.ids.includes(item.id),
+        ),
       };
-    }
-
-    case "set-notification-show":
-      return { ...state, notification_show: action.show };
 
     case "dismiss-connection-closed-notification":
+      // A shown connection toast is dismissed by Notification once the socket reconnects;
+      // this drops one that has not been shown yet.
       if (
-        state.notification_show &&
-        state.notification_msg?.startsWith("WebSocket connection closed")
-      ) {
-        return { ...state, notification_show: false };
-      }
-      return state;
-
-    case "notification":
+        !state.notification_queue.some((item) =>
+          isConnectionClosedMessage(item.message),
+        )
+      )
+        return state;
       return {
         ...state,
-        notification_kind: action.kind,
-        notification_msg: action.message,
-        notification_show: true,
+        notification_queue: state.notification_queue.filter(
+          (item) => !isConnectionClosedMessage(item.message),
+        ),
       };
+
+    case "notification":
+      return notify(state, action.message, action.kind);
 
     case "git-remote":
       return { ...state, git_remote: action.url };
@@ -611,17 +622,14 @@ const reduceState = (state: State, action: Action): State => {
 
     case "spotify-backfill-complete":
       if (action.id !== state.spotify_backfill_id) return { ...state };
-      return {
-        ...state,
-        spotify_backfill_running: false,
-        notification_kind: action.error_message ? "error" : "info",
-        notification_msg:
-          action.error_message ??
+      return notify(
+        { ...state, spotify_backfill_running: false },
+        action.error_message ??
           (action.total === 0
             ? "No tracks needed a Spotify ID"
             : `Spotify backfill complete: ${action.matched}/${action.total} tracks matched`),
-        notification_show: true,
-      };
+        action.error_message ? "error" : "info",
+      );
 
     case "start-spotify-playlist-export":
       return {
@@ -644,16 +652,17 @@ const reduceState = (state: State, action: Action): State => {
 
     case "spotify-playlist":
       if (action.id !== state.spotify_playlist_id) return { ...state };
-      return {
-        ...state,
-        spotify_playlist_running: false,
-        spotify_playlist_open_url: action.url,
-        notification_kind: action.url ? "info" : "error",
-        notification_msg: action.url
+      return notify(
+        {
+          ...state,
+          spotify_playlist_running: false,
+          spotify_playlist_open_url: action.url,
+        },
+        action.url
           ? `Created Spotify playlist with ${action.matched}/${action.total} matched tracks`
           : (action.error_message ?? "Failed to create Spotify playlist"),
-        notification_show: true,
-      };
+        action.url ? "info" : "error",
+      );
 
     case "clear-spotify-playlist-open-url":
       return { ...state, spotify_playlist_open_url: undefined };
@@ -691,9 +700,9 @@ const reduceState = (state: State, action: Action): State => {
         youtube_fixup_total: action.total,
       };
 
-    case "fixup-tracks-complete":
+    case "fixup-tracks-complete": {
       if (action.id !== state.youtube_fixup_id) return { ...state };
-      return {
+      const next = {
         ...state,
         youtube_fixup_running: false,
         youtube_fixup_current: action.total,
@@ -701,15 +710,11 @@ const reduceState = (state: State, action: Action): State => {
         youtube_fixup_total: action.total,
         youtube_fixup_tracks:
           action.tracks.length > 0 ? action.tracks : undefined,
-        notification_kind:
-          action.tracks.length > 0 ? state.notification_kind : "error",
-        notification_msg:
-          action.tracks.length > 0
-            ? state.notification_msg
-            : "Playlist metadata lookup returned no tracks",
-        notification_show:
-          action.tracks.length > 0 ? state.notification_show : true,
       };
+      return action.tracks.length > 0
+        ? next
+        : notify(next, "Playlist metadata lookup returned no tracks", "error");
+    }
 
     case "start-youtube-fixup":
       return {
@@ -736,65 +741,40 @@ const reduceState = (state: State, action: Action): State => {
 
     case "youtube-playlist":
       if (action.id !== state.youtube_playlist_id) return { ...state };
-      return {
-        ...state,
-        youtube_playlist_running: false,
-        youtube_playlist_open_url: action.url,
-        notification_kind: action.url ? "info" : "error",
-        notification_msg: action.url
+      return notify(
+        {
+          ...state,
+          youtube_playlist_running: false,
+          youtube_playlist_open_url: action.url,
+        },
+        action.url
           ? "Created YouTube playlist"
           : (action.error_message ?? "Failed to create YouTube playlist"),
-        notification_show: true,
-      };
+        action.url ? "info" : "error",
+      );
 
     case "clear-youtube-playlist-open-url":
       return { ...state, youtube_playlist_open_url: undefined };
 
     case "cancel-youtube-playlist":
       if (!state.youtube_playlist_running) return { ...state };
-      return {
-        ...state,
-        youtube_playlist_running: false,
-        youtube_playlist_id: undefined,
-        notification_kind: action.reason === "timeout" ? "warning" : "info",
-        notification_msg:
-          action.reason === "timeout"
-            ? "YouTube playlist export stalled (possibly hit the API quota) — cancelled"
-            : "Cancelled YouTube playlist export",
-        notification_show: true,
-      };
+      return notify(
+        {
+          ...state,
+          youtube_playlist_running: false,
+          youtube_playlist_id: undefined,
+        },
+        action.reason === "timeout"
+          ? "YouTube playlist export stalled (possibly hit the API quota) — cancelled"
+          : "Cancelled YouTube playlist export",
+        action.reason === "timeout" ? "warning" : "info",
+      );
 
     default:
       // Don't take down the whole UI over a message type this build doesn't know.
       logger.warn(`missing handler for action: ${JSON.stringify(action)}`);
       return state;
   }
-};
-
-// Preserve every notification when several server messages arrive in one React batch.
-const reducer = (state: State, action: Action): State => {
-  const next = reduceState(state, action);
-  if (
-    next.notification_show &&
-    next.notification_msg &&
-    (action.type === "notification" ||
-      next.notification_msg !== state.notification_msg ||
-      !state.notification_show)
-  ) {
-    return {
-      ...next,
-      notification_next_id: state.notification_next_id + 1,
-      notification_queue: [
-        ...next.notification_queue,
-        {
-          id: state.notification_next_id,
-          message: next.notification_msg,
-          kind: next.notification_kind,
-        },
-      ],
-    };
-  }
-  return next;
 };
 
 function App() {
@@ -813,7 +793,6 @@ function App() {
     new_releases_days: 7,
     notification_queue: [],
     notification_next_id: 1,
-    notification_show: false,
     spotify_backfill_running: false,
     spotify_playlist_running: false,
     youtube_connected: false,
@@ -834,10 +813,6 @@ function App() {
   const consumeNotifications = useCallback(
     (ids: number[]) => dispatch({ type: "consume-notifications", ids }),
     [],
-  );
-  const [playerExpanded, setPlayerExpanded] = useLocalStorage<boolean>(
-    "stereo_player_expanded",
-    false,
   );
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
@@ -2091,6 +2066,14 @@ function App() {
 
   const handleArtistClick = useCallback(
     (name: string) => {
+      if (!state.search_sources.length) {
+        dispatch({
+          type: "notification",
+          message: NO_SEARCH_SOURCES_MESSAGE,
+          kind: "warning",
+        });
+        return;
+      }
       const query_id = ++queryId.current;
       dispatch({ type: "set-search-kind", kind: "by-artist" });
       dispatch({ type: "search-box-input", input: name });
@@ -2110,6 +2093,14 @@ function App() {
 
   const handleLabelClick = useCallback(
     (name: string) => {
+      if (!state.search_sources.length) {
+        dispatch({
+          type: "notification",
+          message: NO_SEARCH_SOURCES_MESSAGE,
+          kind: "warning",
+        });
+        return;
+      }
       const query_id = ++queryId.current;
       dispatch({ type: "set-search-kind", kind: "by-label" });
       dispatch({ type: "search-box-input", input: name });
@@ -2191,9 +2182,154 @@ function App() {
     />
   );
 
-  // Responsive contract: header search moves onto its own row below 768px.
-  // Header auto | grid fills remaining space | compact transport footer; expanded
-  // media is limited to 45dvh. Fullscreen reserves the frame for playback.
+  const collectionBody = isSearchGridActive ? (
+    <SearchResultsGrid
+      // Chart results get different columns and default sort; remounting applies them.
+      key={state.search_is_chart ? "chart" : "search"}
+      isChart={state.search_is_chart}
+      isSearching={state.search_busy}
+      onExitSearch={handleExitSearch}
+      gridRef={searchGridRef}
+      currentId={state.current_id}
+      playId={playId}
+      requestReply={requestReply}
+      dispatch={dispatch}
+      tracks={state.search_results}
+      lastCollectionUpdate={state.collection_last_update}
+      onArtistClick={handleArtistClick}
+      onLabelClick={handleLabelClick}
+      addTrack={addSearchResultTrack}
+    />
+  ) : !backendReady ? (
+    <HStack height="100%" hAlign="center" vAlign="center">
+      <Spinner label="Connecting to your collection…" />
+    </HStack>
+  ) : state.collections?.length === 0 ? (
+    <EmptyState
+      title="Create your first collection"
+      description="A collection keeps track metadata and ratings in a local database file."
+      actions={
+        <Button
+          label="Create collection"
+          variant="primary"
+          onClick={() => setCreateCollectionOpen(true)}
+        />
+      }
+    />
+  ) : !state.collection ? (
+    <HStack height="100%" hAlign="center" vAlign="center">
+      <Spinner label="Opening collection…" />
+    </HStack>
+  ) : state.collection.size === 0 ? (
+    <EmptyState
+      title="Your collection is ready"
+      description="Search for music or import tracks to start curating."
+      actions={
+        <HStack gap={2} wrap="wrap">
+          <Button
+            label="Search for music"
+            variant="primary"
+            onClick={() =>
+              document
+                .querySelector<HTMLInputElement>(".search-box input")
+                ?.focus()
+            }
+          />
+          {importMenu}
+        </HStack>
+      }
+    />
+  ) : (
+    <TracksGrid
+      gridRef={gridRef}
+      currentId={state.current_id}
+      playId={playIdForGrid}
+      updateRating={updateRating}
+      requestReply={requestReply}
+      dispatch={dispatch}
+      sendMsg={sendMsg}
+      setGridReady={setGridReady}
+      initialState={gridState}
+      onStateUpdate={onTrackGridStateUpdate}
+      onRowCountChange={setFilteredRowCount}
+      onArtistClick={handleArtistClick}
+      onLabelClick={handleLabelClick}
+      onShazamSimilar={handleShazamSimilar}
+    />
+  );
+
+  const nowPlayingMenu = state.track_info && (
+    <NowPlayingMenu
+      track={state.track_info}
+      collections={state.collections ?? []}
+      currentCollectionPath={settings.collectionPath}
+      onCopyToCollection={(path) => {
+        if (state.track_info) {
+          sendMsg({
+            type: "export-tracks-to-collection",
+            tracks: [state.track_info],
+            collection: path,
+          });
+        }
+      }}
+      onMoveToCollection={(path) => {
+        if (state.track_info && state.current_id) {
+          // The server removes the track from the source collection only
+          // once it has been written to the target.
+          sendMsg({
+            type: "export-tracks-to-collection",
+            tracks: [state.track_info],
+            collection: path,
+            source_collection: settings.collectionPath,
+          });
+          dispatch({ type: "play-next-track" });
+        }
+      }}
+      onDeleteFromCollection={() => {
+        if (state.current_id && state.track_info) {
+          setPendingDelete({
+            ids: [state.current_id],
+            description: `This removes “${state.track_info.title}” from ${collectionLabel(settings.collectionPath)}, including its rating and play count.`,
+            isNowPlaying: true,
+          });
+        }
+      }}
+    />
+  );
+
+  // Title and track menu: compact in the footer, large and centered above the video in
+  // fullscreen.
+  const nowPlaying = (expanded: boolean) =>
+    state.title || state.track_info ? (
+      <HStack
+        width="100%"
+        vAlign={expanded ? "start" : "center"}
+        hAlign={expanded ? "center" : "start"}
+        gap={2}
+      >
+        <StackItem className="now-playing-text">
+          <Title
+            title={state.title ?? state.track_info?.title ?? "Nothing playing"}
+            expanded={expanded}
+            artists={state.track_info?.artists}
+            trackName={state.track_info?.title}
+            label={state.track_info?.label}
+            releaseDate={state.track_info?.release_date}
+            onArtistClick={handleArtistClick}
+            onLabelClick={handleLabelClick}
+          />
+        </StackItem>
+        {nowPlayingMenu}
+      </HStack>
+    ) : (
+      <Text type="supporting" color="secondary">
+        Choose a track to start listening.
+      </Text>
+    );
+
+  // Layout: header | toolbar | optional video stage (16:9, at most 35dvh tall) | grid
+  // fills the rest | one-row transport footer (wraps on narrow screens). Fullscreen hides
+  // the header, toolbar and grid and lets the video fill the stage under a large title.
   return (
     <Theme theme={stereoTheme} mode={settings.appearance}>
       <LayerProvider toast={{ position: "topEnd" }}>
@@ -2444,205 +2580,58 @@ function App() {
                 isScrollable={false}
               >
                 <VStack width="100%" height="100%">
-                  {isSearchGridActive ? (
-                    <SearchResultsGrid
-                      // Chart results get different columns and default sort; remounting applies them.
-                      key={state.search_is_chart ? "chart" : "search"}
-                      isChart={state.search_is_chart}
-                      isSearching={state.search_busy}
-                      onExitSearch={handleExitSearch}
-                      gridRef={searchGridRef}
-                      currentId={state.current_id}
-                      playId={playId}
-                      requestReply={requestReply}
-                      dispatch={dispatch}
-                      tracks={state.search_results}
-                      lastCollectionUpdate={state.collection_last_update}
-                      onArtistClick={handleArtistClick}
-                      onLabelClick={handleLabelClick}
-                      addTrack={addSearchResultTrack}
-                    />
-                  ) : !backendReady ? (
-                    <HStack height="100%" hAlign="center" vAlign="center">
-                      <Spinner label="Connecting to your collection…" />
+                  {settings.fullScreen ? (
+                    <HStack
+                      key="fullscreen-now-playing"
+                      width="100%"
+                      padding={4}
+                      hAlign="center"
+                      className="fullscreen-now-playing"
+                    >
+                      {nowPlaying(true)}
                     </HStack>
-                  ) : state.collections?.length === 0 ? (
-                    <EmptyState
-                      title="Create your first collection"
-                      description="A collection keeps track metadata and ratings in a local database file."
-                      actions={
-                        <Button
-                          label="Create collection"
-                          variant="primary"
-                          onClick={() => setCreateCollectionOpen(true)}
-                        />
-                      }
-                    />
-                  ) : !state.collection ? (
-                    <HStack height="100%" hAlign="center" vAlign="center">
-                      <Spinner label="Opening collection…" />
-                    </HStack>
-                  ) : state.collection.size === 0 ? (
-                    <EmptyState
-                      title="Your collection is ready"
-                      description="Search for music or import tracks to start curating."
-                      actions={
-                        <HStack gap={2} wrap="wrap">
-                          <Button
-                            label="Search for music"
-                            variant="primary"
-                            onClick={() =>
-                              document
-                                .querySelector<HTMLInputElement>(
-                                  ".search-box input",
-                                )
-                                ?.focus()
-                            }
-                          />
-                          {importMenu}
-                        </HStack>
-                      }
-                    />
-                  ) : (
-                    <TracksGrid
-                      gridRef={gridRef}
-                      currentId={state.current_id}
-                      playId={playIdForGrid}
-                      updateRating={updateRating}
-                      requestReply={requestReply}
-                      dispatch={dispatch}
-                      sendMsg={sendMsg}
-                      setGridReady={setGridReady}
-                      initialState={gridState}
-                      onStateUpdate={onTrackGridStateUpdate}
-                      onRowCountChange={setFilteredRowCount}
-                      onArtistClick={handleArtistClick}
-                      onLabelClick={handleLabelClick}
-                      onShazamSimilar={handleShazamSimilar}
-                    />
-                  )}
+                  ) : null}
+                  {/* Rendered unconditionally and always at this position: YouTube swaps the
+                      mount node for its iframe, and re-parenting an iframe reloads it. */}
+                  <HStack
+                    key="player-stage"
+                    width="100%"
+                    padding={2}
+                    hAlign="center"
+                    vAlign="center"
+                    className={`player-stage ${settings.video || settings.fullScreen ? "" : "hidden"}`}
+                  >
+                    <VStack className="player">
+                      <div ref={playerRef} />
+                    </VStack>
+                  </HStack>
+                  <StackItem
+                    key="collection-body"
+                    size="fill"
+                    className="collection-body"
+                  >
+                    <VStack width="100%" height="100%">
+                      {collectionBody}
+                    </VStack>
+                  </StackItem>
                 </VStack>
               </LayoutContent>
             }
             footer={
               <LayoutFooter padding={2} hasDivider className="playback-footer">
-                <VStack
+                <HStack
                   width="100%"
-                  gap={1}
-                  className={`playback ${playerExpanded || settings.fullScreen ? "expanded" : ""}`}
+                  gap={4}
+                  vAlign="center"
+                  wrap="wrap"
+                  className="playback-bar"
                 >
-                  <VStack width="100%" hAlign="center" gap={1}>
-                    {state.title || state.track_info ? (
-                      <HStack
-                        width="100%"
-                        vAlign="center"
-                        hAlign="between"
-                        gap={2}
-                      >
-                        <Title
-                          title={
-                            state.title ??
-                            state.track_info?.title ??
-                            "Nothing playing"
-                          }
-                          expanded={playerExpanded || settings.fullScreen}
-                          artists={state.track_info?.artists}
-                          trackName={state.track_info?.title}
-                          label={state.track_info?.label}
-                          releaseDate={state.track_info?.release_date}
-                          onArtistClick={handleArtistClick}
-                          onLabelClick={handleLabelClick}
-                        />
-                        {state.track_info && (
-                          <NowPlayingMenu
-                            track={state.track_info}
-                            collections={state.collections ?? []}
-                            currentCollectionPath={settings.collectionPath}
-                            onCopyToCollection={(path) => {
-                              if (state.track_info) {
-                                sendMsg({
-                                  type: "export-tracks-to-collection",
-                                  tracks: [state.track_info],
-                                  collection: path,
-                                });
-                              }
-                            }}
-                            onMoveToCollection={(path) => {
-                              if (state.track_info && state.current_id) {
-                                // The server removes the track from the source collection only
-                                // once it has been written to the target.
-                                sendMsg({
-                                  type: "export-tracks-to-collection",
-                                  tracks: [state.track_info],
-                                  collection: path,
-                                  source_collection: settings.collectionPath,
-                                });
-                                dispatch({ type: "play-next-track" });
-                              }
-                            }}
-                            onDeleteFromCollection={() => {
-                              if (state.current_id && state.track_info) {
-                                setPendingDelete({
-                                  ids: [state.current_id],
-                                  description: `This removes “${state.track_info.title}” from ${collectionLabel(settings.collectionPath)}, including its rating and play count.`,
-                                  isNowPlaying: true,
-                                });
-                              }
-                            }}
-                          />
-                        )}
-                      </HStack>
-                    ) : (
-                      <Text type="supporting" color="secondary">
-                        Choose a track to start listening.
-                      </Text>
-                    )}
-
+                  <StackItem className="playback-now-playing">
+                    {settings.fullScreen ? null : nowPlaying(false)}
+                  </StackItem>
+                  <StackItem className="playback-transport">
                     <VStack width="100%" hAlign="center" gap={1}>
-                      {(playerExpanded || settings.fullScreen) && (
-                        <Rating
-                          enabled={Boolean(
-                            state.current_id &&
-                            state.current_id === state.track_info?.yt_id,
-                          )}
-                          currentRating={
-                            state.current_id === state.track_info?.yt_id
-                              ? state.track_info?.rating
-                              : undefined
-                          }
-                          updateRating={updateCurrentRating}
-                        />
-                      )}
-                      <HStack
-                        className="progress-slider"
-                        width="100%"
-                        maxWidth={960}
-                        vAlign="center"
-                        gap={2}
-                      >
-                        <Text>{formatDuration(state.current_time ?? 0)}</Text>
-                        <StackItem size="fill">
-                          <Slider
-                            label="Playback progress"
-                            isLabelHidden
-                            valueDisplay="none"
-                            value={state.playback_progress_pct ?? 0}
-                            onChange={(v: number) => onSliderValueChange([v])}
-                            isDisabled={!state.duration}
-                          />
-                        </StackItem>
-                        <Text>
-                          {state.duration
-                            ? formatDuration(state.duration)
-                            : "--:--"}
-                        </Text>
-                      </HStack>
-                      <HStack
-                        vAlign="center"
-                        hAlign="center"
-                        gap={1}
-                        wrap="wrap"
-                      >
+                      <HStack vAlign="center" hAlign="center" gap={1}>
                         <Tooltip
                           content={
                             <>
@@ -2668,8 +2657,8 @@ function App() {
                           }
                         >
                           <IconButton
-                            variant="secondary"
-                            size="sm"
+                            variant="primary"
+                            size="md"
                             className="play-pause-button"
                             label={
                               state.player_state === YTPlayerState.PLAYING
@@ -2702,133 +2691,141 @@ function App() {
                             onClick={nextTrack}
                           />
                         </Tooltip>
-
-                        <Divider orientation="vertical" />
-
-                        <Tooltip
-                          content={
-                            <>
-                              Toggle shuffle play <Kbd keys="s" />
-                            </>
-                          }
-                        >
-                          <IconButton
-                            variant={
-                              settings.shufflePlay ? "primary" : "secondary"
-                            }
-                            size="sm"
-                            label="Toggle shuffle play"
-                            aria-pressed={settings.shufflePlay}
-                            icon={<ShuffleIcon />}
-                            onClick={toggleShuffle}
+                      </HStack>
+                      <HStack
+                        className="progress-slider"
+                        width="100%"
+                        vAlign="center"
+                        gap={2}
+                      >
+                        <Text type="supporting" hasTabularNumbers>
+                          {formatDuration(state.current_time ?? 0)}
+                        </Text>
+                        <StackItem size="fill">
+                          <Slider
+                            label="Playback progress"
+                            isLabelHidden
+                            valueDisplay="none"
+                            value={state.playback_progress_pct ?? 0}
+                            onChange={(v: number) => onSliderValueChange([v])}
+                            isDisabled={!state.duration}
+                            style={{ paddingInline: "var(--spacing-3)" }}
                           />
-                        </Tooltip>
+                        </StackItem>
+                        <Text type="supporting" hasTabularNumbers>
+                          {state.duration
+                            ? formatDuration(state.duration)
+                            : "--:--"}
+                        </Text>
+                      </HStack>
+                    </VStack>
+                  </StackItem>
+                  <StackItem className="playback-options">
+                    <HStack vAlign="center" hAlign="end" gap={1} wrap="wrap">
+                      <Rating
+                        label="Rating for the playing track"
+                        enabled={Boolean(
+                          state.current_id &&
+                          state.current_id === state.track_info?.yt_id,
+                        )}
+                        currentRating={
+                          state.current_id === state.track_info?.yt_id
+                            ? state.track_info?.rating
+                            : undefined
+                        }
+                        updateRating={updateCurrentRating}
+                      />
 
-                        <Tooltip
-                          content={
+                      <Divider orientation="vertical" />
+
+                      <Tooltip
+                        content={
+                          <>
+                            Toggle shuffle play <Kbd keys="s" />
+                          </>
+                        }
+                      >
+                        <IconButton
+                          variant={settings.shufflePlay ? "primary" : "ghost"}
+                          size="sm"
+                          label="Toggle shuffle play"
+                          aria-pressed={settings.shufflePlay}
+                          icon={<ShuffleIcon />}
+                          onClick={toggleShuffle}
+                        />
+                      </Tooltip>
+
+                      <Tooltip
+                        content={
+                          reducedMotion ? (
+                            "Background video is disabled by your reduced motion preference"
+                          ) : (
                             <>
                               Toggle background video <Kbd keys="b" />
                             </>
+                          )
+                        }
+                      >
+                        <IconButton
+                          variant={
+                            settings.backgroundVideo && !reducedMotion
+                              ? "primary"
+                              : "ghost"
                           }
-                        >
-                          <IconButton
-                            variant={
-                              settings.backgroundVideo ? "primary" : "secondary"
-                            }
-                            size="sm"
-                            label="Toggle background video"
-                            aria-pressed={
-                              settings.backgroundVideo && !reducedMotion
-                            }
-                            isDisabled={reducedMotion}
-                            tooltip={
-                              reducedMotion
-                                ? "Background video is disabled by your reduced motion preference"
-                                : undefined
-                            }
-                            icon={<MagicWandIcon />}
-                            onClick={toggleBackgroundVideo}
-                          />
-                        </Tooltip>
-
-                        <Divider orientation="vertical" />
-
-                        <Tooltip
-                          content={
-                            <>
-                              Toggle video <Kbd keys="v" />
-                            </>
+                          size="sm"
+                          label="Toggle background video"
+                          aria-pressed={
+                            settings.backgroundVideo && !reducedMotion
                           }
-                        >
-                          <IconButton
-                            className="toggle-video-button"
-                            variant={settings.video ? "primary" : "secondary"}
-                            size="sm"
-                            label="Toggle video"
-                            aria-pressed={settings.video}
-                            icon={<VideoIcon />}
-                            onClick={toggleVideo}
-                          />
-                        </Tooltip>
+                          isDisabled={reducedMotion}
+                          icon={<MagicWandIcon />}
+                          onClick={toggleBackgroundVideo}
+                        />
+                      </Tooltip>
 
-                        <Tooltip
-                          content={
-                            <>
-                              Toggle fullscreen mode <Kbd keys="f" />
-                            </>
+                      <Tooltip
+                        content={
+                          <>
+                            Toggle video <Kbd keys="v" />
+                          </>
+                        }
+                      >
+                        <IconButton
+                          className="toggle-video-button"
+                          variant={settings.video ? "primary" : "ghost"}
+                          size="sm"
+                          label="Toggle video"
+                          aria-pressed={settings.video}
+                          icon={<VideoIcon />}
+                          onClick={toggleVideo}
+                        />
+                      </Tooltip>
+
+                      <Tooltip
+                        content={
+                          <>
+                            Toggle fullscreen mode <Kbd keys="f" />
+                          </>
+                        }
+                      >
+                        <IconButton
+                          variant={settings.fullScreen ? "primary" : "ghost"}
+                          size="sm"
+                          label="Toggle fullscreen mode"
+                          aria-pressed={settings.fullScreen}
+                          icon={
+                            settings.fullScreen ? (
+                              <ExitFullScreenIcon />
+                            ) : (
+                              <EnterFullScreenIcon />
+                            )
                           }
-                        >
-                          <IconButton
-                            variant="secondary"
-                            size="sm"
-                            label="Toggle fullscreen mode"
-                            aria-pressed={settings.fullScreen}
-                            icon={
-                              settings.fullScreen ? (
-                                <ExitFullScreenIcon />
-                              ) : (
-                                <EnterFullScreenIcon />
-                              )
-                            }
-                            onClick={toggleFullscreen}
-                          />
-                        </Tooltip>
-                        {!settings.fullScreen && (
-                          <IconButton
-                            variant="ghost"
-                            size="sm"
-                            label={
-                              playerExpanded
-                                ? "Collapse player"
-                                : "Expand player"
-                            }
-                            tooltip={
-                              playerExpanded
-                                ? "Collapse player"
-                                : "Expand player"
-                            }
-                            aria-expanded={playerExpanded}
-                            icon={
-                              playerExpanded ? (
-                                <ChevronDownIcon />
-                              ) : (
-                                <ChevronUpIcon />
-                              )
-                            }
-                            onClick={() => setPlayerExpanded(!playerExpanded)}
-                          />
-                        )}
-                      </HStack>
-                    </VStack>
-                  </VStack>
-                </VStack>
-
-                <VStack
-                  className={`player ${settings.video || settings.fullScreen ? "" : "hidden"}`}
-                >
-                  {/* The IFrame API replaces this mount node; keep it outside React layout ownership. */}
-                  <div ref={playerRef} />
-                </VStack>
+                          onClick={toggleFullscreen}
+                        />
+                      </Tooltip>
+                    </HStack>
+                  </StackItem>
+                </HStack>
               </LayoutFooter>
             }
           />

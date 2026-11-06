@@ -34,7 +34,8 @@
   --ag-cell-text-color: var(--color-text-primary);
   --ag-text-color: var(--color-text-primary);
   --ag-foreground-color: var(--color-text-primary);
-  --ag-background-color: rgb(from var(--color-background-surface) r g b / 0.9);
+  /* Translucent so the background video shows through, as on the rest of the page. */
+  --ag-background-color: rgb(from var(--color-background-surface) r g b / 0.25);
   --ag-menu-background-color: var(--color-background-popover);
   --ag-border-color: var(--color-border);
   --ag-border-radius: var(--radius-element);
@@ -68,30 +69,47 @@
   );
 }
 
-.playback-footer {
-  background-color: rgb(from var(--color-background-surface) r g b / 0.9);
-  max-height: 55dvh;
-  overflow: auto;
+/* Footer transport: now playing | transport | rating + toggles. The three regions
+   wrap onto separate rows on narrow screens. */
+.playback-now-playing {
+  flex: 1 1 16rem;
+}
+.playback-transport {
+  flex: 2 1 24rem;
+  max-width: 48rem;
+}
+.playback-options {
+  flex: 1 1 16rem;
 }
 
+/* Shrinks to truncate the title but does not push the track menu away from it. */
+.now-playing-text {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.now-playing-meta .astryx-button {
+  /* Keep the hover padding but align the text with the title. */
+  margin-inline: calc(-1 * var(--spacing-1));
+  padding-inline: var(--spacing-1);
+}
+
+/* The YouTube iframe is sized by its 16:9 frame instead of its fixed 640x360
+   attributes: scaled down to fit narrow and short viewports, never clipped. */
+.player-stage {
+  flex: none;
+}
 .player {
-  align-items: center;
+  width: min(100%, 40rem, calc(35dvh * 16 / 9));
+  aspect-ratio: 16 / 9;
   overflow: hidden;
   border-radius: var(--radius-container);
-  max-height: 45dvh;
 }
-
 .player iframe {
-  max-width: 100%;
-}
-
-.fullscreen .playback-footer {
-  max-height: 100dvh;
-}
-
-.fullscreen .player {
-  max-height: none;
-  border-radius: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
 }
 
 .background-player {
@@ -142,13 +160,20 @@
   }
 }
 
+/* Fullscreen: large title, the video as big as the remaining space allows, and the
+   transport footer. */
 .fullscreen .app-header,
 .fullscreen .collection-toolbar,
-.fullscreen .collection-content {
+.fullscreen .collection-body {
   display: none;
 }
-.fullscreen .playback-footer {
-  height: 100%;
+.fullscreen .player-stage {
+  flex: 1 1 0;
+  min-height: 0;
+  container-type: size;
+}
+.fullscreen .player {
+  width: min(100cqw, 100cqh * 16 / 9);
 }
 
 /* A separate decorative layer leaves Astryx surfaces readable over the video. */
@@ -157,7 +182,8 @@
 }
 .stereo-app:has(.background-player:not(.hidden))
   > .astryx-layout
-  .astryx-layout-content[role="main"] {
+  .astryx-layout-content[role="main"],
+.stereo-app:has(.background-player:not(.hidden)) .astryx-app-shell-header {
   background-color: transparent;
 }
 

@@ -42,7 +42,7 @@ export interface ISearchBoxProps {
 }
 
 const SEARCH_KIND_OPTIONS = [
-  { value: "fuzzy", label: "Tracks" },
+  { value: "fuzzy", label: "Fuzzy" },
   { value: "by-label", label: "Label" },
   { value: "by-artist", label: "Artist" },
   { value: "new-releases", label: "Latest releases" },

@@ -6,7 +6,10 @@ import type {
   ClientMsg,
 } from "./Types.tsx";
 
-import { type CustomCellRendererProps } from "ag-grid-react";
+import {
+  type CustomCellRendererProps,
+  type CustomNoRowsOverlayProps,
+} from "ag-grid-react";
 
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
@@ -121,6 +124,31 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) =>
       }}
     />
   ) : null;
+
+// Overlays are module-level components so AG Grid does not remount them on every render.
+const SearchingOverlay = () => <Spinner label="Searching for tracks…" />;
+
+const NoSearchResultsOverlay = ({
+  onExitSearch,
+}: CustomNoRowsOverlayProps & { onExitSearch: () => void }) => (
+  <EmptyState
+    isCompact
+    title="No tracks found"
+    description="Try another title, artist, label, or search source."
+    actions={<Button label="Back to collection" onClick={onExitSearch} />}
+  />
+);
+
+const NoFilterMatchesOverlay = ({ api }: CustomNoRowsOverlayProps) => (
+  <EmptyState
+    isCompact
+    title="No tracks match these filters"
+    description="Clear the filters to see your collection again."
+    actions={
+      <Button label="Clear filters" onClick={() => api.setFilterModel(null)} />
+    }
+  />
+);
 
 const PlayControlRenderer: React.FC<
   CustomCellRendererProps<ITrack, unknown, TracksGridContext>
@@ -520,24 +548,16 @@ export const SearchResultsGrid = ({
     [],
   );
 
+  const noRowsOverlayParams = useMemo(() => ({ onExitSearch }), [onExitSearch]);
+
   return (
     <StackItem size="fill" className="grid">
       <AgGridReact<ITrack>
         rowData={tracks}
         loading={isSearching && !tracks?.length}
-        loadingOverlayComponent={() => (
-          <Spinner label="Searching for tracks…" />
-        )}
-        noRowsOverlayComponent={() => (
-          <EmptyState
-            isCompact
-            title="No tracks found"
-            description="Try another title, artist, label, or search source."
-            actions={
-              <Button label="Back to collection" onClick={onExitSearch} />
-            }
-          />
-        )}
+        loadingOverlayComponent={SearchingOverlay}
+        noRowsOverlayComponent={NoSearchResultsOverlay}
+        noRowsOverlayComponentParams={noRowsOverlayParams}
         theme={theme}
         ref={gridRef}
         rowModelType={"clientSide"}
@@ -551,7 +571,6 @@ export const SearchResultsGrid = ({
         rowHeight={32}
         context={context}
         onSelectionChanged={onSelectionChanged}
-        overlayComponentParams={{ loading: { overlayText: "Searching..." } }}
       />
     </StackItem>
   );
@@ -928,19 +947,7 @@ export const TracksGrid = ({
         maxConcurrentDatasourceRequests={4}
         infiniteInitialRowCount={1000}
         maxBlocksInCache={10}
-        noRowsOverlayComponent={() => (
-          <EmptyState
-            isCompact
-            title="No tracks match these filters"
-            description="Clear the filters to see your collection again."
-            actions={
-              <Button
-                label="Clear filters"
-                onClick={() => gridRef.current?.api.setFilterModel(null)}
-              />
-            }
-          />
-        )}
+        noRowsOverlayComponent={NoFilterMatchesOverlay}
         datasource={dataSource}
         onSelectionChanged={onSelectionChanged}
       />
