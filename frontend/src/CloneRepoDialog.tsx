@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { Button } from "@astryxdesign/core/Button";
+import { FormLayout } from "@astryxdesign/core/FormLayout";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 
 type CloneRepoDialogProps = {
@@ -43,7 +44,7 @@ function CloneRepoDialog({
         }
         content={
           <LayoutContent>
-            <VStack gap={3}>
+            <FormLayout>
               <Text as="div" type="body">
                 Enter a git URL. The repository will be cloned into the stereo
                 home directory and its collections will appear in the collection
@@ -58,7 +59,7 @@ function CloneRepoDialog({
                   if (ev.key === "Enter") clone();
                 }}
               />
-            </VStack>
+            </FormLayout>
           </LayoutContent>
         }
         footer={

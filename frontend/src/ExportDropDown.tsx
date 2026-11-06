@@ -34,8 +34,8 @@ function ExportDropDown({
       button={{
         label: "Export tracks",
         icon: <Share2Icon />,
-        isIconOnly: true,
-        variant: "secondary",
+        isIconOnly: false,
+        variant: "ghost",
         tooltip: "Export tracks",
       }}
       items={[

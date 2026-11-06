@@ -10,10 +10,18 @@ import { type CustomCellRendererProps } from "ag-grid-react";
 
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
-import { HStack } from "@astryxdesign/core/Stack";
+import Rating from "./Rating";
+import { Button } from "@astryxdesign/core/Button";
+import { Text } from "@astryxdesign/core/Text";
+import { Link } from "@astryxdesign/core/Link";
+import { Divider } from "@astryxdesign/core/Divider";
+import { Spinner } from "@astryxdesign/core/Spinner";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { StackItem, HStack } from "@astryxdesign/core/Stack";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
+  DropdownMenuItem,
 } from "@astryxdesign/core/DropdownMenu";
 
 import { AgGridReact } from "ag-grid-react";
@@ -69,101 +77,50 @@ const fixedWidth = (width: number): ColDef => ({
   suppressAutoSize: true,
 });
 
-const ArtistCellRenderer = (params: ICellRendererParams<ITrack, string[]>) => {
-  const artists: string[] = params.value ?? [];
-  const onArtistClick: ((name: string) => void) | undefined =
-    params.context?.onArtistClick;
+const ArtistCellRenderer = (params: ICellRendererParams<ITrack, string[]>) => (
+  <HStack as="span" gap={0} vAlign="center" height="100%">
+    {(params.value ?? []).map((artist, index) => (
+      <HStack as="span" key={artist} gap={0}>
+        {index > 0 && <Text as="span">, </Text>}
+        <Button
+          label={artist}
+          variant="ghost"
+          size="sm"
+          onClick={(event) => {
+            event.stopPropagation();
+            params.context?.onArtistClick?.(artist);
+          }}
+        />
+      </HStack>
+    ))}
+  </HStack>
+);
 
-  return (
-    <span>
-      {artists.map((artist, i) => (
-        <span key={artist}>
-          {i > 0 && ", "}
-          <span
-            className="artist-link"
-            onClick={(e) => {
-              e.stopPropagation();
-              onArtistClick?.(artist);
-            }}
-          >
-            {artist}
-          </span>
-        </span>
-      ))}
-    </span>
-  );
-};
-
-const LabelCellRenderer = (params: ICellRendererParams<ITrack, string>) => {
-  const label = params.value;
-  const onLabelClick: ((name: string) => void) | undefined =
-    params.context?.onLabelClick;
-
-  if (!label) return null;
-
-  return (
-    <span
-      className="artist-link"
-      onClick={(e) => {
-        e.stopPropagation();
-        onLabelClick?.(label);
+const LabelCellRenderer = (params: ICellRendererParams<ITrack, string>) =>
+  params.value ? (
+    <Button
+      label={params.value}
+      variant="ghost"
+      size="sm"
+      onClick={(event) => {
+        event.stopPropagation();
+        params.context?.onLabelClick?.(params.value);
       }}
-    >
-      {label}
-    </span>
-  );
-};
+    />
+  ) : null;
 
-const RatingRenderer = (params: ICellRendererParams<ITrack, number>) => {
-  const [rating, setRating] = useState<number | null>(null);
-
-  // very hacky!
-  useEffect(() => {
-    const t = setInterval(() => {
-      if ((params.value ?? null) !== rating) {
-        setRating(params.value ?? null);
-      }
-    }, 250);
-
-    return () => {
-      clearInterval(t);
-    };
-  }, [rating, setRating, params.value]);
-
-  const handleClick = (index: number) => {
-    const newRating = index >= 0 ? index + 1 : null;
-
-    setRating(newRating);
-    params.context.updateRating(params.data?.yt_id, newRating);
-  };
-
-  return (
-    <HStack className="rating-stars">
-      {[...Array(5)].map((_, i) => (
-        <span
-          key={i}
-          className="rating-star"
-          onClick={(ev) => {
-            ev.stopPropagation();
-            handleClick(i);
-          }}
-          onDoubleClick={(ev) => {
-            ev.stopPropagation();
-            handleClick(-1); // reset rating
-          }}
-          style={{
-            color:
-              i < (rating ?? 0)
-                ? "var(--color-icon-yellow)"
-                : "var(--color-icon-gray)",
-          }}
-        >
-          {i < (rating ?? 0) ? "★" : "☆"}
-        </span>
-      ))}
-    </HStack>
-  );
-};
+const RatingRenderer = (params: ICellRendererParams<ITrack, number>) =>
+  params.data ? (
+    <Rating
+      enabled
+      currentRating={params.value ?? undefined}
+      label={`Rating for ${params.data.title}`}
+      updateRating={(rating) => {
+        params.node.setDataValue("rating", rating);
+        params.context.updateRating(params.data?.yt_id, rating);
+      }}
+    />
+  ) : null;
 
 const PlayControlRenderer: React.FC<
   CustomCellRendererProps<ITrack, unknown, TracksGridContext>
@@ -212,10 +169,10 @@ const PlayControlRenderer: React.FC<
   return (
     <HStack gap={1} vAlign="center" className="track-control-cell">
       <Tooltip content="Open in YouTube">
-        <a
-          className="yt-thumbnail-link"
+        <Link
+          label={`Open ${data.title} in YouTube`}
           href={`https://www.youtube.com/watch?v=${data.yt_id}`}
-          target="_blank"
+          isExternalLink
         >
           <img
             className="yt-thumbnail"
@@ -223,7 +180,7 @@ const PlayControlRenderer: React.FC<
             alt="YouTube Video Thumbnail"
             width="40"
           />
-        </a>
+        </Link>
       </Tooltip>
       <IconButton
         variant="ghost"
@@ -322,6 +279,8 @@ interface SearchResultsGridProps {
   // Chart results (Beatport top 100) get a chart-position column and are sorted by it.
   // Read on mount only — remount the grid (via `key`) when it changes.
   isChart?: boolean;
+  isSearching: boolean;
+  onExitSearch: () => void;
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
   currentId?: string;
   playId: (id: string) => void;
@@ -359,6 +318,8 @@ export const SearchResultsGrid = ({
   onLabelClick,
   addTrack,
   isChart = false,
+  isSearching,
+  onExitSearch,
 }: SearchResultsGridProps) => {
   const [colDefs] = useState<ColDef[]>(() => [
     ...(isChart
@@ -417,7 +378,7 @@ export const SearchResultsGrid = ({
       field: "genre",
       headerName: "Genre",
       filter: true,
-      ...fixedWidth(200),
+      ...fixedWidth(130),
     },
     {
       field: "bpm",
@@ -497,7 +458,7 @@ export const SearchResultsGrid = ({
   const rowClassRules = useMemo(() => {
     return {
       "progress-bar": (params: RowClassParams<ITrack>) => {
-        return params.data?.yt_id === currentId;
+        return Boolean(currentId && params.data?.yt_id === currentId);
       },
     };
   }, [currentId]);
@@ -560,13 +521,23 @@ export const SearchResultsGrid = ({
   );
 
   return (
-    <div
-      key="search-results-grid"
-      className="grid"
-      style={{ flex: "1 1 auto", minHeight: 0, width: "100%" }}
-    >
+    <StackItem size="fill" className="grid">
       <AgGridReact<ITrack>
         rowData={tracks}
+        loading={isSearching && !tracks?.length}
+        loadingOverlayComponent={() => (
+          <Spinner label="Searching for tracks…" />
+        )}
+        noRowsOverlayComponent={() => (
+          <EmptyState
+            isCompact
+            title="No tracks found"
+            description="Try another title, artist, label, or search source."
+            actions={
+              <Button label="Back to collection" onClick={onExitSearch} />
+            }
+          />
+        )}
         theme={theme}
         ref={gridRef}
         rowModelType={"clientSide"}
@@ -575,7 +546,6 @@ export const SearchResultsGrid = ({
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}
-        suppressCellFocus
         rowClassRules={rowClassRules}
         autoSizeStrategy={autoSizeStrategy}
         rowHeight={32}
@@ -583,7 +553,7 @@ export const SearchResultsGrid = ({
         onSelectionChanged={onSelectionChanged}
         overlayComponentParams={{ loading: { overlayText: "Searching..." } }}
       />
-    </div>
+    </StackItem>
   );
 };
 
@@ -595,9 +565,10 @@ type ToggleableColumn = {
 
 type ColumnsMenuProps = {
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
+  onReset: () => void;
 };
 
-export const ColumnsMenu = ({ gridRef }: ColumnsMenuProps) => {
+export const ColumnsMenu = ({ gridRef, onReset }: ColumnsMenuProps) => {
   const [columns, setColumns] = useState<ToggleableColumn[]>([]);
   const [isOpen, setIsOpen] = useState(false);
 
@@ -646,11 +617,10 @@ export const ColumnsMenu = ({ gridRef }: ColumnsMenuProps) => {
       isMenuOpen={isOpen}
       onOpenChange={handleOpenChange}
       button={{
-        label: "Show/hide columns",
+        label: "View",
         icon: <ColumnsIcon />,
-        isIconOnly: true,
-        variant: "secondary",
-        tooltip: "Show/hide columns",
+        variant: "ghost",
+        tooltip: "View options",
       }}
     >
       {columns.map((c) => (
@@ -662,6 +632,8 @@ export const ColumnsMenu = ({ gridRef }: ColumnsMenuProps) => {
           endContent={<MenuCheck isChecked={c.visible} />}
         />
       ))}
+      <Divider />
+      <DropdownMenuItem label="Reset columns" onClick={onReset} />
     </DropdownMenu>
   );
 };
@@ -686,7 +658,7 @@ interface TracksGridProps {
 type TracksGridContext = {
   playId: (id: string) => void;
   requestReply: RequestReply;
-  updateRating: (yt_id: string, rating: number) => void;
+  updateRating: (yt_id: string, rating: number | null) => void;
   sendMsg: (msg: ClientMsg) => void;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
@@ -772,7 +744,7 @@ export const TracksGrid = ({
       headerName: "Rating",
       filter: "agNumberColumnFilter",
       cellRenderer: RatingRenderer,
-      ...fixedWidth(130),
+      ...fixedWidth(200),
     },
     {
       field: "play_count",
@@ -785,7 +757,7 @@ export const TracksGrid = ({
       field: "last_played",
       headerName: "Last played",
       filter: true,
-      ...fixedWidth(130),
+      ...fixedWidth(200),
     },
     {
       field: "bp_id",
@@ -857,6 +829,9 @@ export const TracksGrid = ({
               params.successCallback(msg.rows, msg.last_row);
               if (msg.last_row !== undefined) {
                 onRowCountChange?.(msg.last_row);
+                if (msg.last_row === 0)
+                  gridRef.current?.api.showNoRowsOverlay();
+                else gridRef.current?.api.hideOverlay();
               }
             } else {
               params.failCallback();
@@ -866,18 +841,18 @@ export const TracksGrid = ({
         );
       },
     };
-  }, [requestReply, onRowCountChange]);
+  }, [requestReply, onRowCountChange, gridRef]);
 
   const rowClassRules = useMemo(() => {
     return {
       "progress-bar": (params: RowClassParams<ITrack>) => {
-        return params.data?.yt_id === currentId;
+        return Boolean(currentId && params.data?.yt_id === currentId);
       },
     };
   }, [currentId]);
 
   const updateRatingAndRefresh = useCallback(
-    (yt_id: string, rating: number) => {
+    (yt_id: string, rating: number | null) => {
       updateRating(yt_id, rating);
       gridRef.current?.api.refreshInfiniteCache();
     },
@@ -931,11 +906,7 @@ export const TracksGrid = ({
   );
 
   return (
-    <div
-      key="tracks-grid"
-      className="grid"
-      style={{ flex: "1 1 auto", minHeight: 0, width: "100%" }}
-    >
+    <StackItem size="fill" className="grid">
       <AgGridReact<ITrack>
         theme={theme}
         onGridReady={onGridReady}
@@ -947,7 +918,6 @@ export const TracksGrid = ({
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}
-        suppressCellFocus
         autoSizeStrategy={autoSizeStrategy}
         rowHeight={32}
         getRowId={getRowId}
@@ -958,9 +928,22 @@ export const TracksGrid = ({
         maxConcurrentDatasourceRequests={4}
         infiniteInitialRowCount={1000}
         maxBlocksInCache={10}
+        noRowsOverlayComponent={() => (
+          <EmptyState
+            isCompact
+            title="No tracks match these filters"
+            description="Clear the filters to see your collection again."
+            actions={
+              <Button
+                label="Clear filters"
+                onClick={() => gridRef.current?.api.setFilterModel(null)}
+              />
+            }
+          />
+        )}
         datasource={dataSource}
         onSelectionChanged={onSelectionChanged}
       />
-    </div>
+    </StackItem>
   );
 };

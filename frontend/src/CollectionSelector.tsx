@@ -82,6 +82,8 @@ function CollectionSelector({
             ? collectionLabel(selectedCollection)
             : "Select collection",
           variant: "ghost",
+          width: 220,
+          style: { maxWidth: "100%" },
           tooltip,
           icon: (
             <StatusDot

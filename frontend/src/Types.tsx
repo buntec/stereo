@@ -362,6 +362,7 @@ export type Action =
   | { type: "set-import-from"; path: string }
   | { type: "set-import-keep-user-data"; keep: boolean }
   | { type: "set-notification-show"; show: boolean }
+  | { type: "consume-notifications"; ids: number[] }
   | { type: "dismiss-connection-closed-notification" }
   | { type: "clear-title" }
   | { type: "collection-is-valid" }
@@ -405,6 +406,12 @@ export type RequestReply = (
 ) => void;
 
 export type AppearanceType = "system" | "light" | "dark";
+
+export type AppNotification = {
+  id: number;
+  message: string;
+  kind?: "info" | "warn" | "warning" | "error";
+};
 
 export type Settings = {
   appearance: AppearanceType;

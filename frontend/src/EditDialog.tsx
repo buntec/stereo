@@ -4,13 +4,21 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { FormLayout } from "@astryxdesign/core/FormLayout";
+import type { ISODateString } from "@astryxdesign/core/Calendar";
+import { DateInput } from "@astryxdesign/core/DateInput";
+import { NumberInput } from "@astryxdesign/core/NumberInput";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { Banner } from "@astryxdesign/core/Banner";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
+import { HStack, StackItem } from "@astryxdesign/core/Stack";
 
 import { Pencil1Icon, MagicWandIcon } from "@radix-ui/react-icons";
 import type { ITrack, RequestReply } from "./Types";
 
 const SPOTIFY_ID_CHECK_DEBOUNCE_MS = 500;
+const isCalendarDate = (date: string | undefined): date is ISODateString =>
+  Boolean(date && /^\d{4}-\d{2}-\d{2}$/.test(date));
 
 type SpotifyIdStatus = "idle" | "checking" | "valid" | "invalid";
 
@@ -88,8 +96,8 @@ export function EditTrackDialog({
         <Layout
           header={
             <DialogHeader
-              title="Edit"
-              subtitle="Edit track meta data"
+              title="Edit track"
+              subtitle="Update the details saved in your collection."
               onOpenChange={closeDialog}
               endContent={
                 <Tooltip content="Fill in missing fields from Beatport, Traxsource, and Volumo">
@@ -97,7 +105,7 @@ export function EditTrackDialog({
                     variant="secondary"
                     size="sm"
                     icon={<MagicWandIcon />}
-                    label="Fixup"
+                    label="Fill missing metadata"
                     isLoading={isFixingUp}
                     onClick={fixup}
                   />
@@ -107,14 +115,14 @@ export function EditTrackDialog({
           }
           content={
             <LayoutContent>
-              <VStack
-                gap={2}
-                style={
-                  isValid === false
-                    ? { backgroundColor: "var(--color-error-muted)" }
-                    : undefined
-                }
-              >
+              <FormLayout>
+                {isValid === false && (
+                  <Banner
+                    status="error"
+                    title="Check track details"
+                    description="Enter a title and YouTube video ID, and check the formats of the other fields."
+                  />
+                )}
                 <HStack gap={2} vAlign="end">
                   <img
                     src={`https://i.ytimg.com/vi/${value.yt_id}/default.jpg`}
@@ -123,7 +131,17 @@ export function EditTrackDialog({
                   />
                   <StackItem size="fill">
                     <TextInput
-                      label="YouTube video ID (primary key)"
+                      label="YouTube video ID"
+                      isRequired
+                      status={
+                        !value.yt_id.trim()
+                          ? {
+                              type: "error",
+                              message:
+                                "Enter the ID of the YouTube video used for playback.",
+                            }
+                          : undefined
+                      }
                       value={value.yt_id}
                       onChange={(v) => setValue({ ...value, yt_id: v })}
                     />
@@ -132,12 +150,19 @@ export function EditTrackDialog({
 
                 <TextInput
                   label="Title"
+                  isRequired
+                  status={
+                    !value.title.trim()
+                      ? { type: "error", message: "Enter a track title." }
+                      : undefined
+                  }
                   value={value.title}
                   onChange={(v) => setValue({ ...value, title: v })}
                 />
 
                 <TextInput
                   label="Artists"
+                  description="Separate multiple artists with commas."
                   value={value.artists.join(",")}
                   onChange={(v) =>
                     setValue({
@@ -147,13 +172,32 @@ export function EditTrackDialog({
                   }
                 />
 
-                <TextInput
-                  label="Release date"
-                  value={value.release_date ?? ""}
-                  onChange={(v) =>
-                    setValue({ ...value, release_date: v || undefined })
-                  }
-                />
+                {value.release_date && !isCalendarDate(value.release_date) ? (
+                  <TextInput
+                    label="Release date"
+                    description="This source supplied a partial date. Use YYYY, YYYY-MM, or YYYY-MM-DD."
+                    value={value.release_date}
+                    onChange={(release_date) =>
+                      setValue({
+                        ...value,
+                        release_date: release_date || undefined,
+                      })
+                    }
+                  />
+                ) : (
+                  <DateInput
+                    label="Release date"
+                    hasClear
+                    value={
+                      isCalendarDate(value.release_date)
+                        ? value.release_date
+                        : undefined
+                    }
+                    onChange={(v) =>
+                      setValue({ ...value, release_date: v || undefined })
+                    }
+                  />
+                )}
 
                 <TextInput
                   label="Label"
@@ -167,14 +211,16 @@ export function EditTrackDialog({
                   onChange={(v) => setValue({ ...value, genre: v })}
                 />
 
-                <TextInput
-                  label="BPM"
-                  value={value.bpm !== undefined ? `${value.bpm}` : ""}
-                  onChange={(v) =>
-                    setValue({
-                      ...value,
-                      bpm: v ? parseInt(v) : undefined,
-                    })
+                <NumberInput
+                  label="Tempo"
+                  value={value.bpm}
+                  min={1}
+                  max={999}
+                  isIntegerOnly
+                  hasClear
+                  units="BPM"
+                  onChange={(bpm) =>
+                    setValue({ ...value, bpm: bpm ?? undefined })
                   }
                 />
 
@@ -184,42 +230,52 @@ export function EditTrackDialog({
                   onChange={(v) => setValue({ ...value, key: v })}
                 />
 
-                <TextInput
-                  label="Beatport ID"
-                  value={value.bp_id !== undefined ? `${value.bp_id}` : ""}
-                  onChange={(v) =>
-                    setValue({
-                      ...value,
-                      bp_id: v ? parseInt(v) : undefined,
-                    })
-                  }
-                />
+                <Collapsible
+                  trigger="Advanced identifiers"
+                  defaultIsOpen={false}
+                >
+                  <FormLayout>
+                    <TextInput
+                      label="Beatport ID"
+                      value={value.bp_id !== undefined ? `${value.bp_id}` : ""}
+                      onChange={(v) =>
+                        setValue({
+                          ...value,
+                          bp_id: v ? parseInt(v) : undefined,
+                        })
+                      }
+                    />
 
-                <TextInput
-                  label="Spotify ID"
-                  value={value.sp_id ?? ""}
-                  onChange={(v) =>
-                    setValue({ ...value, sp_id: v || undefined })
-                  }
-                  isLoading={spotifyIdStatus === "checking"}
-                  status={
-                    spotifyIdStatus === "valid"
-                      ? { type: "success", message: "Track exists on Spotify" }
-                      : spotifyIdStatus === "invalid"
-                        ? {
-                            type: "error",
-                            message: "No track with this ID on Spotify",
-                          }
-                        : undefined
-                  }
-                />
+                    <TextInput
+                      label="Spotify ID"
+                      value={value.sp_id ?? ""}
+                      onChange={(v) =>
+                        setValue({ ...value, sp_id: v || undefined })
+                      }
+                      isLoading={spotifyIdStatus === "checking"}
+                      status={
+                        spotifyIdStatus === "valid"
+                          ? {
+                              type: "success",
+                              message: "Track exists on Spotify",
+                            }
+                          : spotifyIdStatus === "invalid"
+                            ? {
+                                type: "error",
+                                message: "No track with this ID on Spotify",
+                              }
+                            : undefined
+                      }
+                    />
 
-                <TextInput
-                  label="Music Brainz ID"
-                  value={value.mb_id ?? ""}
-                  onChange={(v) => setValue({ ...value, mb_id: v })}
-                />
-              </VStack>
+                    <TextInput
+                      label="MusicBrainz ID"
+                      value={value.mb_id ?? ""}
+                      onChange={(v) => setValue({ ...value, mb_id: v })}
+                    />
+                  </FormLayout>
+                </Collapsible>
+              </FormLayout>
             </LayoutContent>
           }
           footer={
@@ -236,7 +292,9 @@ export function EditTrackDialog({
                 <Button
                   label="Save"
                   variant="primary"
-                  isDisabled={!isValid}
+                  isDisabled={
+                    !isValid || !value.title.trim() || !value.yt_id.trim()
+                  }
                   onClick={() => {
                     commit();
                     closeDialog();

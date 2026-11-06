@@ -1,0 +1,417 @@
+import { test, expect, type Page, type WebSocketRoute } from "@playwright/test";
+
+const exampleTracks = Array.from({ length: 12 }, (_, index) => ({
+  title: `Example track ${index + 1}`,
+  artists: ["Example artist"],
+  yt_id: `audit${index}`,
+  label: "Example label",
+  release_date: "2026-11-01",
+  bpm: 130,
+  rating: 4,
+}));
+const errors = new WeakMap<Page, string[]>();
+test.beforeEach(({ page }) => {
+  errors.set(page, []);
+  page.on("pageerror", (error) => errors.get(page)?.push(error.message));
+});
+test.afterEach(({ page }) => expect(errors.get(page)).toEqual([]));
+
+async function openApp(
+  page: Page,
+  options: {
+    empty?: boolean;
+    noCollection?: boolean;
+    holdRows?: boolean;
+    playback?: boolean;
+  } = {},
+) {
+  let socket: WebSocketRoute;
+  const tracks = options.empty ? [] : structuredClone(exampleTracks);
+  const collection = { path: "/audit/collection.db", size: tracks.length };
+  const messages: Record<string, unknown>[] = [];
+  await page.route("https://www.youtube.com/**", (route) => route.abort());
+  await page.route("https://i.ytimg.com/**", (route) => route.abort());
+  if (options.playback)
+    await page.route("https://www.youtube.com/iframe_api", (route) =>
+      route.fulfill({
+        contentType: "text/javascript",
+        body: `
+      window.__playerMounts = 0;
+      window.__playerDestroys = 0;
+      class Player {
+        constructor(node, options) {
+          this.events = options.events; this.id = ''; this.time = 0; this.state = -1;
+          this.iframe = document.createElement('iframe');
+          this.iframe.title = 'YouTube player'; this.iframe.width = '640'; this.iframe.height = '360';
+          node.replaceWith(this.iframe); window.__playerMounts++;
+          setTimeout(() => this.events.onReady({target: this}), 0);
+        }
+        getVideoData() { return {video_id: this.id, title: 'Example track 1'}; }
+        getCurrentTime() { return this.time; }
+        getDuration() { return 240; }
+        getPlayerState() { return this.state; }
+        emit(state) { this.state = state; this.events.onStateChange({target: this, data: state}); }
+        loadVideoById(id) { this.id = id; this.emit(1); }
+        playVideo() { this.emit(1); }
+        pauseVideo() { this.emit(2); }
+        stopVideo() { this.emit(-1); }
+        seekTo(time) { this.time = time; window.__lastSeek = time; }
+        destroy() { window.__playerDestroys++; this.iframe.remove(); }
+      }
+      window.YT = {Player, PlayerState: {UNSTARTED:-1, ENDED:0, PLAYING:1, PAUSED:2, BUFFERING:3, CUED:5}};
+      window.onYouTubeIframeAPIReady();
+    `,
+      }),
+    );
+  await page.routeWebSocket("**/ws", (ws) => {
+    socket = ws;
+    const send = (message: unknown) => ws.send(JSON.stringify(message));
+    ws.onMessage((raw) => {
+      const message = JSON.parse(raw.toString());
+      messages.push(message);
+      switch (message.type) {
+        case "get-rows":
+          if (!options.holdRows)
+            send({
+              type: "rows",
+              id: message.id,
+              rows:
+                message.filterModel && Object.keys(message.filterModel).length
+                  ? []
+                  : tracks.slice(
+                      message.startRow ?? 0,
+                      message.endRow ?? tracks.length,
+                    ),
+              last_row:
+                message.filterModel && Object.keys(message.filterModel).length
+                  ? 0
+                  : tracks.length,
+            });
+          break;
+        case "set-repo":
+          send({
+            type: "collections",
+            collections: options.noCollection ? [] : [collection],
+          });
+          break;
+        case "set-collection":
+          send({ type: "collection-info", id: message.id, collection });
+          break;
+        case "get-track-info": {
+          const track = tracks.find((track) => track.yt_id === message.yt_id);
+          if (track) send({ type: "track-info", track });
+          break;
+        }
+        case "get-spotify-session":
+          send({ type: "spotify-session", id: message.id, connected: true });
+          break;
+        case "search":
+          send([
+            { type: "search-results", query_id: message.query_id, tracks: [] },
+            { type: "search-complete", query_id: message.query_id },
+          ]);
+          break;
+        case "validate-track":
+          send({
+            type: "validate-track-reply",
+            id: message.id,
+            is_valid: !!message.track.title.trim(),
+          });
+          break;
+        case "update-rating": {
+          const track = tracks.find((track) => track.yt_id === message.yt_id);
+          if (track) track.rating = message.rating;
+          break;
+        }
+      }
+    });
+    setTimeout(
+      () =>
+        send([
+          { type: "backend-info", version: "test", home_dir: "/audit" },
+          { type: "repos", repos: [{ path: "/audit", remote: null }] },
+        ]),
+      20,
+    );
+  });
+  await page.goto("/");
+  await expect(
+    page.locator(".collection-controls").getByRole("button").first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Connecting to Stereo", { exact: true }),
+  ).toHaveCount(0);
+  return {
+    messages,
+    send: (message: unknown) => socket.send(JSON.stringify(message)),
+  };
+}
+
+test("focused controls retain Space; global shortcuts work on the page", async ({
+  page,
+}) => {
+  await openApp(page);
+  const shuffle = page.getByRole("button", {
+    name: "Toggle shuffle play",
+    exact: true,
+  });
+  await shuffle.focus();
+  await page.keyboard.press("Space");
+  await expect(shuffle).toHaveAttribute("aria-pressed", "true");
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await page.keyboard.press("s");
+  await expect(shuffle).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Spotify/ }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Cancel", exact: true })
+    .focus();
+  await page.keyboard.press("Space");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("rating supports arrow keys and an explicit clear action", async ({
+  page,
+}) => {
+  const { messages } = await openApp(page);
+  const row = page.locator('.ag-row[row-index="0"]');
+  const group = row.getByRole("radiogroup");
+  await group.getByRole("radio", { name: "4 of 5 stars" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    group.getByRole("radio", { name: "5 of 5 stars" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await row.getByRole("button", { name: "Clear rating" }).click();
+  await expect
+    .poll(() =>
+      messages.some(
+        (message) =>
+          message.type === "update-rating" && message.rating === null,
+      ),
+    )
+    .toBe(true);
+});
+
+test("notifications stack and a later notification gets its full lifetime", async ({
+  page,
+}) => {
+  const { send } = await openApp(page);
+  send([
+    { type: "notification", kind: "error", message: "First warning" },
+    { type: "notification", kind: "error", message: "Second warning" },
+  ]);
+  await expect(page.getByText("First warning")).toBeVisible();
+  await expect(page.getByText("Second warning")).toBeVisible();
+  send({ type: "notification", kind: "info", message: "First information" });
+  await expect(page.getByText("First information")).toBeVisible();
+  await page.waitForTimeout(4200);
+  send({ type: "notification", kind: "info", message: "Later information" });
+  await page.waitForTimeout(1200);
+  await expect(page.getByText("Later information")).toBeVisible();
+});
+
+for (const width of [390, 768, 1440]) {
+  test(`header and playback stay usable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openApp(page);
+    await expect(page.getByRole("main")).toHaveCount(1);
+    for (const label of [
+      "collection",
+      "Settings",
+      "Search",
+      "Toggle shuffle play",
+    ]) {
+      const button =
+        label === "collection"
+          ? page.locator(".collection-controls").getByRole("button").first()
+          : page.getByRole("button", { name: label, exact: true });
+      await expect(button).toBeInViewport();
+      const box = await button.boundingBox();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    }
+    const grid = await page.locator(".grid").boundingBox();
+    expect(grid!.height).toBeGreaterThan(300);
+  });
+}
+
+test("first-use and empty collection states offer next actions", async ({
+  page,
+}) => {
+  await openApp(page, { noCollection: true });
+  await expect(
+    page.getByRole("heading", { name: "Create your first collection" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Create collection", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
+
+test("empty collections offer search and import", async ({ page }) => {
+  await openApp(page, { empty: true });
+  await expect(
+    page.getByRole("heading", { name: "Your collection is ready" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Search for music", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: /Search query/ }),
+  ).toBeFocused();
+});
+
+test("unloaded rows do not expose ratings or playback highlights", async ({
+  page,
+}) => {
+  await openApp(page, { holdRows: true });
+  await expect(page.locator(".grid")).toBeVisible();
+  await expect(page.locator(".grid").getByRole("radiogroup")).toHaveCount(0);
+  await expect(page.locator(".grid .progress-bar")).toHaveCount(0);
+});
+
+test("reduced motion disables decorative animation", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openApp(page);
+  const animation = await page
+    .locator(".background-player")
+    .evaluate((element) => getComputedStyle(element).animationName);
+  expect(animation).toBe("none");
+});
+
+test("metadata editing groups identifiers and explains invalid required fields", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page
+    .getByRole("button", { name: "Edit track", exact: true })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("button", { name: "Fill missing metadata" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("textbox", { name: "Spotify ID", exact: true }),
+  ).toBeHidden();
+  await dialog.getByRole("textbox", { name: /^Title/ }).fill("");
+  await expect(dialog.getByText("Enter a track title.")).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Save", exact: true }),
+  ).toBeDisabled();
+});
+
+test("empty search results provide a way back to the collection", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page
+    .getByRole("textbox", { name: /Search query/ })
+    .fill("missing track");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "No tracks found", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Back to collection", exact: true })
+    .click();
+  await expect(
+    page
+      .locator('.ag-row[row-index="0"]')
+      .getByText("Example track 1", { exact: true }),
+  ).toBeVisible();
+});
+
+test("filtered collections offer a working clear-filters action", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page
+    .locator('.ag-header-cell[col-id="title"] .ag-header-cell-filter-button')
+    .click();
+  await page
+    .getByRole("textbox", { name: "Filter Value", exact: true })
+    .fill("no match");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("heading", {
+      name: "No tracks match these filters",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Clear filters", exact: true })
+    .click();
+  await expect(
+    page
+      .locator('.ag-row[row-index="0"]')
+      .getByText("Example track 1", { exact: true }),
+  ).toBeVisible();
+});
+
+test("grid arrow keys move between rows without skipping playback", async ({
+  page,
+}) => {
+  const { messages } = await openApp(page);
+  const first = page.locator('.ag-row[row-index="0"] [col-id="title"]');
+  await first.focus();
+  const before = messages.filter(
+    (message) => message.type === "get-track-info",
+  ).length;
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.locator('.ag-row[row-index="1"] [col-id="title"]'),
+  ).toBeFocused();
+  expect(
+    messages.filter((message) => message.type === "get-track-info"),
+  ).toHaveLength(before);
+});
+
+test("expanded and fullscreen playback preserve player instances and grid selection", async ({
+  page,
+}) => {
+  await openApp(page, { playback: true });
+  await expect(
+    page.getByRole("slider", { name: "Playback progress", exact: true }),
+  ).toBeEnabled();
+  await page.locator('.ag-row[row-index="0"]').getByRole("checkbox").check();
+  await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "Expand player", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Collapse player", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Toggle fullscreen mode", exact: true })
+    .click();
+  await expect(page.locator(".grid")).toBeHidden();
+  await page
+    .getByRole("button", { name: "Toggle fullscreen mode", exact: true })
+    .click();
+  await expect(page.locator(".grid")).toBeVisible();
+  await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => Reflect.get(window, "__playerMounts"))).toBe(
+    2,
+  );
+  expect(
+    await page.evaluate(() => Reflect.get(window, "__playerDestroys")),
+  ).toBe(0);
+});
+
+test("slider arrow keys seek one slider step instead of triggering global shortcuts", async ({
+  page,
+}) => {
+  await openApp(page, { playback: true });
+  const slider = page.getByRole("slider", {
+    name: "Playback progress",
+    exact: true,
+  });
+  await expect(slider).toBeEnabled();
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect
+    .poll(() => page.evaluate(() => Reflect.get(window, "__lastSeek")))
+    .toBe(2.4);
+});

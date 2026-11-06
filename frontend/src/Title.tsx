@@ -1,8 +1,8 @@
-import React from "react";
-import { VStack } from "@astryxdesign/core/Stack";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
+import { Button } from "@astryxdesign/core/Button";
 
-function Title({
+export default function Title({
   title,
   artists,
   trackName,
@@ -10,6 +10,7 @@ function Title({
   releaseDate,
   onArtistClick,
   onLabelClick,
+  expanded = false,
 }: {
   title: string;
   artists?: string[];
@@ -18,68 +19,51 @@ function Title({
   releaseDate?: string;
   onArtistClick?: (name: string) => void;
   onLabelClick?: (name: string) => void;
+  expanded?: boolean;
 }) {
-  const parts: React.ReactNode[] = [];
-
-  if (artists && artists.length > 0) {
-    artists.forEach((artist, i) => {
-      if (i > 0) parts.push(", ");
-      if (onArtistClick) {
-        parts.push(
-          <span
-            key={`artist-${i}`}
-            onClick={() => onArtistClick(artist)}
-            className="title-clickable"
-          >
-            {artist}
-          </span>,
-        );
-      } else {
-        parts.push(artist);
-      }
-    });
-  }
-
-  if (label) {
-    if (parts.length > 0) parts.push(" - ");
-    if (onLabelClick) {
-      parts.push(
-        <span
-          key="label"
-          onClick={() => onLabelClick(label)}
-          className="title-clickable"
-        >
-          {label}
-        </span>,
-      );
-    } else {
-      parts.push(label);
-    }
-  }
-
-  if (releaseDate) {
-    if (parts.length > 0) parts.push(" - ");
-    parts.push(releaseDate);
-  }
-
   return (
-    <VStack className="title" hAlign="center">
-      <Text as="div" type="display-2" weight="normal" justify="center">
+    <VStack gap={0} hAlign={expanded ? "center" : "start"}>
+      <Text
+        as="h2"
+        type={expanded ? "display-2" : "body"}
+        weight="bold"
+        maxLines={expanded ? 2 : 1}
+      >
         {trackName ?? title}
       </Text>
-      {parts.length > 0 && (
-        <Text
-          as="div"
-          type="large"
-          weight="normal"
-          color="secondary"
-          justify="center"
-        >
-          {parts}
-        </Text>
-      )}
+      <HStack gap={1} wrap="wrap" vAlign="center">
+        {artists?.map((artist) =>
+          onArtistClick ? (
+            <Button
+              key={artist}
+              label={artist}
+              variant="ghost"
+              size="sm"
+              onClick={() => onArtistClick(artist)}
+            />
+          ) : (
+            <Text key={artist} type="supporting">
+              {artist}
+            </Text>
+          ),
+        )}
+        {label &&
+          (onLabelClick ? (
+            <Button
+              label={label}
+              variant="ghost"
+              size="sm"
+              onClick={() => onLabelClick(label)}
+            />
+          ) : (
+            <Text type="supporting">{label}</Text>
+          ))}
+        {expanded && releaseDate && (
+          <Text type="supporting" color="secondary">
+            {releaseDate}
+          </Text>
+        )}
+      </HStack>
     </VStack>
   );
 }
-
-export default Title;

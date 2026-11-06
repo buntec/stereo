@@ -12,27 +12,26 @@ export const useKeyboardActions = (actionMap: KeyActionMap) => {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement;
-
-      const isTyping =
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable;
-
-      if (isTyping) return;
-      if (event.metaKey) return;
-
-      let keyCombination = "";
-      if (event.ctrlKey) keyCombination += "Ctrl+";
-      if (event.metaKey) keyCombination += "Cmd+";
-      if (event.altKey) keyCombination += "Alt+";
-      if (event.shiftKey) keyCombination += "Shift+";
+      const target = event.target;
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        !(target instanceof Element)
+      )
+        return;
+      // Controls and composite widgets own their native keyboard behavior.
+      if (
+        target.closest(
+          'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="slider"], [role="radio"], [role="grid"], [role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"]',
+        )
+      )
+        return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       const keyName = event.key === " " ? "Space" : event.key;
-      keyCombination += keyName;
+      const keyCombination = `${event.shiftKey ? "Shift+" : ""}${keyName}`;
 
-      const action =
-        actionMapRef.current[keyCombination] || actionMapRef.current[keyName];
+      const action = actionMapRef.current[keyCombination];
 
       if (action) {
         event.preventDefault();

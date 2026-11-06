@@ -1,40 +1,48 @@
-import { useMemo } from "react";
-import "./App.css";
-import { Toast } from "@astryxdesign/core/Toast";
-import { VStack } from "@astryxdesign/core/Stack";
+import { useEffect, useRef } from "react";
+import { useToast, type ToastDismissFn } from "@astryxdesign/core/Toast";
+import type { AppNotification } from "./Types";
 
 type NotificationProps = {
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  message?: string;
-  kind?: "info" | "warn" | "warning" | "error";
+  notifications: AppNotification[];
+  onConsumed: (ids: number[]) => void;
+  isConnected: boolean;
 };
 
-function Notification({ open, setOpen, message, kind }: NotificationProps) {
-  const type = useMemo<"info" | "error">(() => {
-    switch (kind) {
-      case "warn":
-      case "warning":
-      case "error":
-        return "error";
-      default:
-        return "info";
+export default function Notification({
+  notifications,
+  onConsumed,
+  isConnected,
+}: NotificationProps) {
+  const toast = useToast();
+  const shown = useRef(0);
+  const connectionToast = useRef<ToastDismissFn | undefined>(undefined);
+
+  useEffect(() => {
+    for (const notification of notifications) {
+      // React StrictMode replays effects; each queued event is shown only once.
+      if (notification.id <= shown.current) continue;
+      shown.current = notification.id;
+      const isConnection = notification.message.startsWith("WebSocket");
+      const dismiss = toast({
+        body: notification.message,
+        type:
+          notification.kind && notification.kind !== "info" ? "error" : "info",
+        uniqueID: isConnection
+          ? "connection"
+          : `${notification.kind}:${notification.message}`,
+        collisionBehavior: "overwrite",
+      });
+      if (isConnection) connectionToast.current = dismiss;
     }
-  }, [kind]);
+    if (notifications.length) onConsumed(notifications.map((item) => item.id));
+  }, [notifications, onConsumed, toast]);
 
-  if (!open || !message) return null;
+  useEffect(() => {
+    if (isConnected) {
+      connectionToast.current?.();
+      connectionToast.current = undefined;
+    }
+  }, [isConnected]);
 
-  return (
-    <VStack className="ToastViewport">
-      <Toast
-        body={message}
-        type={type}
-        isAutoHide={type === "info"}
-        autoHideDuration={5000}
-        onDismiss={() => setOpen(false)}
-      />
-    </VStack>
-  );
+  return null;
 }
-
-export default Notification;

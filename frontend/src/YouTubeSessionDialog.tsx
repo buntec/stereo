@@ -6,7 +6,7 @@ import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Code } from "@astryxdesign/core/Code";
-import { Badge } from "@astryxdesign/core/Badge";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
 
 import type { Action, RequestReply } from "./Types.tsx";
 
@@ -166,7 +166,12 @@ function YouTubeSessionDialog({
             onOpenChange={closeDialog}
             endContent={
               connected ? (
-                <Badge variant="success" label="Connected" />
+                <HStack gap={1} vAlign="center">
+                  <StatusDot variant="success" label="Connected" />
+                  <Text type="supporting" color="secondary">
+                    Connected
+                  </Text>
+                </HStack>
               ) : undefined
             }
           />

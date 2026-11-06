@@ -110,12 +110,11 @@ function YouTubePlaylistImportDialog({
                     setError(undefined);
                   }}
                   placeholder="https://music.youtube.com/playlist?list=…"
-                  status={error ? { type: "error" } : undefined}
+                  status={error ? { type: "error", message: error } : undefined}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") submit();
                   }}
                 />
-                {error && <Text type="supporting">{error}</Text>}
               </VStack>
             </LayoutContent>
           }

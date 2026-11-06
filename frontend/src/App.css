@@ -1,62 +1,51 @@
-.app-main {
-  width: 100%;
-  height: 100vh;
-  overflow-y: auto;
+/* Astryx owns application layout and controls. These rules adapt the third-party
+   grid/player, plus the header's explicit responsive contract. */
+.stereo-app {
+  position: relative;
+  isolation: isolate;
 }
 
-.app-main.fullscreen {
-  justify-content: center;
-  overflow: hidden;
+.collection-controls {
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
 }
 
-.controls {
-  width: 100%;
-  padding: var(--spacing-2);
+.header-search {
+  min-width: 0;
 }
 
-.toolbar {
-  width: 100%;
-  padding: var(--spacing-2);
-}
-
-.fullscreen .toolbar {
-  display: none;
-}
-
-.grid-container {
-  display: flex;
-  flex-direction: column;
-  flex-grow: 1;
-  width: 100%;
-  min-height: 55vh;
-}
-
-.fullscreen .grid-container {
-  display: none;
-  flex-grow: 0;
+@media (max-width: 48rem) {
+  .header-search {
+    order: 1;
+    flex-basis: 100%;
+  }
+  .collection-controls {
+    flex: 1;
+  }
 }
 
 .grid {
+  width: 100%;
+  height: 100%;
+  --ag-font-family: var(--font-family-body);
+  --ag-font-size: var(--font-size-base);
+  --ag-accent-color: var(--color-accent);
   --ag-cell-text-color: var(--color-text-primary);
   --ag-text-color: var(--color-text-primary);
   --ag-foreground-color: var(--color-text-primary);
-  --ag-background-color: rgb(from var(--color-background-surface) r g b / 0.25);
-  --ag-menu-background-color: rgb(
-    from var(--color-background-popover) r g b / 0.5
-  );
+  --ag-background-color: rgb(from var(--color-background-surface) r g b / 0.9);
+  --ag-menu-background-color: var(--color-background-popover);
   --ag-border-color: var(--color-border);
+  --ag-border-radius: var(--radius-element);
+  --ag-wrapper-border-radius: 0;
+  --ag-checkbox-checked-background-color: var(--color-accent);
+  --ag-row-hover-color: var(--color-overlay-hover);
+  --ag-selected-row-background-color: var(--color-accent-muted);
 }
 
-.ag-row-hover {
-  background-color: rgb(from var(--color-accent) r g b / 0.15);
-}
-
-.ag-menu {
-  backdrop-filter: blur(8px);
-}
-
-.ag-list {
-  backdrop-filter: blur(8px);
+.grid .ag-cell .astryx-button {
+  padding-inline: var(--spacing-1);
 }
 
 .progress-slider {
@@ -69,171 +58,120 @@
   initial-value: 0%;
 }
 
-.progress-bar {
+.grid .progress-bar {
   --stop: calc(var(--stereo-playback-progress, 0) * 100%);
-
-  transition: --stop 0.5s ease-in-out;
-
-  width: 100%;
-
-  /* background-image (not the `background` shorthand) so the row keeps the
-     grid's translucent background-color underneath the accent fill */
+  transition: --stop var(--duration-medium) var(--ease-standard);
   background-image: linear-gradient(
     to right,
-    rgb(from var(--color-accent) r g b / 0.45) var(--stop),
-    rgb(from var(--color-accent) r g b / 0.1) var(--stop)
+    rgb(from var(--color-accent) r g b / 0.35) var(--stop),
+    rgb(from var(--color-accent) r g b / 0.08) var(--stop)
   );
 }
 
-.toolbar-side {
-  flex: 1;
-  min-width: 0;
-}
-
-.search-box-group {
-  width: clamp(20rem, 38vw, 34rem);
-}
-
-.title {
-  padding: var(--spacing-4);
-  font-family: var(--font-family-code);
+.playback-footer {
+  background-color: rgb(from var(--color-background-surface) r g b / 0.9);
+  max-height: 55dvh;
+  overflow: auto;
 }
 
 .player {
-  position: relative;
-  flex-shrink: 0;
-  margin: var(--spacing-2);
-  border-radius: var(--radius-container);
+  align-items: center;
   overflow: hidden;
-  border: 1px solid var(--color-border);
+  border-radius: var(--radius-container);
+  max-height: 45dvh;
+}
+
+.player iframe {
+  max-width: 100%;
+}
+
+.fullscreen .playback-footer {
+  max-height: 100dvh;
 }
 
 .fullscreen .player {
-  border: none;
+  max-height: none;
   border-radius: 0;
 }
 
 .background-player {
-  position: absolute;
-  top: 0;
-  left: 0;
-
-  display: flex;
+  position: fixed;
+  inset: 0;
+  z-index: -1;
   justify-content: center;
   align-items: center;
-  height: 100vh;
-  width: 100%;
-
-  z-index: -2;
-  filter: blur(16px);
+  filter: blur(var(--spacing-4));
   opacity: 0.5;
   transform: scale(2);
   pointer-events: none;
   animation:
-    player-filter 7s linear infinite alternate,
-    player-trafo 5s ease infinite alternate;
-}
-
-.fullscreen .grid-controls {
-  display: none;
+    player-filter calc(var(--duration-slow) * 7) linear infinite alternate,
+    player-trafo calc(var(--duration-slow) * 5) var(--ease-standard) infinite
+      alternate;
 }
 
 .hidden {
   display: none;
 }
 
-.row-count {
-  border-radius: var(--radius-element);
-  border: 1px solid var(--color-border);
+@keyframes player-filter {
+  from {
+    filter: saturate(75%) blur(var(--spacing-3));
+  }
+  to {
+    filter: saturate(150%) blur(var(--spacing-6));
+  }
 }
 
-.yt-thumbnail-link {
-  display: flex;
+@keyframes player-trafo {
+  from {
+    transform: scale(2.5) rotate(-5deg);
+  }
+  to {
+    transform: scale(2.7) rotate(5deg);
+  }
 }
 
-.track-control-cell {
+@media (prefers-reduced-motion: reduce) {
+  .background-player {
+    animation: none;
+    transform: scale(2);
+  }
+  .grid .progress-bar {
+    transition: none;
+  }
+}
+
+.fullscreen .app-header,
+.fullscreen .collection-toolbar,
+.fullscreen .collection-content {
+  display: none;
+}
+.fullscreen .playback-footer {
   height: 100%;
 }
 
-.yt-thumbnail {
-  transition: transform 0.1s ease-in-out;
-  transform: scale(1);
+/* A separate decorative layer leaves Astryx surfaces readable over the video. */
+.stereo-app:has(.background-player:not(.hidden)) {
+  background-color: transparent;
+}
+.stereo-app:has(.background-player:not(.hidden))
+  > .astryx-layout
+  .astryx-layout-content[role="main"] {
+  background-color: transparent;
 }
 
-.yt-thumbnail:hover {
-  transform: scale(1.2);
-}
-
-.artist-link {
-  cursor: pointer;
-}
-
-.artist-link:hover {
-  text-decoration: underline;
-}
-
-.title-clickable {
-  cursor: pointer;
-  transition: color 0.15s ease;
-}
-
-.title-clickable:hover {
-  color: var(--color-text-primary);
-}
-
-.rating-stars {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  cursor: pointer;
-}
-
-.rating-star {
-  font-size: 1.5rem;
-  transition: transform 0.1s ease-in-out;
-  transform: scale(1);
-}
-
-.grid .rating-star {
-  font-size: 1.2rem;
+/* AG Grid's no-rows overlay defaults to letting pointer events pass through. */
+.grid .ag-overlay-no-rows-wrapper {
+  pointer-events: auto;
 }
 
 .fullscreen .toggle-video-button {
   display: none;
 }
 
-.rating-star:hover {
-  transform: scale(1.2);
-}
-
-.ToastViewport {
-  margin: var(--spacing-4);
-  position: fixed;
-  top: 0;
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  width: 400px;
-  max-width: 100vw;
-  list-style: none;
-  z-index: 100;
-  outline: none;
-}
-
-@keyframes player-filter {
-  0% {
-    filter: saturate(75%) blur(12px);
-  }
-  100% {
-    filter: saturate(150%) blur(24px);
-  }
-}
-
-@keyframes player-trafo {
-  0% {
-    transform: scale(2.5) rotate(-5deg);
-  }
-  100% {
-    transform: scale(2.7) rotate(5deg);
+@media (max-width: 48rem) {
+  .release-columns {
+    flex-direction: column;
   }
 }

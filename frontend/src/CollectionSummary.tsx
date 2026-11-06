@@ -2,7 +2,8 @@ import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import { Token } from "@astryxdesign/core/Token";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { Button } from "@astryxdesign/core/Button";
 import type { IScoredName, ICollectionStats } from "./Types.tsx";
 
 type Props = {
@@ -17,12 +18,10 @@ type Props = {
 function ScoredNameColumn({
   title,
   names,
-  color,
   onClick,
 }: {
   title: string;
   names: IScoredName[];
-  color: "blue" | "purple";
   onClick: (name: string) => void;
 }) {
   if (names.length === 0) {
@@ -30,20 +29,27 @@ function ScoredNameColumn({
   }
 
   return (
-    <VStack gap={2} className="stats-column">
+    <VStack gap={2} width="100%">
       <Text as="div" type="label" weight="bold" color="secondary">
         {title}
       </Text>
-      <VStack gap={1} hAlign="start">
+      <List hasDividers density="compact">
         {names.map((n) => (
-          <Token
+          <ListItem
             key={n.name}
-            color={color}
-            label={`${n.name} (${n.count}, ${Math.round(n.weighted_avg_days_since_release)}d)`}
-            onClick={() => onClick(n.name)}
+            label={n.name}
+            description={`${n.count} tracks · weighted average release age: ${Math.round(n.weighted_avg_days_since_release)} days`}
+            endContent={
+              <Button
+                label={`Search ${n.name}`}
+                variant="ghost"
+                size="sm"
+                onClick={() => onClick(n.name)}
+              />
+            }
           />
         ))}
-      </VStack>
+      </List>
     </VStack>
   );
 }
@@ -86,25 +92,21 @@ function CollectionSummary({
               <ScoredNameColumn
                 title="Top artists (5★)"
                 names={stats.top_artists_five_star}
-                color="blue"
                 onClick={handleArtistClick}
               />
               <ScoredNameColumn
                 title="Top artists (4★+)"
                 names={stats.top_artists_four_plus}
-                color="blue"
                 onClick={handleArtistClick}
               />
               <ScoredNameColumn
                 title="Top labels (5★)"
                 names={stats.top_labels_five_star}
-                color="purple"
                 onClick={handleLabelClick}
               />
               <ScoredNameColumn
                 title="Top labels (4★+)"
                 names={stats.top_labels_four_plus}
-                color="purple"
                 onClick={handleLabelClick}
               />
             </HStack>

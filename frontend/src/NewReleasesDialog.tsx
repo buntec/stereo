@@ -7,7 +7,7 @@ import { List, ListItem } from "@astryxdesign/core/List";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Spinner } from "@astryxdesign/core/Spinner";
-import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
 import type {
   INewReleasesCandidate,
   RequestReply,
@@ -116,68 +116,70 @@ function NameColumn({
   };
 
   return (
-    <VStack gap={2} style={{ flex: 1, minWidth: 0 }}>
-      <HStack gap={2} vAlign="center" hAlign="between">
-        <Text type="label" weight="bold">
-          {title}
-        </Text>
-        <Text type="supporting" color="secondary">
-          {selected.size} of {candidates.length} selected
-        </Text>
-      </HStack>
-      <TextInput
-        label={`Filter ${title.toLowerCase()}`}
-        isLabelHidden
-        placeholder={`Filter ${title.toLowerCase()}…`}
-        hasClear
-        value={filter}
-        onChange={setFilter}
-        onKeyDown={(ev) => {
-          if (ev.key === "Enter") onSubmit();
-        }}
-      />
-      <HStack gap={2}>
-        <Button
-          label="Select all"
-          variant="ghost"
-          size="sm"
-          onClick={() => setVisible(true)}
-        />
-        <Button
-          label="Select none"
-          variant="ghost"
-          size="sm"
-          onClick={() => setVisible(false)}
-        />
-      </HStack>
-      <VStack isScrollable style={{ maxHeight: "45vh" }}>
-        {visible.length === 0 ? (
-          <Text type="supporting" color="secondary">
-            {candidates.length === 0
-              ? `No rated ${title.toLowerCase()}`
-              : "No matches"}
+    <StackItem size="fill">
+      <VStack gap={2} width="100%">
+        <HStack gap={2} vAlign="center" hAlign="between" wrap="wrap">
+          <Text type="label" weight="bold">
+            {title}
           </Text>
-        ) : (
-          <List hasDividers density="compact">
-            {visible.map((c) => (
-              <ListItem
-                key={c.name}
-                label={c.name}
-                description={describeCounts(c)}
-                endContent={
-                  <CheckboxInput
-                    label={`Search ${c.name}`}
-                    isLabelHidden
-                    value={selected.has(c.name)}
-                    onChange={(checked) => toggle(c.name, checked)}
-                  />
-                }
-              />
-            ))}
-          </List>
-        )}
+          <Text type="supporting" color="secondary">
+            {selected.size} of {candidates.length} selected
+          </Text>
+        </HStack>
+        <TextInput
+          label={`Filter ${title.toLowerCase()}`}
+          isLabelHidden
+          placeholder={`Filter ${title.toLowerCase()}…`}
+          hasClear
+          value={filter}
+          onChange={setFilter}
+          onKeyDown={(ev) => {
+            if (ev.key === "Enter") onSubmit();
+          }}
+        />
+        <HStack gap={2}>
+          <Button
+            label="Select all"
+            variant="ghost"
+            size="sm"
+            onClick={() => setVisible(true)}
+          />
+          <Button
+            label="Select none"
+            variant="ghost"
+            size="sm"
+            onClick={() => setVisible(false)}
+          />
+        </HStack>
+        <VStack isScrollable style={{ maxHeight: "45vh" }}>
+          {visible.length === 0 ? (
+            <Text type="supporting" color="secondary">
+              {candidates.length === 0
+                ? `No rated ${title.toLowerCase()}`
+                : "No matches"}
+            </Text>
+          ) : (
+            <List hasDividers density="compact">
+              {visible.map((c) => (
+                <ListItem
+                  key={c.name}
+                  label={c.name}
+                  description={describeCounts(c)}
+                  endContent={
+                    <CheckboxInput
+                      label={`Search ${c.name}`}
+                      isLabelHidden
+                      value={selected.has(c.name)}
+                      onChange={(checked) => toggle(c.name, checked)}
+                    />
+                  }
+                />
+              ))}
+            </List>
+          )}
+        </VStack>
       </VStack>
-    </VStack>
+    </StackItem>
   );
 }
 
@@ -255,7 +257,7 @@ function NewReleasesDialog({
       artists and labels you rate highest.
     </Text>
   ) : (
-    <HStack gap={4} vAlign="start">
+    <HStack gap={4} vAlign="stretch" className="release-columns">
       <NameColumn
         title="Artists"
         candidates={candidates.artists}
@@ -292,14 +294,14 @@ function NewReleasesDialog({
         content={<LayoutContent>{content}</LayoutContent>}
         footer={
           <LayoutFooter>
-            <HStack gap={2} vAlign="center" hAlign="between">
+            <HStack gap={2} vAlign="center" hAlign="between" wrap="wrap">
               <Button
                 label="Reset to defaults"
                 variant="ghost"
                 isDisabled={!candidates}
                 onClick={resetToDefaults}
               />
-              <HStack gap={2} vAlign="center">
+              <HStack gap={2} vAlign="center" wrap="wrap">
                 {candidates && (
                   <Text type="supporting" color="secondary">
                     {artists.size} artist{artists.size === 1 ? "" : "s"},{" "}

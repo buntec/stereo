@@ -6,8 +6,9 @@ import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { FormLayout } from "@astryxdesign/core/FormLayout";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { HStack } from "@astryxdesign/core/Stack";
 
 import { DownloadIcon } from "@radix-ui/react-icons";
 
@@ -44,7 +45,11 @@ function ImportDialog({
       ? undefined
       : isValidImportFrom
         ? ({ type: "success" } as const)
-        : ({ type: "warning" } as const);
+        : ({
+            type: "error",
+            message:
+              "This collection could not be read. Check the file path or URL and try again.",
+          } as const);
 
   return (
     <>
@@ -68,7 +73,7 @@ function ImportDialog({
           header={<DialogHeader title="Import" onOpenChange={closeDialog} />}
           content={
             <LayoutContent>
-              <VStack gap={3}>
+              <FormLayout>
                 <Text as="div" type="body">
                   Import tracks from another collection. You can use an absolute
                   file path like <Code>/path/to/collection.db</Code> or a URL
@@ -89,7 +94,7 @@ function ImportDialog({
                   value={keepUserData}
                   onChange={setKeepUserData}
                 />
-              </VStack>
+              </FormLayout>
             </LayoutContent>
           }
           footer={

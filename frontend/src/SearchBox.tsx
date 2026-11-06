@@ -9,7 +9,7 @@ import { InputGroup } from "@astryxdesign/core/InputGroup";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Divider } from "@astryxdesign/core/Divider";
-import { HStack } from "@astryxdesign/core/Stack";
+import { HStack, StackItem } from "@astryxdesign/core/Stack";
 import {
   MagnifyingGlassIcon,
   MixerHorizontalIcon,
@@ -42,7 +42,7 @@ export interface ISearchBoxProps {
 }
 
 const SEARCH_KIND_OPTIONS = [
-  { value: "fuzzy", label: "Fuzzy" },
+  { value: "fuzzy", label: "Tracks" },
   { value: "by-label", label: "Label" },
   { value: "by-artist", label: "Artist" },
   { value: "new-releases", label: "Latest releases" },
@@ -116,57 +116,65 @@ function SearchBox({
     : `Up to ${searchLimit} results from ${searchSources.length} source${searchSources.length === 1 ? "" : "s"}`;
 
   return (
-    <HStack gap={1} vAlign="center" className="search-box">
-      <InputGroup
-        label="Search"
-        isLabelHidden
-        className="search-box-group"
-        status={
-          errorMessage ? { type: "error", message: errorMessage } : undefined
-        }
-      >
-        <Selector
-          label="Search kind"
+    <HStack width="100%" gap={1} vAlign="center" className="search-box">
+      <StackItem size="fill">
+        <InputGroup
+          label="Search"
           isLabelHidden
-          options={SEARCH_KIND_OPTIONS}
-          value={searchKind}
-          onChange={(v) => setSearchKind(toSearchKind(v))}
-          // Size to its label instead of splitting the group evenly.
-          style={{ flex: "none", width: "auto" }}
-        />
-        {searchKind === "new-releases" ? (
+          status={
+            errorMessage
+              ? { type: "error", message: errorMessage }
+              : !isTop100 && !searchSources.length
+                ? {
+                    type: "warning",
+                    message: "Choose at least one source in Search options.",
+                  }
+                : undefined
+          }
+        >
           <Selector
-            label="Released within"
+            label="Search kind"
             isLabelHidden
-            options={DAY_OPTIONS.map((d) => ({
-              value: `${d}`,
-              label: `Last ${d} day${d === 1 ? "" : "s"}`,
-            }))}
-            value={`${newReleasesDays}`}
-            onChange={(v) => setNewReleasesDays(parseInt(v))}
+            options={SEARCH_KIND_OPTIONS}
+            value={searchKind}
+            onChange={(v) => setSearchKind(toSearchKind(v))}
+            // Size to its label instead of splitting the group evenly.
+            style={{ flex: "none", width: "auto" }}
           />
-        ) : isTop100 ? (
-          <Selector
-            label="Genre"
-            isLabelHidden
-            options={GENRE_OPTIONS}
-            value={`${beatportGenreId}`}
-            onChange={(v) => setBeatportGenreId(parseInt(v))}
-          />
-        ) : (
-          <TextInput
-            label="Search query"
-            isLabelHidden
-            placeholder="Search tracks, artists, labels…"
-            hasClear
-            value={value}
-            onChange={setValue}
-            onKeyDown={(ev) => {
-              if (ev.key === "Enter") onSearch();
-            }}
-          />
-        )}
-      </InputGroup>
+          {searchKind === "new-releases" ? (
+            <Selector
+              label="Released within"
+              isLabelHidden
+              options={DAY_OPTIONS.map((d) => ({
+                value: `${d}`,
+                label: `Last ${d} day${d === 1 ? "" : "s"}`,
+              }))}
+              value={`${newReleasesDays}`}
+              onChange={(v) => setNewReleasesDays(parseInt(v))}
+            />
+          ) : isTop100 ? (
+            <Selector
+              label="Genre"
+              isLabelHidden
+              options={GENRE_OPTIONS}
+              value={`${beatportGenreId}`}
+              onChange={(v) => setBeatportGenreId(parseInt(v))}
+            />
+          ) : (
+            <TextInput
+              label="Search query"
+              isLabelHidden
+              placeholder="Search tracks, artists, labels…"
+              hasClear
+              value={value}
+              onChange={setValue}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter") onSearch();
+              }}
+            />
+          )}
+        </InputGroup>
+      </StackItem>
 
       <DropdownMenu
         hasChevron={false}
@@ -223,7 +231,8 @@ function SearchBox({
         icon={<MagnifyingGlassIcon />}
         isLoading={searchBusy}
         isDisabled={
-          !isQuerylessSearchKind(searchKind) && value.trim().length === 0
+          (!isQuerylessSearchKind(searchKind) && value.trim().length === 0) ||
+          (!isTop100 && !searchSources.length)
         }
         onClick={onSearch}
       />

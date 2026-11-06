@@ -36,8 +36,8 @@ export default function ImportMenu({
         button={{
           label: "Import tracks",
           icon: <DownloadIcon />,
-          isIconOnly: true,
-          variant: "secondary",
+          isIconOnly: false,
+          variant: "ghost",
           tooltip: "Import tracks",
         }}
         items={[

@@ -18,7 +18,6 @@ import {
   Cross2Icon,
   VideoIcon,
   MagicWandIcon,
-  ResetIcon,
   EnterFullScreenIcon,
   ExitFullScreenIcon,
   TrashIcon,
@@ -27,6 +26,8 @@ import {
   TrackNextIcon,
   PauseIcon,
   TrackPreviousIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
 } from "@radix-ui/react-icons";
 
 import { Theme } from "@astryxdesign/core/theme";
@@ -38,6 +39,16 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Divider } from "@astryxdesign/core/Divider";
+import { useMediaQuery } from "@astryxdesign/core/hooks";
+import { LayerProvider } from "@astryxdesign/core/Layer";
+import { AppShell } from "@astryxdesign/core/AppShell";
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
+import { Toolbar } from "@astryxdesign/core/Toolbar";
+import { Button } from "@astryxdesign/core/Button";
+import { Banner } from "@astryxdesign/core/Banner";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { Spinner } from "@astryxdesign/core/Spinner";
+import NewCollectionDialog from "./NewCollectionDialog";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 
 import type {
@@ -51,6 +62,7 @@ import type {
   ClientMsg,
   ServerMsg,
   Settings,
+  AppNotification,
 } from "./Types.tsx";
 import { isQuerylessSearchKind } from "./Types.tsx";
 import { DEFAULT_BEATPORT_GENRE_ID } from "./BeatportGenres.tsx";
@@ -215,6 +227,8 @@ type State = {
   track_selection: string[];
   track_info?: ITrack;
 
+  notification_queue: AppNotification[];
+  notification_next_id: number;
   notification_msg?: string;
   notification_show: boolean;
   notification_kind?: "info" | "warn" | "warning" | "error";
@@ -260,9 +274,15 @@ type State = {
   youtube_fixup_tracks?: ITrack[];
 };
 
-const reducer = (state: State, action: Action): State => {
+const reduceState = (state: State, action: Action): State => {
   switch (action.type) {
     case "set-playlist": {
+      if (
+        (state.current_id || action.ids.length === 0) &&
+        action.ids.length === state.playlist.length &&
+        action.ids.every((id, index) => id === state.playlist[index])
+      )
+        return state;
       if (!state.current_id && action.ids.length > 0) {
         return { ...state, playlist: action.ids, current_id: action.ids[0] };
       }
@@ -444,7 +464,8 @@ const reducer = (state: State, action: Action): State => {
     case "set-search-failure":
       return {
         ...state,
-        search_error_message: "no tracks founds",
+        search_error_message:
+          "No tracks found. Try another title, artist, or label.",
         search_results: undefined,
         search_busy: false,
       };
@@ -490,6 +511,17 @@ const reducer = (state: State, action: Action): State => {
 
     case "track-info":
       return { ...state, track_info: action.track };
+
+    case "consume-notifications": {
+      const pending = state.notification_queue.filter(
+        (item) => !action.ids.includes(item.id),
+      );
+      return {
+        ...state,
+        notification_queue: pending,
+        notification_show: pending.length > 0,
+      };
+    }
 
     case "set-notification-show":
       return { ...state, notification_show: action.show };
@@ -739,6 +771,32 @@ const reducer = (state: State, action: Action): State => {
   }
 };
 
+// Preserve every notification when several server messages arrive in one React batch.
+const reducer = (state: State, action: Action): State => {
+  const next = reduceState(state, action);
+  if (
+    next.notification_show &&
+    next.notification_msg &&
+    (action.type === "notification" ||
+      next.notification_msg !== state.notification_msg ||
+      !state.notification_show)
+  ) {
+    return {
+      ...next,
+      notification_next_id: state.notification_next_id + 1,
+      notification_queue: [
+        ...next.notification_queue,
+        {
+          id: state.notification_next_id,
+          message: next.notification_msg,
+          kind: next.notification_kind,
+        },
+      ],
+    };
+  }
+  return next;
+};
+
 function App() {
   const [state, dispatch] = useReducer(reducer, {
     playlist: [],
@@ -753,6 +811,8 @@ function App() {
     search_kind: "fuzzy",
     search_sources: ["beatport", "volumo", "traxsource"],
     new_releases_days: 7,
+    notification_queue: [],
+    notification_next_id: 1,
     notification_show: false,
     spotify_backfill_running: false,
     spotify_playlist_running: false,
@@ -770,6 +830,16 @@ function App() {
     undefined,
   );
 
+  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const consumeNotifications = useCallback(
+    (ids: number[]) => dispatch({ type: "consume-notifications", ids }),
+    [],
+  );
+  const [playerExpanded, setPlayerExpanded] = useLocalStorage<boolean>(
+    "stereo_player_expanded",
+    false,
+  );
+  const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
 
   const [newReleasesOpen, setNewReleasesOpen] = useState(false);
@@ -832,7 +902,11 @@ function App() {
     dispatch({ type: "dismiss-connection-closed-notification" });
   }, [dispatch]);
 
-  const { sendMsg, requestReply } = useWebSocket<ServerMsg, ClientMsg>(
+  const {
+    sendMsg,
+    requestReply,
+    isReady: backendReady,
+  } = useWebSocket<ServerMsg, ClientMsg>(
     wsUrl,
     wsProtocols,
     wsOnMessage,
@@ -851,7 +925,7 @@ function App() {
 
   const updatePlaylist = useCallback(
     (shuffle: boolean) => {
-      if (gridReady && gridRef.current) {
+      if (gridReady && gridRef.current?.api) {
         const api = gridRef.current.api;
         const filterModel = api.getState().filter?.filterModel;
         const sortModel = api.getState().sort?.sortModel;
@@ -884,7 +958,7 @@ function App() {
     if (state.playlist.length === 0) {
       updatePlaylist(settings.shufflePlay);
     }
-  }, [state.playlist, updatePlaylist, settings.shufflePlay, gridReady]);
+  }, [state.playlist.length, updatePlaylist, settings.shufflePlay, gridReady]);
 
   // Used by the main tracks grid: sets current track and ensures the playlist
   // reflects the current filter+sort order before the next track auto-advances.
@@ -910,8 +984,8 @@ function App() {
   useEffect(() => {
     if (state.should_refresh_grid) {
       if (gridRef.current) {
-        gridRef.current.api.refreshInfiniteCache();
-        gridRef.current.api.refreshCells({ force: true, suppressFlash: true });
+        gridRef.current.api?.refreshInfiniteCache();
+        gridRef.current.api?.refreshCells({ force: true, suppressFlash: true });
       }
       dispatch({ type: "grid-refreshed" });
     }
@@ -920,7 +994,7 @@ function App() {
   useEffect(() => {
     if (state.should_purge_grid) {
       if (gridRef.current) {
-        gridRef.current.api.purgeInfiniteCache();
+        gridRef.current.api?.purgeInfiniteCache();
       }
       dispatch({ type: "grid-purged" });
     }
@@ -1305,6 +1379,11 @@ function App() {
   );
 
   const handleSearch = useCallback(() => {
+    if (
+      state.search_kind !== "beatport-top-100" &&
+      !state.search_sources.length
+    )
+      return;
     if (state.search_kind === "new-releases") {
       setNewReleasesOpen(true);
       return;
@@ -1396,12 +1475,12 @@ function App() {
   );
 
   const resetColumnState = useCallback(() => {
-    gridRef.current?.api.resetColumnState();
-    gridRef.current?.api.setFilterModel(null);
+    gridRef.current?.api?.resetColumnState();
+    gridRef.current?.api?.setFilterModel(null);
   }, []);
 
   const deselectAll = useCallback(() => {
-    gridRef.current?.api.deselectAll();
+    gridRef.current?.api?.deselectAll();
   }, []);
 
   // Deletes wait for confirmation in an AlertDialog.
@@ -1413,7 +1492,7 @@ function App() {
   } | null>(null);
 
   const deleteSelectedTracks = useCallback(() => {
-    const selectedRows = gridRef.current?.api.getSelectedRows();
+    const selectedRows = gridRef.current?.api?.getSelectedRows();
     if (selectedRows && selectedRows.length > 0) {
       const what =
         selectedRows.length === 1
@@ -1432,7 +1511,7 @@ function App() {
     if (pendingDelete.isNowPlaying) {
       dispatch({ type: "play-next-track" });
     } else {
-      gridRef.current?.api.deselectAll();
+      gridRef.current?.api?.deselectAll();
     }
     sendMsg({ type: "delete-tracks", ids: pendingDelete.ids });
     setPendingDelete(null);
@@ -1440,7 +1519,7 @@ function App() {
 
   const exportSelectedTracksToCollection = useCallback(
     (collection: string) => {
-      const tracks = gridRef.current?.api.getSelectedRows();
+      const tracks = gridRef.current?.api?.getSelectedRows();
       if (tracks) {
         sendMsg({ type: "export-tracks-to-collection", tracks, collection });
       }
@@ -1449,7 +1528,7 @@ function App() {
   );
 
   const openSelectedTracksAsYTMPlaylist = useCallback(() => {
-    const selectedRows = gridRef.current?.api.getSelectedRows();
+    const selectedRows = gridRef.current?.api?.getSelectedRows();
     if (selectedRows) {
       const yt_ids = selectedRows.map((t) => t.yt_id);
       requestReply({ type: "create-yt-anon-playlist", yt_ids }, (r) => {
@@ -1496,7 +1575,7 @@ function App() {
   const addTracksPendingId = useRef(0);
 
   const exportSelectionToSpotifyPlaylist = useCallback(() => {
-    const selectedRows = gridRef.current?.api.getSelectedRows();
+    const selectedRows = gridRef.current?.api?.getSelectedRows();
     if (selectedRows && selectedRows.length > 0) {
       setSpotifyPlaylistTracks(
         selectedRows.map((t: ITrack) => ({
@@ -1584,7 +1663,7 @@ function App() {
   ]);
 
   const openSelectedTracksAsYTSavedPlaylist = useCallback(() => {
-    const selectedRows = gridRef.current?.api.getSelectedRows();
+    const selectedRows = gridRef.current?.api?.getSelectedRows();
     if (selectedRows && selectedRows.length > 0) {
       setYtPlaylistYtIds(selectedRows.map((t) => t.yt_id));
       setYtPlaylistOpen(true);
@@ -1873,7 +1952,7 @@ function App() {
       }
       return;
     }
-    if (gridReady && gridRef.current) {
+    if (gridReady && gridRef.current?.api) {
       const api = gridRef.current.api;
       const filterModel = api.getState().filter?.filterModel;
       const sortModel = api.getState().sort?.sortModel;
@@ -1886,7 +1965,7 @@ function App() {
         },
         function (msg: ServerMsg | { type: string }) {
           if ("index" in msg) {
-            gridRef.current?.api.ensureIndexVisible(
+            gridRef.current?.api?.ensureIndexVisible(
               msg.index as number,
               "middle",
             );
@@ -2087,612 +2166,777 @@ function App() {
     ArrowDown: () => nextTrack(),
   });
 
+  const importMenu = (
+    <ImportMenu
+      setImportFrom={(path: string) =>
+        dispatch({ type: "set-import-from", path })
+      }
+      keepUserData={state.import_from_keep_user_data ?? false}
+      setKeepUserData={(keep: boolean) =>
+        dispatch({ type: "set-import-keep-user-data", keep })
+      }
+      importFrom={state.import_from ?? ""}
+      doImport={() => {
+        if (state.import_from) {
+          sendMsg({
+            type: "import-from",
+            path: state.import_from,
+            keep_user_data: state.import_from_keep_user_data ?? false,
+          });
+        }
+      }}
+      isValidImportFrom={state.import_from_is_valid}
+      requestReply={requestReply}
+      onYouTubeImport={importYouTubePlaylist}
+    />
+  );
+
+  // Responsive contract: header search moves onto its own row below 768px.
+  // Header auto | grid fills remaining space | compact transport footer; expanded
+  // media is limited to 45dvh. Fullscreen reserves the frame for playback.
   return (
     <Theme theme={stereoTheme} mode={settings.appearance}>
-      <VStack
-        ref={appShellRef}
-        className={`app-main ${settings.fullScreen ? "fullscreen" : ""}`}
-        hAlign="center"
-      >
-        <HStack vAlign="center" gap={2} className="toolbar">
-          <HStack vAlign="center" gap={2} className="toolbar-side">
-            <CollectionSelector
-              isValid={state.collection_is_valid ?? true}
-              collections={state.collections ?? []}
-              value={settings.collectionPath}
-              setValue={(path) =>
-                setSettings({ ...settings, collectionPath: path })
-              }
-              onCreate={(name) => sendMsg({ type: "create-collection", name })}
-              repos={state.repos ?? []}
-              repoPath={settings.repoPath}
-              setRepoPath={(path) => {
-                setSettings({ ...settings, repoPath: path });
-                activeRepo.current = path;
-                sendMsg({ type: "set-repo", path });
-              }}
-              onClone={(url) => {
-                // The server replies with the activated repo's path before it sends the
-                // updated repo list, so the auto-select effect picks the new repo.
-                requestReply({ type: "clone-repo", url }, (msg) => {
-                  if (msg.type === "clone-repo-reply" && "path" in msg) {
-                    const path = msg.path;
-                    if (path) {
-                      // The server has already switched to (and is syncing) the clone.
-                      activeRepo.current = path;
-                      setSettings((s) => ({ ...s, repoPath: path }));
-                    }
+      <LayerProvider toast={{ position: "topEnd" }}>
+        <AppShell
+          ref={appShellRef}
+          className={`stereo-app ${settings.fullScreen ? "fullscreen" : ""}`}
+          variant="surface"
+          height="fill"
+          contentPadding={0}
+          mobileNav={false}
+          topNav={
+            <HStack
+              as="header"
+              width="100%"
+              padding={2}
+              vAlign="center"
+              gap={2}
+              wrap="wrap"
+              className="app-header"
+            >
+              <HStack vAlign="center" gap={2} className="collection-controls">
+                <CollectionSelector
+                  isValid={state.collection_is_valid ?? true}
+                  collections={state.collections ?? []}
+                  value={settings.collectionPath}
+                  setValue={(path) =>
+                    setSettings({ ...settings, collectionPath: path })
                   }
-                });
-              }}
-              syncState={state.git_sync_state}
-              syncMessage={state.git_sync_message}
-              onShowStats={
-                hasCollectionStats(state.collection_stats)
-                  ? () => setStatsOpen(true)
-                  : undefined
-              }
-            />
-            <GitSyncStatus
-              state={state.git_sync_state}
-              message={state.git_sync_message}
-              retryable={state.git_sync_retryable}
-              onRetry={() => sendMsg({ type: "retry-git-sync" })}
-              onResolve={(strategy) =>
-                sendMsg({ type: "resolve-git-conflict", strategy })
-              }
-            />
-          </HStack>
-          <SearchBox
-            value={state.search_box_input ?? ""}
-            setValue={(value: string) =>
-              dispatch({ type: "search-box-input", input: value })
-            }
-            onSearch={handleSearch}
-            searchLimit={state.search_limit}
-            setSearchLimit={(limit: number) =>
-              dispatch({ type: "set-search-limit", limit })
-            }
-            searchKind={state.search_kind}
-            setSearchKind={(kind: SearchBoxKind) =>
-              dispatch({ type: "set-search-kind", kind })
-            }
-            searchSources={state.search_sources}
-            setSearchSources={(sources: TrackSource[]) =>
-              dispatch({ type: "set-search-sources", sources })
-            }
-            newReleasesDays={state.new_releases_days}
-            setNewReleasesDays={(days: number) =>
-              dispatch({ type: "set-new-releases-days", days })
-            }
-            beatportGenreId={beatportGenreId}
-            setBeatportGenreId={setBeatportGenreId}
-            searchBusy={hasSearchInput && state.search_busy}
-            errorMessage={state.search_error_message}
-          />
-          <HStack vAlign="center" hAlign="end" className="toolbar-side">
-            <AppMenu
-              version={state.backend_version}
-              appearance={settings.appearance}
-              setAppearance={(appearance) =>
-                setSettings({ ...settings, appearance })
-              }
-              requestReply={requestReply}
-              youtubeConnected={state.youtube_connected}
-              youtubeClientId={state.youtube_client_id ?? null}
-              collectionOpen={!!state.collection}
-              spotifyBackfillRunning={state.spotify_backfill_running}
-              spotifyBackfillChecked={state.spotify_backfill_checked}
-              spotifyBackfillMatched={state.spotify_backfill_matched}
-              spotifyBackfillTotal={state.spotify_backfill_total}
-              onSpotifyBackfill={backfillSpotifyIds}
-            />
-          </HStack>
-        </HStack>
-        <div
-          className={`background-player ${state.show_player2 && settings.backgroundVideo ? "" : "hidden"}`}
-        >
-          <div ref={player2Ref} />
-        </div>
-        <HStack width="100%" hAlign="center" vAlign="start" gap={6}>
-          <VStack hAlign="center" gap={2}>
-            {state.title && (
-              <HStack vAlign="center" gap={2}>
-                <Title
-                  title={state.title}
-                  artists={state.track_info?.artists}
-                  trackName={state.track_info?.title}
-                  label={state.track_info?.label}
-                  releaseDate={state.track_info?.release_date}
-                  onArtistClick={handleArtistClick}
-                  onLabelClick={handleLabelClick}
+                  onCreate={(name) =>
+                    sendMsg({ type: "create-collection", name })
+                  }
+                  repos={state.repos ?? []}
+                  repoPath={settings.repoPath}
+                  setRepoPath={(path) => {
+                    setSettings({ ...settings, repoPath: path });
+                    activeRepo.current = path;
+                    sendMsg({ type: "set-repo", path });
+                  }}
+                  onClone={(url) => {
+                    // The server replies with the activated repo's path before it sends the
+                    // updated repo list, so the auto-select effect picks the new repo.
+                    requestReply({ type: "clone-repo", url }, (msg) => {
+                      if (msg.type === "clone-repo-reply" && "path" in msg) {
+                        const path = msg.path;
+                        if (path) {
+                          // The server has already switched to (and is syncing) the clone.
+                          activeRepo.current = path;
+                          setSettings((s) => ({ ...s, repoPath: path }));
+                        }
+                      }
+                    });
+                  }}
+                  syncState={state.git_sync_state}
+                  syncMessage={state.git_sync_message}
+                  onShowStats={
+                    hasCollectionStats(state.collection_stats)
+                      ? () => setStatsOpen(true)
+                      : undefined
+                  }
                 />
-                {state.track_info && (
-                  <NowPlayingMenu
-                    track={state.track_info}
-                    collections={state.collections ?? []}
-                    currentCollectionPath={settings.collectionPath}
-                    onCopyToCollection={(path) => {
-                      if (state.track_info) {
-                        sendMsg({
-                          type: "export-tracks-to-collection",
-                          tracks: [state.track_info],
-                          collection: path,
-                        });
-                      }
-                    }}
-                    onMoveToCollection={(path) => {
-                      if (state.track_info && state.current_id) {
-                        // The server removes the track from the source collection only
-                        // once it has been written to the target.
-                        sendMsg({
-                          type: "export-tracks-to-collection",
-                          tracks: [state.track_info],
-                          collection: path,
-                          source_collection: settings.collectionPath,
-                        });
-                        dispatch({ type: "play-next-track" });
-                      }
-                    }}
-                    onDeleteFromCollection={() => {
-                      if (state.current_id && state.track_info) {
-                        setPendingDelete({
-                          ids: [state.current_id],
-                          description: `This removes “${state.track_info.title}” from ${collectionLabel(settings.collectionPath)}, including its rating and play count.`,
-                          isNowPlaying: true,
-                        });
-                      }
-                    }}
-                  />
-                )}
+                <GitSyncStatus
+                  state={state.git_sync_state}
+                  message={state.git_sync_message}
+                  retryable={state.git_sync_retryable}
+                  onRetry={() => sendMsg({ type: "retry-git-sync" })}
+                  onResolve={(strategy) =>
+                    sendMsg({ type: "resolve-git-conflict", strategy })
+                  }
+                />
               </HStack>
-            )}
-
-            <VStack hAlign="center" gap={2} className="controls">
-              <Rating
-                enabled={state.current_id === state.track_info?.yt_id}
-                currentRating={
-                  state.current_id === state.track_info?.yt_id
-                    ? state.track_info?.rating
-                    : undefined
-                }
-                updateRating={updateCurrentRating}
+              <StackItem size="fill" className="header-search">
+                <SearchBox
+                  value={state.search_box_input ?? ""}
+                  setValue={(value: string) =>
+                    dispatch({ type: "search-box-input", input: value })
+                  }
+                  onSearch={handleSearch}
+                  searchLimit={state.search_limit}
+                  setSearchLimit={(limit: number) =>
+                    dispatch({ type: "set-search-limit", limit })
+                  }
+                  searchKind={state.search_kind}
+                  setSearchKind={(kind: SearchBoxKind) =>
+                    dispatch({ type: "set-search-kind", kind })
+                  }
+                  searchSources={state.search_sources}
+                  setSearchSources={(sources: TrackSource[]) =>
+                    dispatch({ type: "set-search-sources", sources })
+                  }
+                  newReleasesDays={state.new_releases_days}
+                  setNewReleasesDays={(days: number) =>
+                    dispatch({ type: "set-new-releases-days", days })
+                  }
+                  beatportGenreId={beatportGenreId}
+                  setBeatportGenreId={setBeatportGenreId}
+                  searchBusy={hasSearchInput && state.search_busy}
+                  errorMessage={state.search_error_message}
+                />
+              </StackItem>
+              <HStack vAlign="center" hAlign="end">
+                <AppMenu
+                  version={state.backend_version}
+                  appearance={settings.appearance}
+                  setAppearance={(appearance) =>
+                    setSettings({ ...settings, appearance })
+                  }
+                  requestReply={requestReply}
+                  youtubeConnected={state.youtube_connected}
+                  youtubeClientId={state.youtube_client_id ?? null}
+                  collectionOpen={!!state.collection}
+                  spotifyBackfillRunning={state.spotify_backfill_running}
+                  spotifyBackfillChecked={state.spotify_backfill_checked}
+                  spotifyBackfillMatched={state.spotify_backfill_matched}
+                  spotifyBackfillTotal={state.spotify_backfill_total}
+                  onSpotifyBackfill={backfillSpotifyIds}
+                />
+              </HStack>
+            </HStack>
+          }
+          banner={
+            !backendReady ? (
+              <Banner
+                container="section"
+                status="warning"
+                title="Connecting to Stereo"
+                description="Your collection will be available when the connection is restored."
               />
-              <HStack
-                className="progress-slider"
-                width="min(70vw, 900px)"
-                vAlign="center"
-                gap={2}
-              >
-                <Text>{formatDuration(state.current_time ?? 0)}</Text>
-                <StackItem size="fill">
-                  <Slider
-                    label="Playback progress"
-                    isLabelHidden
-                    valueDisplay="none"
-                    value={state.playback_progress_pct ?? 0}
-                    onChange={(v: number) => onSliderValueChange([v])}
-                    style={{ paddingInline: "var(--spacing-3)" }}
-                  />
-                </StackItem>
-                <Text>
-                  {state.duration ? formatDuration(state.duration) : "--:--"}
-                </Text>
-              </HStack>
-              <HStack vAlign="center" gap={2} padding={2}>
-                <Tooltip
-                  content={
-                    <>
-                      Skip to previous track <Kbd keys="up" />
-                    </>
-                  }
-                >
-                  <IconButton
-                    variant="secondary"
-                    size="lg"
-                    label="Skip to previous track"
-                    icon={<TrackPreviousIcon />}
-                    onClick={prevTrack}
-                  />
-                </Tooltip>
-
-                <Tooltip
-                  content={
-                    <>
-                      Play / pause <Kbd keys="Space" /> / <Kbd keys="p" />
-                    </>
-                  }
-                >
-                  <IconButton
-                    variant="secondary"
-                    size="lg"
-                    className="play-pause-button"
-                    label="Play / pause"
-                    icon={
-                      state.player_state === YTPlayerState.PLAYING ? (
-                        <PauseIcon />
-                      ) : (
-                        <PlayIcon />
-                      )
-                    }
-                    onClick={togglePlayback}
-                  />
-                </Tooltip>
-
-                <Tooltip
-                  content={
-                    <>
-                      Skip to next track <Kbd keys="down" />
-                    </>
-                  }
-                >
-                  <IconButton
-                    variant="secondary"
-                    size="lg"
-                    label="Skip to next track"
-                    icon={<TrackNextIcon />}
-                    onClick={nextTrack}
-                  />
-                </Tooltip>
-
-                <Divider orientation="vertical" />
-
-                <Tooltip
-                  content={
-                    <>
-                      Toggle shuffle play <Kbd keys="s" />
-                    </>
-                  }
-                >
-                  <IconButton
-                    variant={settings.shufflePlay ? "primary" : "secondary"}
-                    size="lg"
-                    label="Toggle shuffle play"
-                    icon={<ShuffleIcon />}
-                    onClick={toggleShuffle}
-                  />
-                </Tooltip>
-
-                <Tooltip
-                  content={
-                    <>
-                      Toggle background video <Kbd keys="b" />
-                    </>
-                  }
-                >
-                  <IconButton
-                    variant={settings.backgroundVideo ? "primary" : "secondary"}
-                    size="lg"
-                    label="Toggle background video"
-                    icon={<MagicWandIcon />}
-                    onClick={toggleBackgroundVideo}
-                  />
-                </Tooltip>
-
-                <Divider orientation="vertical" />
-
-                <Tooltip
-                  content={
-                    <>
-                      Toggle video <Kbd keys="v" />
-                    </>
-                  }
-                >
-                  <IconButton
-                    className="toggle-video-button"
-                    variant={settings.video ? "primary" : "secondary"}
-                    size="lg"
-                    label="Toggle video"
-                    icon={<VideoIcon />}
-                    onClick={toggleVideo}
-                  />
-                </Tooltip>
-
-                <Tooltip
-                  content={
-                    <>
-                      Toggle fullscreen mode <Kbd keys="f" />
-                    </>
-                  }
-                >
-                  <IconButton
-                    variant="secondary"
-                    size="lg"
-                    label="Toggle fullscreen mode"
-                    icon={
-                      settings.fullScreen ? (
-                        <ExitFullScreenIcon />
-                      ) : (
-                        <EnterFullScreenIcon />
-                      )
-                    }
-                    onClick={toggleFullscreen}
-                  />
-                </Tooltip>
-              </HStack>
-            </VStack>
-          </VStack>
-        </HStack>
-
-        <div
-          className={`player ${settings.video || settings.fullScreen ? "" : "hidden"}`}
+            ) : state.collection_is_valid === false ? (
+              <Banner
+                container="section"
+                status="error"
+                title="This collection could not be opened"
+                description="Select another collection or create a new one."
+              />
+            ) : undefined
+          }
         >
-          <div ref={playerRef} />
-        </div>
-        {isSearchGridActive ? (
-          <HStack width="100%" gap={2} padding={2}>
-            <IconButton
-              variant="primary"
-              label="Add selected tracks"
-              tooltip="Add selected tracks"
-              icon={<PlusIcon />}
-              clickAction={addSelectedTracks}
-              isDisabled={
-                !(
-                  state.search_results_selection &&
-                  state.search_results_selection.length > 0
-                )
-              }
-            />
-
-            {state.search_results !== undefined && (
-              <Tooltip content={`${state.search_results.length} results`}>
-                <HStack
-                  vAlign="center"
-                  gap={1}
-                  paddingInline={2}
-                  className="row-count"
-                >
-                  <Text weight="bold" color="secondary">
-                    {state.search_results.length}
-                  </Text>
-                  <Text color="secondary">results</Text>
-                </HStack>
-              </Tooltip>
-            )}
-
-            <IconButton
-              variant="secondary"
-              label="Exit search"
-              tooltip="Exit search"
-              icon={<Cross2Icon />}
-              onClick={handleExitSearch}
-            />
-          </HStack>
-        ) : (
-          <HStack width="100%" gap={2} padding={2} className="grid-controls">
-            <IconButton
-              variant="secondary"
-              label="Deselect all"
-              tooltip="Deselect all"
-              icon={<Cross2Icon />}
-              onClick={deselectAll}
-              isDisabled={state.track_selection.length === 0}
-            />
-
-            <IconButton
-              variant="destructive"
-              label="Delete selected tracks"
-              tooltip="Delete selected tracks"
-              icon={<TrashIcon />}
-              onClick={deleteSelectedTracks}
-              isDisabled={state.track_selection.length === 0}
-            />
-
-            <ExportDropDown
-              selectionCount={state.track_selection.length}
-              collections={state.collections ?? []}
-              exportToCollection={exportSelectedTracksToCollection}
-              exportSelectionToYTM={openSelectedTracksAsYTMPlaylist}
-              exportSelectionToYTSavedPlaylist={
-                openSelectedTracksAsYTSavedPlaylist
-              }
-              exportTop50ToYTM={openTopTracksAsYTMPlaylist}
-              exportAllToYTSavedPlaylist={openAllTracksAsYTSavedPlaylist}
-              exportSelectionToSpotifyPlaylist={
-                exportSelectionToSpotifyPlaylist
-              }
-              exportAllToSpotifyPlaylist={exportAllToSpotifyPlaylist}
-            />
-
-            <ImportMenu
-              setImportFrom={(path: string) =>
-                dispatch({ type: "set-import-from", path })
-              }
-              keepUserData={state.import_from_keep_user_data ?? false}
-              setKeepUserData={(keep: boolean) =>
-                dispatch({ type: "set-import-keep-user-data", keep })
-              }
-              importFrom={state.import_from ?? ""}
-              doImport={() => {
-                if (state.import_from) {
-                  sendMsg({
-                    type: "import-from",
-                    path: state.import_from,
-                    keep_user_data: state.import_from_keep_user_data ?? false,
-                  });
+          <Layout
+            className="workbench"
+            header={
+              <Toolbar
+                className="collection-toolbar"
+                label={
+                  isSearchGridActive
+                    ? "Search results actions"
+                    : "Collection actions"
                 }
-              }}
-              isValidImportFrom={state.import_from_is_valid}
-              requestReply={requestReply}
-              onYouTubeImport={importYouTubePlaylist}
-            />
-
-            <ColumnsMenu gridRef={gridRef} />
-
-            <IconButton
-              variant="secondary"
-              label="Reset columns"
-              tooltip="Reset columns"
-              icon={<ResetIcon />}
-              onClick={resetColumnState}
-            />
-
-            {filteredRowCount !== undefined && (
-              <Tooltip
-                content={
-                  filteredRowCount !== state.collection?.size
-                    ? `${filteredRowCount} of ${state.collection?.size} tracks match active filters`
-                    : `${filteredRowCount} tracks`
+                size="sm"
+                variant={
+                  (
+                    isSearchGridActive
+                      ? state.search_results_selection?.length
+                      : state.track_selection.length
+                  )
+                    ? "muted"
+                    : "transparent"
                 }
-              >
-                <HStack
-                  vAlign="center"
-                  gap={1}
-                  paddingInline={2}
-                  className="row-count"
-                >
-                  <Text
-                    weight="bold"
-                    color={
-                      filteredRowCount !== state.collection?.size
-                        ? "accent"
-                        : "secondary"
-                    }
-                  >
-                    {filteredRowCount}
-                  </Text>
-                  {filteredRowCount !== state.collection?.size &&
-                    state.collection?.size !== undefined && (
-                      <Text color="secondary">/ {state.collection.size}</Text>
+                startContent={
+                  <HStack width="100%" gap={2} vAlign="center" wrap="wrap">
+                    {isSearchGridActive ? (
+                      <>
+                        <Text type="supporting">
+                          {state.search_results?.length ?? 0} results ·{" "}
+                          {state.search_results_selection?.length ?? 0} selected
+                        </Text>
+                        <Button
+                          variant="primary"
+                          label={`Add selected (${state.search_results_selection?.length ?? 0})`}
+                          icon={<PlusIcon />}
+                          clickAction={addSelectedTracks}
+                          isDisabled={
+                            !state.search_results_selection?.length ||
+                            !state.collection
+                          }
+                        />
+                        <Button
+                          label="Exit search"
+                          variant="ghost"
+                          icon={<Cross2Icon />}
+                          onClick={handleExitSearch}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <Text type="supporting">
+                          {filteredRowCount ?? state.collection?.size ?? 0}
+                          {filteredRowCount !== undefined &&
+                          state.collection &&
+                          filteredRowCount !== state.collection.size
+                            ? ` / ${state.collection.size}`
+                            : ""}{" "}
+                          tracks
+                        </Text>
+                        {state.track_selection.length > 0 && (
+                          <>
+                            <Text type="supporting" weight="bold">
+                              {state.track_selection.length} selected
+                            </Text>
+                            <Button
+                              label="Deselect all"
+                              variant="ghost"
+                              onClick={deselectAll}
+                            />
+                            <Button
+                              label="Delete selected"
+                              variant="destructive"
+                              icon={<TrashIcon />}
+                              onClick={deleteSelectedTracks}
+                            />
+                          </>
+                        )}
+                        <ExportDropDown
+                          selectionCount={state.track_selection.length}
+                          collections={state.collections ?? []}
+                          exportToCollection={exportSelectedTracksToCollection}
+                          exportSelectionToYTM={openSelectedTracksAsYTMPlaylist}
+                          exportSelectionToYTSavedPlaylist={
+                            openSelectedTracksAsYTSavedPlaylist
+                          }
+                          exportTop50ToYTM={openTopTracksAsYTMPlaylist}
+                          exportAllToYTSavedPlaylist={
+                            openAllTracksAsYTSavedPlaylist
+                          }
+                          exportSelectionToSpotifyPlaylist={
+                            exportSelectionToSpotifyPlaylist
+                          }
+                          exportAllToSpotifyPlaylist={
+                            exportAllToSpotifyPlaylist
+                          }
+                        />
+                        {importMenu}
+                        {state.collection && state.collection.size > 0 && (
+                          <ColumnsMenu
+                            gridRef={gridRef}
+                            onReset={resetColumnState}
+                          />
+                        )}
+                      </>
                     )}
-                  <Text color="secondary">tracks</Text>
-                </HStack>
-              </Tooltip>
-            )}
-          </HStack>
-        )}
-        <StackItem size="fill" className="grid-container">
-          {isSearchGridActive ? (
-            <SearchResultsGrid
-              // Chart results get different columns and default sort; remounting applies them.
-              key={state.search_is_chart ? "chart" : "search"}
-              isChart={state.search_is_chart}
-              gridRef={searchGridRef}
-              currentId={state.current_id}
-              playId={playId}
-              requestReply={requestReply}
-              dispatch={dispatch}
-              tracks={state.search_results}
-              lastCollectionUpdate={state.collection_last_update}
+                  </HStack>
+                }
+              />
+            }
+            content={
+              <LayoutContent
+                className="collection-content"
+                padding={0}
+                isScrollable={false}
+              >
+                <VStack width="100%" height="100%">
+                  {isSearchGridActive ? (
+                    <SearchResultsGrid
+                      // Chart results get different columns and default sort; remounting applies them.
+                      key={state.search_is_chart ? "chart" : "search"}
+                      isChart={state.search_is_chart}
+                      isSearching={state.search_busy}
+                      onExitSearch={handleExitSearch}
+                      gridRef={searchGridRef}
+                      currentId={state.current_id}
+                      playId={playId}
+                      requestReply={requestReply}
+                      dispatch={dispatch}
+                      tracks={state.search_results}
+                      lastCollectionUpdate={state.collection_last_update}
+                      onArtistClick={handleArtistClick}
+                      onLabelClick={handleLabelClick}
+                      addTrack={addSearchResultTrack}
+                    />
+                  ) : !backendReady ? (
+                    <HStack height="100%" hAlign="center" vAlign="center">
+                      <Spinner label="Connecting to your collection…" />
+                    </HStack>
+                  ) : state.collections?.length === 0 ? (
+                    <EmptyState
+                      title="Create your first collection"
+                      description="A collection keeps track metadata and ratings in a local database file."
+                      actions={
+                        <Button
+                          label="Create collection"
+                          variant="primary"
+                          onClick={() => setCreateCollectionOpen(true)}
+                        />
+                      }
+                    />
+                  ) : !state.collection ? (
+                    <HStack height="100%" hAlign="center" vAlign="center">
+                      <Spinner label="Opening collection…" />
+                    </HStack>
+                  ) : state.collection.size === 0 ? (
+                    <EmptyState
+                      title="Your collection is ready"
+                      description="Search for music or import tracks to start curating."
+                      actions={
+                        <HStack gap={2} wrap="wrap">
+                          <Button
+                            label="Search for music"
+                            variant="primary"
+                            onClick={() =>
+                              document
+                                .querySelector<HTMLInputElement>(
+                                  ".search-box input",
+                                )
+                                ?.focus()
+                            }
+                          />
+                          {importMenu}
+                        </HStack>
+                      }
+                    />
+                  ) : (
+                    <TracksGrid
+                      gridRef={gridRef}
+                      currentId={state.current_id}
+                      playId={playIdForGrid}
+                      updateRating={updateRating}
+                      requestReply={requestReply}
+                      dispatch={dispatch}
+                      sendMsg={sendMsg}
+                      setGridReady={setGridReady}
+                      initialState={gridState}
+                      onStateUpdate={onTrackGridStateUpdate}
+                      onRowCountChange={setFilteredRowCount}
+                      onArtistClick={handleArtistClick}
+                      onLabelClick={handleLabelClick}
+                      onShazamSimilar={handleShazamSimilar}
+                    />
+                  )}
+                </VStack>
+              </LayoutContent>
+            }
+            footer={
+              <LayoutFooter padding={2} hasDivider className="playback-footer">
+                <VStack
+                  width="100%"
+                  gap={1}
+                  className={`playback ${playerExpanded || settings.fullScreen ? "expanded" : ""}`}
+                >
+                  <VStack width="100%" hAlign="center" gap={1}>
+                    {state.title || state.track_info ? (
+                      <HStack
+                        width="100%"
+                        vAlign="center"
+                        hAlign="between"
+                        gap={2}
+                      >
+                        <Title
+                          title={
+                            state.title ??
+                            state.track_info?.title ??
+                            "Nothing playing"
+                          }
+                          expanded={playerExpanded || settings.fullScreen}
+                          artists={state.track_info?.artists}
+                          trackName={state.track_info?.title}
+                          label={state.track_info?.label}
+                          releaseDate={state.track_info?.release_date}
+                          onArtistClick={handleArtistClick}
+                          onLabelClick={handleLabelClick}
+                        />
+                        {state.track_info && (
+                          <NowPlayingMenu
+                            track={state.track_info}
+                            collections={state.collections ?? []}
+                            currentCollectionPath={settings.collectionPath}
+                            onCopyToCollection={(path) => {
+                              if (state.track_info) {
+                                sendMsg({
+                                  type: "export-tracks-to-collection",
+                                  tracks: [state.track_info],
+                                  collection: path,
+                                });
+                              }
+                            }}
+                            onMoveToCollection={(path) => {
+                              if (state.track_info && state.current_id) {
+                                // The server removes the track from the source collection only
+                                // once it has been written to the target.
+                                sendMsg({
+                                  type: "export-tracks-to-collection",
+                                  tracks: [state.track_info],
+                                  collection: path,
+                                  source_collection: settings.collectionPath,
+                                });
+                                dispatch({ type: "play-next-track" });
+                              }
+                            }}
+                            onDeleteFromCollection={() => {
+                              if (state.current_id && state.track_info) {
+                                setPendingDelete({
+                                  ids: [state.current_id],
+                                  description: `This removes “${state.track_info.title}” from ${collectionLabel(settings.collectionPath)}, including its rating and play count.`,
+                                  isNowPlaying: true,
+                                });
+                              }
+                            }}
+                          />
+                        )}
+                      </HStack>
+                    ) : (
+                      <Text type="supporting" color="secondary">
+                        Choose a track to start listening.
+                      </Text>
+                    )}
+
+                    <VStack width="100%" hAlign="center" gap={1}>
+                      {(playerExpanded || settings.fullScreen) && (
+                        <Rating
+                          enabled={Boolean(
+                            state.current_id &&
+                            state.current_id === state.track_info?.yt_id,
+                          )}
+                          currentRating={
+                            state.current_id === state.track_info?.yt_id
+                              ? state.track_info?.rating
+                              : undefined
+                          }
+                          updateRating={updateCurrentRating}
+                        />
+                      )}
+                      <HStack
+                        className="progress-slider"
+                        width="100%"
+                        maxWidth={960}
+                        vAlign="center"
+                        gap={2}
+                      >
+                        <Text>{formatDuration(state.current_time ?? 0)}</Text>
+                        <StackItem size="fill">
+                          <Slider
+                            label="Playback progress"
+                            isLabelHidden
+                            valueDisplay="none"
+                            value={state.playback_progress_pct ?? 0}
+                            onChange={(v: number) => onSliderValueChange([v])}
+                            isDisabled={!state.duration}
+                          />
+                        </StackItem>
+                        <Text>
+                          {state.duration
+                            ? formatDuration(state.duration)
+                            : "--:--"}
+                        </Text>
+                      </HStack>
+                      <HStack
+                        vAlign="center"
+                        hAlign="center"
+                        gap={1}
+                        wrap="wrap"
+                      >
+                        <Tooltip
+                          content={
+                            <>
+                              Skip to previous track <Kbd keys="up" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            variant="secondary"
+                            size="sm"
+                            label="Skip to previous track"
+                            icon={<TrackPreviousIcon />}
+                            onClick={prevTrack}
+                          />
+                        </Tooltip>
+
+                        <Tooltip
+                          content={
+                            <>
+                              Play / pause <Kbd keys="Space" /> /{" "}
+                              <Kbd keys="p" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            variant="secondary"
+                            size="sm"
+                            className="play-pause-button"
+                            label={
+                              state.player_state === YTPlayerState.PLAYING
+                                ? "Pause"
+                                : "Play"
+                            }
+                            icon={
+                              state.player_state === YTPlayerState.PLAYING ? (
+                                <PauseIcon />
+                              ) : (
+                                <PlayIcon />
+                              )
+                            }
+                            onClick={togglePlayback}
+                          />
+                        </Tooltip>
+
+                        <Tooltip
+                          content={
+                            <>
+                              Skip to next track <Kbd keys="down" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            variant="secondary"
+                            size="sm"
+                            label="Skip to next track"
+                            icon={<TrackNextIcon />}
+                            onClick={nextTrack}
+                          />
+                        </Tooltip>
+
+                        <Divider orientation="vertical" />
+
+                        <Tooltip
+                          content={
+                            <>
+                              Toggle shuffle play <Kbd keys="s" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            variant={
+                              settings.shufflePlay ? "primary" : "secondary"
+                            }
+                            size="sm"
+                            label="Toggle shuffle play"
+                            aria-pressed={settings.shufflePlay}
+                            icon={<ShuffleIcon />}
+                            onClick={toggleShuffle}
+                          />
+                        </Tooltip>
+
+                        <Tooltip
+                          content={
+                            <>
+                              Toggle background video <Kbd keys="b" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            variant={
+                              settings.backgroundVideo ? "primary" : "secondary"
+                            }
+                            size="sm"
+                            label="Toggle background video"
+                            aria-pressed={
+                              settings.backgroundVideo && !reducedMotion
+                            }
+                            isDisabled={reducedMotion}
+                            tooltip={
+                              reducedMotion
+                                ? "Background video is disabled by your reduced motion preference"
+                                : undefined
+                            }
+                            icon={<MagicWandIcon />}
+                            onClick={toggleBackgroundVideo}
+                          />
+                        </Tooltip>
+
+                        <Divider orientation="vertical" />
+
+                        <Tooltip
+                          content={
+                            <>
+                              Toggle video <Kbd keys="v" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            className="toggle-video-button"
+                            variant={settings.video ? "primary" : "secondary"}
+                            size="sm"
+                            label="Toggle video"
+                            aria-pressed={settings.video}
+                            icon={<VideoIcon />}
+                            onClick={toggleVideo}
+                          />
+                        </Tooltip>
+
+                        <Tooltip
+                          content={
+                            <>
+                              Toggle fullscreen mode <Kbd keys="f" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            variant="secondary"
+                            size="sm"
+                            label="Toggle fullscreen mode"
+                            aria-pressed={settings.fullScreen}
+                            icon={
+                              settings.fullScreen ? (
+                                <ExitFullScreenIcon />
+                              ) : (
+                                <EnterFullScreenIcon />
+                              )
+                            }
+                            onClick={toggleFullscreen}
+                          />
+                        </Tooltip>
+                        {!settings.fullScreen && (
+                          <IconButton
+                            variant="ghost"
+                            size="sm"
+                            label={
+                              playerExpanded
+                                ? "Collapse player"
+                                : "Expand player"
+                            }
+                            tooltip={
+                              playerExpanded
+                                ? "Collapse player"
+                                : "Expand player"
+                            }
+                            aria-expanded={playerExpanded}
+                            icon={
+                              playerExpanded ? (
+                                <ChevronDownIcon />
+                              ) : (
+                                <ChevronUpIcon />
+                              )
+                            }
+                            onClick={() => setPlayerExpanded(!playerExpanded)}
+                          />
+                        )}
+                      </HStack>
+                    </VStack>
+                  </VStack>
+                </VStack>
+
+                <VStack
+                  className={`player ${settings.video || settings.fullScreen ? "" : "hidden"}`}
+                >
+                  {/* The IFrame API replaces this mount node; keep it outside React layout ownership. */}
+                  <div ref={playerRef} />
+                </VStack>
+              </LayoutFooter>
+            }
+          />
+          <VStack
+            className={`background-player ${state.show_player2 && settings.backgroundVideo && !reducedMotion ? "" : "hidden"}`}
+          >
+            {/* YouTube replaces this DOM mount node. */}
+            <div ref={player2Ref} />
+          </VStack>
+          <Notification
+            notifications={state.notification_queue}
+            onConsumed={consumeNotifications}
+            isConnected={backendReady}
+          />
+          <NewCollectionDialog
+            isOpen={createCollectionOpen}
+            onOpenChange={setCreateCollectionOpen}
+            onCreate={(name) => sendMsg({ type: "create-collection", name })}
+          />
+
+          <YouTubePlaylistDialog
+            open={ytPlaylistOpen}
+            trackCount={ytPlaylistYtIds.length}
+            onOpenChange={setYtPlaylistOpen}
+            onCreate={createYouTubePlaylist}
+          />
+          <YouTubePlaylistProgressDialog
+            running={state.youtube_playlist_running}
+            current={state.youtube_playlist_current ?? 0}
+            total={state.youtube_playlist_total ?? 0}
+            onCancel={cancelYouTubePlaylist}
+          />
+          <YouTubeFixupProgressDialog
+            running={state.youtube_fixup_running}
+            current={state.youtube_fixup_current ?? 0}
+            matched={state.youtube_fixup_matched ?? 0}
+            total={state.youtube_fixup_total ?? 0}
+            onCancel={cancelYouTubeFixup}
+          />
+          <YouTubePlaylistStagingDialog
+            key={`${state.youtube_fixup_id}-${state.youtube_fixup_tracks ? "staged" : "loading"}`}
+            open={state.youtube_fixup_tracks !== undefined}
+            name={state.youtube_fixup_name ?? "YouTube playlist"}
+            tracks={state.youtube_fixup_tracks ?? []}
+            requestReply={requestReply}
+            onCancel={() => dispatch({ type: "clear-youtube-fixup-result" })}
+            onCommit={commitYouTubeStaging}
+          />
+          <SpotifyPlaylistDialog
+            open={spotifyPlaylistOpen}
+            trackCount={spotifyPlaylistTracks.length}
+            requestReply={requestReply}
+            onOpenChange={setSpotifyPlaylistOpen}
+            onCreate={createSpotifyPlaylist}
+          />
+          <SpotifyPlaylistProgressDialog
+            running={state.spotify_playlist_running}
+            checked={state.spotify_playlist_checked ?? 0}
+            matched={state.spotify_playlist_matched ?? 0}
+            total={state.spotify_playlist_total ?? 0}
+          />
+          <NewReleasesDialog
+            isOpen={newReleasesOpen}
+            onOpenChange={setNewReleasesOpen}
+            days={state.new_releases_days}
+            requestReply={requestReply}
+            overrides={newReleasesOverrides[settings.collectionPath]}
+            onSearch={handleNewReleasesSearch}
+          />
+          {state.collection_stats && (
+            <CollectionSummary
+              isOpen={statsOpen}
+              onOpenChange={setStatsOpen}
+              stats={state.collection_stats}
+              totalTracks={state.collection?.size}
               onArtistClick={handleArtistClick}
               onLabelClick={handleLabelClick}
-              addTrack={addSearchResultTrack}
-            />
-          ) : (
-            <TracksGrid
-              gridRef={gridRef}
-              currentId={state.current_id}
-              playId={playIdForGrid}
-              updateRating={updateRating}
-              requestReply={requestReply}
-              dispatch={dispatch}
-              sendMsg={sendMsg}
-              setGridReady={setGridReady}
-              initialState={gridState}
-              onStateUpdate={onTrackGridStateUpdate}
-              onRowCountChange={setFilteredRowCount}
-              onArtistClick={handleArtistClick}
-              onLabelClick={handleLabelClick}
-              onShazamSimilar={handleShazamSimilar}
             />
           )}
-        </StackItem>
-      </VStack>
-      <Notification
-        open={state.notification_show}
-        setOpen={(open: boolean) =>
-          dispatch({ type: "set-notification-show", show: open })
-        }
-        message={state.notification_msg}
-        kind={state.notification_kind}
-      />
-      <YouTubePlaylistDialog
-        open={ytPlaylistOpen}
-        trackCount={ytPlaylistYtIds.length}
-        onOpenChange={setYtPlaylistOpen}
-        onCreate={createYouTubePlaylist}
-      />
-      <YouTubePlaylistProgressDialog
-        running={state.youtube_playlist_running}
-        current={state.youtube_playlist_current ?? 0}
-        total={state.youtube_playlist_total ?? 0}
-        onCancel={cancelYouTubePlaylist}
-      />
-      <YouTubeFixupProgressDialog
-        running={state.youtube_fixup_running}
-        current={state.youtube_fixup_current ?? 0}
-        matched={state.youtube_fixup_matched ?? 0}
-        total={state.youtube_fixup_total ?? 0}
-        onCancel={cancelYouTubeFixup}
-      />
-      <YouTubePlaylistStagingDialog
-        key={`${state.youtube_fixup_id}-${state.youtube_fixup_tracks ? "staged" : "loading"}`}
-        open={state.youtube_fixup_tracks !== undefined}
-        name={state.youtube_fixup_name ?? "YouTube playlist"}
-        tracks={state.youtube_fixup_tracks ?? []}
-        requestReply={requestReply}
-        onCancel={() => dispatch({ type: "clear-youtube-fixup-result" })}
-        onCommit={commitYouTubeStaging}
-      />
-      <SpotifyPlaylistDialog
-        open={spotifyPlaylistOpen}
-        trackCount={spotifyPlaylistTracks.length}
-        requestReply={requestReply}
-        onOpenChange={setSpotifyPlaylistOpen}
-        onCreate={createSpotifyPlaylist}
-      />
-      <SpotifyPlaylistProgressDialog
-        running={state.spotify_playlist_running}
-        checked={state.spotify_playlist_checked ?? 0}
-        matched={state.spotify_playlist_matched ?? 0}
-        total={state.spotify_playlist_total ?? 0}
-      />
-      <NewReleasesDialog
-        isOpen={newReleasesOpen}
-        onOpenChange={setNewReleasesOpen}
-        days={state.new_releases_days}
-        requestReply={requestReply}
-        overrides={newReleasesOverrides[settings.collectionPath]}
-        onSearch={handleNewReleasesSearch}
-      />
-      {state.collection_stats && (
-        <CollectionSummary
-          isOpen={statsOpen}
-          onOpenChange={setStatsOpen}
-          stats={state.collection_stats}
-          totalTracks={state.collection?.size}
-          onArtistClick={handleArtistClick}
-          onLabelClick={handleLabelClick}
-        />
-      )}
-      <AlertDialog
-        isOpen={pendingDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
-        }}
-        title={
-          pendingDelete && pendingDelete.ids.length > 1
-            ? "Delete tracks?"
-            : "Delete track?"
-        }
-        description={pendingDelete?.description ?? ""}
-        actionLabel={
-          pendingDelete && pendingDelete.ids.length > 1
-            ? `Delete ${pendingDelete.ids.length} tracks`
-            : "Delete track"
-        }
-        onAction={confirmDelete}
-      />
-      <AddTracksDialog
-        key={addTracksPendingId.current}
-        open={addTracksPending !== null}
-        conflicts={addTracksPending?.conflicts ?? []}
-        onOpenChange={(open) => {
-          if (!open) setAddTracksPending(null);
-        }}
-        onConfirm={confirmAddTracks}
-      />
+          <AlertDialog
+            isOpen={pendingDelete !== null}
+            onOpenChange={(open) => {
+              if (!open) setPendingDelete(null);
+            }}
+            title={
+              pendingDelete && pendingDelete.ids.length > 1
+                ? "Delete tracks?"
+                : "Delete track?"
+            }
+            description={pendingDelete?.description ?? ""}
+            actionLabel={
+              pendingDelete && pendingDelete.ids.length > 1
+                ? `Delete ${pendingDelete.ids.length} tracks`
+                : "Delete track"
+            }
+            onAction={confirmDelete}
+          />
+          <AddTracksDialog
+            key={addTracksPendingId.current}
+            open={addTracksPending !== null}
+            conflicts={addTracksPending?.conflicts ?? []}
+            onOpenChange={(open) => {
+              if (!open) setAddTracksPending(null);
+            }}
+            onConfirm={confirmAddTracks}
+          />
+        </AppShell>
+      </LayerProvider>
     </Theme>
   );
 }

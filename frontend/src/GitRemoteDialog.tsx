@@ -4,8 +4,9 @@ import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { IconButton } from "@astryxdesign/core/IconButton";
+import { FormLayout } from "@astryxdesign/core/FormLayout";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { HStack, VStack } from "@astryxdesign/core/Stack";
+import { HStack } from "@astryxdesign/core/Stack";
 import { Code } from "@astryxdesign/core/Code";
 import { GitHubLogoIcon } from "@radix-ui/react-icons";
 
@@ -61,7 +62,7 @@ function GitRemoteDialog({
           }
           content={
             <LayoutContent>
-              <VStack gap={3}>
+              <FormLayout>
                 <Text as="div" type="body">
                   Set a remote URL to automatically push collection snapshots
                   after each change. Create an empty repo on GitHub or GitLab
@@ -74,7 +75,7 @@ function GitRemoteDialog({
                   value={value}
                   onChange={setValue}
                 />
-              </VStack>
+              </FormLayout>
             </LayoutContent>
           }
           footer={

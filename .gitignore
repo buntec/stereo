@@ -16,3 +16,7 @@ dist-ssr
 target/
 
 .DS_Store
+
+# Browser test artifacts
+playwright-report/
+test-results/

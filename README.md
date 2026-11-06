@@ -68,3 +68,16 @@ Prerequisites: [Rust](https://rustup.rs), [Bun](https://bun.sh), [just](https://
 bun install        # install frontend dependencies
 just dev           # run backend + frontend dev server concurrently
 ```
+
+Frontend checks:
+
+```sh
+bun run build
+bun run lint
+bunx playwright install chromium  # once, for browser tests
+bun run test:ui
+```
+
+Browser tests start Vite and mock the WebSocket and YouTube APIs; they do not read
+or modify real collections. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing
+Chromium executable instead of the Playwright browser download.
