@@ -187,6 +187,12 @@
   background-color: transparent;
 }
 
+/* Filter dropdowns (e.g. "Contains"/"Equals") inherit the grid's translucent
+   background; blur what's behind them so the options stay readable. */
+.grid .ag-select-list {
+  backdrop-filter: blur(var(--spacing-6));
+}
+
 /* AG Grid's no-rows overlay defaults to letting pointer events pass through. */
 .grid .ag-overlay-no-rows-wrapper {
   pointer-events: auto;
