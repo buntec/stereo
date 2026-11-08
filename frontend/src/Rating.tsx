@@ -1,6 +1,19 @@
+import type { MouseEvent } from "react";
 import { HStack } from "@astryxdesign/core/Stack";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Cross2Icon, StarIcon, StarFilledIcon } from "@radix-ui/react-icons";
+
+// Ratings change only via the mouse or the global 0-5 shortcuts, never via other keys.
+// The buttons are kept out of the tab order and don't take focus when clicked, so Space,
+// Enter and arrow keys keep going to the grid / global shortcuts instead of a star.
+const pointerOnly = {
+  tabIndex: -1,
+  onMouseDown: (event: MouseEvent<HTMLButtonElement>) => event.preventDefault(),
+};
+
+// Keyboard-activated clicks (Enter/Space on a focused button) have detail 0.
+const isPointerClick = (event: MouseEvent<HTMLButtonElement>) =>
+  event.detail > 0;
 
 interface RatingProps {
   enabled: boolean;
@@ -21,38 +34,12 @@ export default function Rating({
       gap={0}
       onClick={(event) => event.stopPropagation()}
     >
-      <HStack
-        role="radiogroup"
-        aria-label={label}
-        aria-disabled={!enabled}
-        gap={0}
-        onKeyDown={(event) => {
-          const keys: Record<string, number> = {
-            ArrowRight: Math.min(5, (currentRating ?? 0) + 1),
-            ArrowUp: Math.min(5, (currentRating ?? 0) + 1),
-            ArrowLeft: Math.max(1, (currentRating ?? 2) - 1),
-            ArrowDown: Math.max(1, (currentRating ?? 2) - 1),
-            Home: 1,
-            End: 5,
-          };
-          const value = keys[event.key];
-          if (!enabled || value === undefined) return;
-          event.preventDefault();
-          event.stopPropagation();
-          updateRating(value);
-          const radios =
-            event.currentTarget.querySelectorAll<HTMLButtonElement>(
-              '[role="radio"]',
-            );
-          radios[value - 1]?.focus();
-        }}
-      >
+      <HStack role="group" aria-label={label} gap={0}>
         {[1, 2, 3, 4, 5].map((value) => (
           <IconButton
             key={value}
-            role="radio"
-            aria-checked={currentRating === value}
-            tabIndex={value === (currentRating || 1) ? 0 : -1}
+            aria-pressed={currentRating === value}
+            {...pointerOnly}
             label={`${value} of 5 stars`}
             tooltip={`${value} of 5 stars`}
             variant="ghost"
@@ -67,7 +54,9 @@ export default function Rating({
             icon={
               value <= (currentRating ?? 0) ? <StarFilledIcon /> : <StarIcon />
             }
-            onClick={() => updateRating(value)}
+            onClick={(event) => {
+              if (isPointerClick(event)) updateRating(value);
+            }}
           />
         ))}
       </HStack>
@@ -78,7 +67,10 @@ export default function Rating({
         size="sm"
         icon={<Cross2Icon />}
         isDisabled={!enabled || !currentRating}
-        onClick={() => updateRating(null)}
+        {...pointerOnly}
+        onClick={(event) => {
+          if (isPointerClick(event)) updateRating(null);
+        }}
       />
     </HStack>
   );
