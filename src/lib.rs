@@ -1,3 +1,4 @@
+pub mod beatport;
 pub mod db;
 pub mod git;
 pub mod message;

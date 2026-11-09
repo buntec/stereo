@@ -10,6 +10,7 @@ import { HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import {
   DesktopIcon,
+  DiscIcon,
   GearIcon,
   MoonIcon,
   SunIcon,
@@ -18,6 +19,7 @@ import { MenuCheck, MenuHeading } from "./Menu.tsx";
 import SpotifyIcon from "./SpotifyIcon.tsx";
 import YouTubeIcon from "./YouTubeIcon.tsx";
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
+import BeatportSessionDialog from "./BeatportSessionDialog.tsx";
 import YouTubeSessionDialog from "./YouTubeSessionDialog.tsx";
 import type { AppearanceType, RequestReply } from "./Types.tsx";
 
@@ -68,6 +70,8 @@ function AppMenu({
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
+  const [beatportBrowser, setBeatportBrowser] = useState<string | null>(null);
+  const [beatportOpen, setBeatportOpen] = useState(false);
   // Remount the account dialogs on every opening so they start from clean
   // inputs.
   const [dialogKey, setDialogKey] = useState(0);
@@ -75,6 +79,12 @@ function AppMenu({
   const refreshSpotifySession = () =>
     requestReply({ type: "get-spotify-session" }, (r) => {
       if ("connected" in r) setSpotifyConnected(r.connected);
+    });
+
+  const refreshBeatportSession = () =>
+    requestReply({ type: "get-beatport-session" }, (r) => {
+      if (r.type === "beatport-session" && "browser" in r)
+        setBeatportBrowser(r.browser);
     });
 
   const openDialog = (open: (v: boolean) => void) => {
@@ -89,7 +99,10 @@ function AppMenu({
         hasChevron={false}
         isMenuOpen={menuOpen}
         onOpenChange={(open) => {
-          if (open) refreshSpotifySession();
+          if (open) {
+            refreshSpotifySession();
+            refreshBeatportSession();
+          }
           setMenuOpen(open);
         }}
         menuWidth={240}
@@ -113,6 +126,12 @@ function AppMenu({
           label="YouTube"
           description={connectionLabel(youtubeConnected)}
           onClick={() => openDialog(setYoutubeOpen)}
+        />
+        <DropdownMenuItem
+          icon={<DiscIcon />}
+          label="Beatport"
+          description={connectionLabel(beatportBrowser !== null)}
+          onClick={() => openDialog(setBeatportOpen)}
         />
 
         <Divider />
@@ -156,6 +175,14 @@ function AppMenu({
         backfillMatched={spotifyBackfillMatched}
         backfillTotal={spotifyBackfillTotal}
         onBackfill={onSpotifyBackfill}
+      />
+      <BeatportSessionDialog
+        key={`beatport-${dialogKey}`}
+        isOpen={beatportOpen}
+        onOpenChange={setBeatportOpen}
+        browser={beatportBrowser}
+        setBrowser={setBeatportBrowser}
+        requestReply={requestReply}
       />
       <YouTubeSessionDialog
         key={`youtube-${dialogKey}`}

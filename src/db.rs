@@ -269,6 +269,26 @@ pub async fn existing_yt_ids(pool: &SqlitePool, yt_ids: &[String]) -> anyhow::Re
         .collect()
 }
 
+/// `(bp_id, artists, label)` of every track that has a Beatport id, so Beatport artist/label ids
+/// can be looked up via those tracks instead of Beatport's search.
+pub async fn get_bp_credits(
+    pool: &SqlitePool,
+) -> anyhow::Result<Vec<crate::scraper::BpTrackCredits>> {
+    let rows = sqlx::query("SELECT bp_id, artists, label FROM tracks WHERE bp_id IS NOT NULL")
+        .fetch_all(pool)
+        .await?;
+    rows.iter()
+        .map(|r| {
+            let artists: String = r.try_get("artists").unwrap_or_default();
+            Ok((
+                r.try_get("bp_id")?,
+                serde_json::from_str(&artists).unwrap_or_default(),
+                r.try_get("label").unwrap_or(None),
+            ))
+        })
+        .collect()
+}
+
 pub async fn get_all_yt_ids(pool: &SqlitePool) -> anyhow::Result<HashSet<String>> {
     let rows = sqlx::query("SELECT yt_id FROM tracks")
         .fetch_all(pool)

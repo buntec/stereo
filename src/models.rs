@@ -112,12 +112,14 @@ impl Track {
 
 // Scraper-internal types (not part of the public API)
 
+#[derive(Clone)]
 pub struct BPLabel {
     pub display_name: String,
     pub name: String,
     pub id: i64,
 }
 
+#[derive(Clone)]
 pub struct BPArtist {
     pub display_name: String,
     pub name: String,

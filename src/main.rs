@@ -231,6 +231,7 @@ async fn main() -> anyhow::Result<()> {
     let repos_dir = home.join("gitrepos");
     stereo_backend::utils::ensure_default_repo(&repos_dir).await?;
     stereo_backend::git::recover_pending_repositories(&repos_dir).await;
+    stereo_backend::beatport::init(&home).await;
 
     let settings = Arc::new(settings);
 

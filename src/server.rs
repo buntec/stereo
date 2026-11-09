@@ -21,7 +21,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
 use crate::{
-    db, git,
+    beatport, db, git,
     message::{MsgClient, MsgServer, SearchKind},
     models::{Collection, Track},
     scraper,
@@ -471,6 +471,21 @@ async fn send_collection_stats(state: &SessionState, tx: &mpsc::Sender<MsgServer
 }
 
 /// Merges two `ScoredName` lists into a deduplicated name list, preserving first-seen order.
+/// The open collection's Beatport tracks, letting artist/label searches resolve Beatport ids
+/// without Beatport's search. Empty without a collection; a failed read only costs that.
+async fn known_bp_tracks(state: &SessionState) -> scraper::KnownBpTracks {
+    let Some(pool) = state.pool() else {
+        return Default::default();
+    };
+    match db::get_bp_credits(pool).await {
+        Ok(tracks) => scraper::KnownBpTracks::new(tracks),
+        Err(e) => {
+            tracing::warn!("Reading the collection's Beatport tracks failed: {e}");
+            Default::default()
+        }
+    }
+}
+
 async fn send_git_status(tx: &mpsc::Sender<MsgServer>, report: git::SyncReport) {
     let _ = tx
         .send(MsgServer::GitSyncStatus {
@@ -857,6 +872,37 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 }
                 Err(e) => notify(tx, &format!("Failed to set Spotify session: {e}"), "error").await,
             }
+        }
+
+        MsgClient::GetBeatportSession { id } => {
+            let browser = beatport::connected_browser().await;
+            let _ = tx.send(MsgServer::BeatportSession { id, browser }).await;
+        }
+
+        MsgClient::ConnectBeatportSession { id, user_agent } => {
+            // Reading the browser's cookie store can block on an OS keychain prompt.
+            let tx = tx.clone();
+            let data_home = data_home.to_path_buf();
+            tokio::spawn(async move {
+                match beatport::connect(&data_home, user_agent).await {
+                    Ok(session) => {
+                        let browser = Some(session.browser);
+                        let _ = tx.send(MsgServer::BeatportSession { id, browser }).await;
+                    }
+                    Err(e) => {
+                        let message = format!("Could not connect Beatport: {e}");
+                        notify(&tx, &message, "error").await;
+                        reply_error(&tx, id, &message).await;
+                    }
+                }
+            });
+        }
+
+        MsgClient::DisconnectBeatportSession { id } => {
+            beatport::disconnect(data_home).await?;
+            let _ = tx
+                .send(MsgServer::BeatportSession { id, browser: None })
+                .await;
         }
 
         MsgClient::DetectSpotifySession { id } => {
@@ -1519,15 +1565,31 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 let tx2 = tx.clone();
                 let c = client.clone();
                 let limit = limit as usize;
+                let known_bp_tracks = match kind {
+                    SearchKind::Fuzzy => Default::default(),
+                    SearchKind::ByLabel | SearchKind::ByArtist => known_bp_tracks(state).await,
+                };
                 let handle = match kind {
                     SearchKind::Fuzzy => tokio::spawn(scraper::search_fuzzy(
                         c, tx2, query, query_id, limit, sources,
                     )),
                     SearchKind::ByLabel => tokio::spawn(scraper::search_by_label(
-                        c, tx2, query, query_id, limit, sources,
+                        c,
+                        tx2,
+                        query,
+                        query_id,
+                        limit,
+                        sources,
+                        known_bp_tracks,
                     )),
                     SearchKind::ByArtist => tokio::spawn(scraper::search_by_artist(
-                        c, tx2, query, query_id, limit, sources,
+                        c,
+                        tx2,
+                        query,
+                        query_id,
+                        limit,
+                        sources,
+                        known_bp_tracks,
                     )),
                 };
                 state.search_task = Some(handle);
@@ -1572,6 +1634,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 } else {
                     let tx2 = tx.clone();
                     let c = client.clone();
+                    let known_bp_tracks = known_bp_tracks(state).await;
                     let handle = tokio::spawn(scraper::search_new_releases(
                         c,
                         tx2,
@@ -1583,6 +1646,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                             labels,
                             existing_yt_ids,
                             sources,
+                            known_bp_tracks,
                         },
                     ));
                     state.search_task = Some(handle);

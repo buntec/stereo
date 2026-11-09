@@ -108,6 +108,12 @@ pub enum MsgServer {
         id: i64,
         connected: bool,
     },
+    /// Reply to the Beatport session requests: the browser the connected clearance came from,
+    /// or `None` when not connected.
+    BeatportSession {
+        id: i64,
+        browser: Option<String>,
+    },
     SpotifyPlaylist {
         id: i64,
         url: Option<String>,
@@ -401,6 +407,18 @@ pub enum MsgClient {
     DetectSpotifySession {
         id: i64,
     },
+    GetBeatportSession {
+        id: i64,
+    },
+    /// Imports Beatport's Cloudflare clearance from the browser the requesting tab runs in,
+    /// identified by that tab's `navigator.userAgent`.
+    ConnectBeatportSession {
+        id: i64,
+        user_agent: String,
+    },
+    DisconnectBeatportSession {
+        id: i64,
+    },
     CreateSpotifyPlaylist {
         id: i64,
         name: String,
@@ -515,6 +533,9 @@ impl MsgClient {
             | Self::GetSpotifySession { id }
             | Self::SetSpotifySession { id, .. }
             | Self::DetectSpotifySession { id }
+            | Self::GetBeatportSession { id }
+            | Self::ConnectBeatportSession { id, .. }
+            | Self::DisconnectBeatportSession { id }
             | Self::GetSpotifyPlaylistInfo { id, .. }
             | Self::GetYouTubePlaylist { id, .. }
             | Self::CloneRepo { id, .. }

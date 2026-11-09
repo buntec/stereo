@@ -81,6 +81,73 @@ fn to_url_slug(s: &str) -> String {
         .join("-")
 }
 
+/// Reads a response body, failing on a non-2xx status so that a blocked or failing source is
+/// reported to the client instead of silently yielding no results. Cloudflare's bot check is
+/// called out specifically, since it is the usual reason a scraped source suddenly goes dark.
+async fn response_text(resp: wreq::Response) -> anyhow::Result<String> {
+    let status = resp.status();
+    let challenged = resp
+        .headers()
+        .get("cf-mitigated")
+        .is_some_and(|v| v == "challenge");
+    let text = resp.text().await?;
+    if challenged || (status.as_u16() == 403 && text.contains("challenge-platform")) {
+        return Err(BotCheckBlocked(status).into());
+    }
+    anyhow::ensure!(status.is_success(), "request failed with HTTP {status}");
+    Ok(text)
+}
+
+/// A request was answered with Cloudflare's bot check instead of the page.
+#[derive(Debug)]
+struct BotCheckBlocked(wreq::StatusCode);
+
+impl std::fmt::Display for BotCheckBlocked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "request blocked by Cloudflare's bot check (HTTP {})",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for BotCheckBlocked {}
+
+async fn response_json(resp: wreq::Response) -> anyhow::Result<serde_json::Value> {
+    let text = response_text(resp).await?;
+    serde_json::from_str(&text).context("response is not valid JSON")
+}
+
+/// Fetches a Beatport page's embedded `__NEXT_DATA__` JSON, sending the browser clearance from
+/// [`crate::beatport`] when connected. A page without that JSON means Beatport changed its markup
+/// or served something other than the requested page, which is an error rather than "no
+/// results". A bot-check block says how to get past it, since only the user can.
+async fn bp_page<Q: serde::Serialize + ?Sized>(
+    client: &Client,
+    url: &str,
+    params: &Q,
+) -> anyhow::Result<serde_json::Value> {
+    let req = crate::beatport::authorize(client.get(url).query(params)).await;
+    let html = match response_text(req.send().await?).await {
+        Ok(html) => html,
+        Err(e) if e.is::<BotCheckBlocked>() => {
+            anyhow::bail!(match crate::beatport::connected_browser().await {
+                Some(browser) => format!(
+                    "{e}. The clearance imported from {browser} was rejected, probably because \
+                     it expired: run a search on beatport.com in {browser}, then reconnect \
+                     Beatport in Settings."
+                ),
+                None => format!(
+                    "{e}. Connect Beatport in Settings to search with your browser's clearance."
+                ),
+            })
+        }
+        Err(e) => return Err(e),
+    };
+    get_next_data(&html).context("page has no __NEXT_DATA__ (did Beatport change its markup?)")
+}
+
 fn get_next_data(html: &str) -> Option<serde_json::Value> {
     let doc = Html::parse_document(html);
     let sel = Selector::parse("script#__NEXT_DATA__").ok()?;
@@ -240,7 +307,7 @@ async fn shazam_id_for_track(client: &Client, track: &Track) -> anyhow::Result<i
     let apple_id = doc_select_first_apple_song_id(&html, &result_sel, &link_sel, &expected)
         .context("Apple Music search found no matching song")?;
     let mapping_url = format!("https://www.shazam.com/services/sd/s/a2st/US/en-US/{apple_id}");
-    let mapping: serde_json::Value = client.get(mapping_url).send().await?.json().await?;
+    let mapping = response_json(client.get(mapping_url).send().await?).await?;
     mapping
         .as_object()
         .and_then(|items| items.values().find_map(|value| value.as_str()))
@@ -290,17 +357,12 @@ pub async fn shazam_similar_tracks_for_track(
 
 pub async fn bp_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<BPTrack>> {
     tracing::info!("Beatport track search: {q}");
-    let resp = client
-        .get("https://www.beatport.com/search/tracks")
-        .query(&[("q", q), ("per_page", "1000"), ("page", "1")])
-        .send()
-        .await?;
-    let html = resp.text().await?;
-
-    let json = match get_next_data(&html) {
-        Some(j) => j,
-        None => return Ok(vec![]),
-    };
+    let json = bp_page(
+        client,
+        "https://www.beatport.com/search/tracks",
+        &[("q", q), ("per_page", "1000"), ("page", "1")],
+    )
+    .await?;
 
     let mut tracks = vec![];
     if let Some(queries) = json["props"]["pageProps"]["dehydratedState"]["queries"].as_array() {
@@ -404,16 +466,12 @@ pub async fn bp_search_labels(
     name: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<BPLabel>> {
-    let resp = client
-        .get("https://www.beatport.com/search/labels")
-        .query(&[("q", name)])
-        .send()
-        .await?;
-    let html = resp.text().await?;
-    let json = match get_next_data(&html) {
-        Some(j) => j,
-        None => return Ok(vec![]),
-    };
+    let json = bp_page(
+        client,
+        "https://www.beatport.com/search/labels",
+        &[("q", name)],
+    )
+    .await?;
 
     let mut labels = vec![];
     if let Some(queries) = json["props"]["pageProps"]["dehydratedState"]["queries"].as_array() {
@@ -448,16 +506,12 @@ pub async fn bp_search_artist(
     name: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<BPArtist>> {
-    let resp = client
-        .get("https://www.beatport.com/search/artists")
-        .query(&[("q", name)])
-        .send()
-        .await?;
-    let html = resp.text().await?;
-    let json = match get_next_data(&html) {
-        Some(j) => j,
-        None => return Ok(vec![]),
-    };
+    let json = bp_page(
+        client,
+        "https://www.beatport.com/search/artists",
+        &[("q", name)],
+    )
+    .await?;
 
     let mut artists = vec![];
     if let Some(queries) = json["props"]["pageProps"]["dehydratedState"]["queries"].as_array() {
@@ -495,13 +549,193 @@ pub async fn bp_search_artist(
     Ok(artists)
 }
 
-/// Finds the Beatport artist named `name`: the most relevant search result whose name actually
+/// Beatport track ids from the user's collection with the artists and label stored for them.
+/// Beatport's track pages (unlike its search) aren't behind its bot check and list the Beatport
+/// ids of a track's artists and label, so these let artist/label searches find names already in
+/// the collection without Beatport's search.
+#[derive(Clone, Default)]
+pub struct KnownBpTracks(Arc<Vec<BpTrackCredits>>);
+
+/// A collection track's `(bp_id, artists, label)`.
+pub type BpTrackCredits = (i64, Vec<String>, Option<String>);
+
+/// How many of a name's collection tracks to try before falling back to Beatport's search; one
+/// normally suffices, more only help if Beatport has since removed a track.
+const KNOWN_BP_TRACKS_TRIED: usize = 3;
+
+impl KnownBpTracks {
+    pub fn new(tracks: Vec<BpTrackCredits>) -> Self {
+        Self(Arc::new(tracks))
+    }
+
+    fn by_artist(&self, name: &str) -> Vec<i64> {
+        self.0
+            .iter()
+            .filter(|(_, artists, _)| artists.iter().any(|a| is_same_name(a, name)))
+            .map(|(id, _, _)| *id)
+            .take(KNOWN_BP_TRACKS_TRIED)
+            .collect()
+    }
+
+    fn on_label(&self, name: &str) -> Vec<i64> {
+        self.0
+            .iter()
+            .filter(|(_, _, label)| label.as_deref().is_some_and(|l| is_same_name(l, name)))
+            .map(|(id, _, _)| *id)
+            .take(KNOWN_BP_TRACKS_TRIED)
+            .collect()
+    }
+}
+
+/// Beatport artists and labels seen on track pages, keyed by normalized name, so each name costs
+/// at most one track-page fetch per process.
+static BP_ARTISTS: LazyLock<RwLock<HashMap<String, BPArtist>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+static BP_LABELS: LazyLock<RwLock<HashMap<String, BPLabel>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Reads a track page's artist and label credits and caches them in `BP_ARTISTS`/`BP_LABELS`.
+async fn bp_cache_track_credits(client: &Client, track_id: i64) -> anyhow::Result<()> {
+    let url = format!("https://www.beatport.com/track/track/{track_id}");
+    let json = bp_page(client, &url, &[] as &[(&str, &str)]).await?;
+    let key = format!("track-details-{track_id}");
+    let track = json["props"]["pageProps"]["dehydratedState"]["queries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|q| q["queryKey"][0].as_str() == Some(key.as_str()))
+        .map(|q| &q["state"]["data"])
+        .with_context(|| format!("no details on the page of Beatport track {track_id}"))?;
+    let (artists, label) = parse_bp_track_credits(track);
+    let mut cache = BP_ARTISTS.write().await;
+    for artist in artists {
+        cache.insert(
+            crate::utils::normalize_for_match(&artist.display_name),
+            artist,
+        );
+    }
+    drop(cache);
+    if let Some(label) = label {
+        BP_LABELS.write().await.insert(
+            crate::utils::normalize_for_match(&label.display_name),
+            label,
+        );
+    }
+    Ok(())
+}
+
+/// The artists and label of a track page's `track-details` query.
+fn parse_bp_track_credits(track: &serde_json::Value) -> (Vec<BPArtist>, Option<BPLabel>) {
+    let credit = |v: &serde_json::Value| {
+        Some((
+            v["id"].as_i64()?,
+            v["name"].as_str()?.trim().to_string(),
+            v["slug"].as_str().map(|s| s.trim().to_string()),
+        ))
+    };
+    let artists = track["artists"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(credit)
+        .map(|(id, display_name, slug)| BPArtist {
+            name: slug.unwrap_or_else(|| to_url_slug(&display_name)),
+            display_name,
+            id,
+            image_uri: String::new(),
+        })
+        .collect();
+    let label = credit(&track["label"]).map(|(id, display_name, slug)| BPLabel {
+        name: slug.unwrap_or_else(|| to_url_slug(&display_name)),
+        display_name,
+        id,
+    });
+    (artists, label)
+}
+
+/// A Beatport artist or label.
+trait BpCredit: Clone {
+    fn display_name(&self) -> &str;
+}
+
+impl BpCredit for BPArtist {
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+}
+
+impl BpCredit for BPLabel {
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+}
+
+/// Looks up `name` in a credits cache, matching names the way [`is_same_name`] does.
+async fn bp_cached<T: BpCredit>(cache: &RwLock<HashMap<String, T>>, name: &str) -> Option<T> {
+    cache
+        .read()
+        .await
+        .values()
+        .find(|v| is_same_name(v.display_name(), name))
+        .cloned()
+}
+
+/// Resolves `name` to a Beatport artist or label: first via the collection's tracks by that
+/// name (see [`KnownBpTracks`]), then via Beatport's search.
+async fn bp_find_credit<T: BpCredit>(
+    client: &Client,
+    name: &str,
+    known_tracks: Vec<i64>,
+    cache: &RwLock<HashMap<String, T>>,
+) -> Option<T> {
+    if let Some(found) = bp_cached(cache, name).await {
+        return Some(found);
+    }
+    for track_id in known_tracks {
+        if let Err(e) = bp_cache_track_credits(client, track_id).await {
+            tracing::warn!("Reading credits of Beatport track {track_id} failed: {e}");
+            continue;
+        }
+        if let Some(found) = bp_cached(cache, name).await {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Finds the Beatport artist named `name`, without Beatport's search if the collection has a
+/// Beatport track by them. Otherwise takes the most relevant search result whose name actually
 /// matches, rather than the top hit, which may only be a similar name.
-async fn bp_find_artist(client: &Client, name: &str) -> anyhow::Result<Option<BPArtist>> {
+async fn bp_find_artist(
+    client: &Client,
+    name: &str,
+    known: &KnownBpTracks,
+) -> anyhow::Result<Option<BPArtist>> {
+    if let Some(artist) = bp_find_credit(client, name, known.by_artist(name), &BP_ARTISTS).await {
+        return Ok(Some(artist));
+    }
     Ok(bp_search_artist(client, name, 10)
         .await?
         .into_iter()
-        .find(|a| is_same_artist(&a.display_name, name)))
+        .find(|a| is_same_name(&a.display_name, name)))
+}
+
+/// Finds the Beatport label named `name`, like [`bp_find_artist`]. Search results fall back to
+/// the top hit when none matches exactly, since label names vary more ("Defected" vs.
+/// "Defected Records").
+async fn bp_find_label(
+    client: &Client,
+    name: &str,
+    known: &KnownBpTracks,
+) -> anyhow::Result<Option<BPLabel>> {
+    if let Some(label) = bp_find_credit(client, name, known.on_label(name), &BP_LABELS).await {
+        return Ok(Some(label));
+    }
+    let labels = bp_search_labels(client, name, 10).await?;
+    let exact = labels
+        .iter()
+        .position(|l| is_same_name(&l.display_name, name));
+    Ok(labels.into_iter().nth(exact.unwrap_or(0)))
 }
 
 async fn bp_get_releases(
@@ -509,12 +743,7 @@ async fn bp_get_releases(
     url: &str,
     params: &[(&str, String)],
 ) -> anyhow::Result<Vec<BPTrack>> {
-    let resp = client.get(url).query(params).send().await?;
-    let html = resp.text().await?;
-    let json = match get_next_data(&html) {
-        Some(j) => j,
-        None => return Ok(vec![]),
-    };
+    let json = bp_page(client, url, params).await?;
 
     let mut tracks = vec![];
     if let Some(queries) = json["props"]["pageProps"]["dehydratedState"]["queries"].as_array() {
@@ -604,11 +833,8 @@ pub async fn bp_get_genre_top100(
 ) -> anyhow::Result<Vec<(usize, BPTrack)>> {
     let url = format!("https://www.beatport.com/genre/genre/{genre_id}/top-100");
     tracing::info!("Fetching Beatport top 100: {url}");
-    let html = client.get(&url).send().await?.text().await?;
-    get_next_data(&html)
-        .as_ref()
-        .and_then(parse_bp_top100)
-        .with_context(|| format!("no top-100 chart found for genre {genre_id}"))
+    let json = bp_page(client, &url, &[] as &[(&str, &str)]).await?;
+    parse_bp_top100(&json).with_context(|| format!("no top-100 chart found for genre {genre_id}"))
 }
 
 // ── SoundCloud ───────────────────────────────────────────────────────────────
@@ -625,12 +851,7 @@ fn extract_client_id(js: &str) -> Option<String> {
 }
 
 async fn fetch_sc_client_id(client: &Client) -> anyhow::Result<String> {
-    let html = client
-        .get("https://soundcloud.com/")
-        .send()
-        .await?
-        .text()
-        .await?;
+    let html = response_text(client.get("https://soundcloud.com/").send().await?).await?;
     let script_urls: Vec<String> = {
         let doc = Html::parse_document(&html);
         let sel = Selector::parse("script[src]").unwrap();
@@ -685,7 +906,7 @@ async fn sc_get(
             *SC_CLIENT_ID.write().await = None;
             continue;
         }
-        return Ok(resp.json::<serde_json::Value>().await?);
+        return response_json(resp).await;
     }
     anyhow::bail!("SoundCloud request failed after client_id refresh")
 }
@@ -809,9 +1030,7 @@ async fn sc_tracks_by_person(
     let user = if set_label {
         users.into_iter().next()
     } else {
-        users
-            .into_iter()
-            .find(|u| is_same_artist(&u.username, name))
+        users.into_iter().find(|u| is_same_name(&u.username, name))
     };
     let Some(user) = user else {
         return Ok(vec![]);
@@ -833,13 +1052,14 @@ static VL_GENRES: LazyLock<RwLock<Option<HashMap<i64, String>>>> =
     LazyLock::new(|| RwLock::new(None));
 
 async fn fetch_vl_genres(client: &Client) -> anyhow::Result<HashMap<i64, String>> {
-    let json: serde_json::Value = client
-        .get("https://volumo.com/api/v1/genres")
-        .header("Accept", "application/json")
-        .send()
-        .await?
-        .json()
-        .await?;
+    let json = response_json(
+        client
+            .get("https://volumo.com/api/v1/genres")
+            .header("Accept", "application/json")
+            .send()
+            .await?,
+    )
+    .await?;
     Ok(json
         .as_array()
         .into_iter()
@@ -917,7 +1137,7 @@ pub async fn vl_search_tracks(
             .send(),
         get_vl_genres(client),
     );
-    let json: serde_json::Value = resp?.json().await?;
+    let json = response_json(resp?).await?;
     let genres = genres.unwrap_or_else(|e| {
         tracing::warn!("Volumo genre list fetch failed: {e}");
         HashMap::new()
@@ -1021,7 +1241,7 @@ pub async fn tx_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<TX
         .query(&[("term", q)])
         .send()
         .await?;
-    let html = resp.text().await?;
+    let html = response_text(resp).await?;
     let doc = Html::parse_document(&html);
     let row_sel = Selector::parse("div.trk-row").unwrap();
     let tracks: Vec<TXTrack> = doc
@@ -1058,7 +1278,7 @@ fn parse_tx_top100(html: &str) -> Vec<(usize, TXTrack)> {
 pub async fn tx_get_top100(client: &Client) -> anyhow::Result<Vec<(usize, TXTrack)>> {
     let url = "https://www.traxsource.com/top/tracks";
     tracing::info!("Fetching Traxsource top 100: {url}");
-    let html = client.get(url).send().await?.text().await?;
+    let html = response_text(client.get(url).send().await?).await?;
     let chart = parse_tx_top100(&html);
     if chart.is_empty() {
         anyhow::bail!("no top-100 chart found on {url}");
@@ -2057,10 +2277,11 @@ fn source_results<T>(
     })
 }
 
-/// True if `candidate` is the artist `wanted`, ignoring case and punctuation. A Beatport-style
-/// disambiguator on the candidate ("Lucho (AR)") is ignored unless `wanted` carries one too, so a
-/// search for "Lucho" finds "Lucho (AR)" while "LuchQ" or "Lucho Salari" never match "Luch".
-fn is_same_artist(candidate: &str, wanted: &str) -> bool {
+/// True if `candidate` names the same artist (or label) as `wanted`, ignoring case and
+/// punctuation. A Beatport-style disambiguator on the candidate ("Lucho (AR)") is ignored unless
+/// `wanted` carries one too, so a search for "Lucho" finds "Lucho (AR)" while "LuchQ" or "Lucho
+/// Salari" never match "Luch".
+fn is_same_name(candidate: &str, wanted: &str) -> bool {
     let wanted = crate::utils::normalize_for_match(wanted);
     !wanted.is_empty()
         && (crate::utils::normalize_for_match(candidate) == wanted
@@ -2093,12 +2314,12 @@ fn mix_credits(mix: &str) -> Vec<String> {
 /// remixer. Sources without an artist-catalog endpoint return anything whose text resembles the
 /// query (prefix matches, track titles), which this filters out.
 fn credits_artist(artists: &[String], track_name: &str, mix_name: &str, wanted: &str) -> bool {
-    artists.iter().any(|a| is_same_artist(a, wanted))
+    artists.iter().any(|a| is_same_name(a, wanted))
         || [Some(mix_name.to_string()), extract_mix_tag(track_name)]
             .into_iter()
             .flatten()
             .flat_map(|mix| mix_credits(&mix))
-            .any(|name| is_same_artist(&name, wanted))
+            .any(|name| is_same_name(&name, wanted))
 }
 
 /// Tells the client which backends failed, so missing results aren't mistaken for "no matches".
@@ -2272,6 +2493,7 @@ pub async fn search_by_label(
     query_id: i64,
     limit: usize,
     sources: Vec<TrackSource>,
+    known_bp_tracks: KnownBpTracks,
 ) {
     run_search(&tx, query_id, "search_by_label", || async {
         let (bp_res, sc_res, vl_res, tx_res, sp_res) = tokio::join!(
@@ -2279,8 +2501,7 @@ pub async fn search_by_label(
                 if !sources.contains(&TrackSource::Beatport) {
                     return Ok(vec![]);
                 }
-                let labels = bp_search_labels(&client, &label_name, 1).await?;
-                match labels.into_iter().next() {
+                match bp_find_label(&client, &label_name, &known_bp_tracks).await? {
                     Some(label) => bp_get_label_releases(&client, &label, None).await,
                     None => Ok(vec![]),
                 }
@@ -2344,6 +2565,7 @@ pub async fn search_by_artist(
     query_id: i64,
     limit: usize,
     sources: Vec<TrackSource>,
+    known_bp_tracks: KnownBpTracks,
 ) {
     run_search(&tx, query_id, "search_by_artist", || async {
         let (bp_res, sc_res, vl_res, tx_res, sp_res) = tokio::join!(
@@ -2351,7 +2573,7 @@ pub async fn search_by_artist(
                 if !sources.contains(&TrackSource::Beatport) {
                     return Ok(vec![]);
                 }
-                match bp_find_artist(&client, &artist_name).await? {
+                match bp_find_artist(&client, &artist_name, &known_bp_tracks).await? {
                     Some(artist) => bp_get_artist_releases(&client, &artist, None).await,
                     None => Ok(vec![]),
                 }
@@ -2420,6 +2642,7 @@ async fn gather_new_release_raw_tracks(
     is_label: bool,
     cutoff: NaiveDate,
     sources: &[TrackSource],
+    known_bp_tracks: &KnownBpTracks,
 ) -> Vec<RawTrack> {
     let per_source_limit = 50;
     let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
@@ -2428,12 +2651,12 @@ async fn gather_new_release_raw_tracks(
                 return Ok(vec![]);
             }
             if is_label {
-                match bp_search_labels(client, name, 1).await?.into_iter().next() {
+                match bp_find_label(client, name, known_bp_tracks).await? {
                     Some(label) => bp_get_label_releases(client, &label, Some(cutoff)).await,
                     None => Ok(vec![]),
                 }
             } else {
-                match bp_find_artist(client, name).await? {
+                match bp_find_artist(client, name, known_bp_tracks).await? {
                     Some(artist) => bp_get_artist_releases(client, &artist, Some(cutoff)).await,
                     None => Ok(vec![]),
                 }
@@ -2582,6 +2805,7 @@ pub struct NewReleasesQuery {
     pub labels: Vec<String>,
     pub existing_yt_ids: HashSet<String>,
     pub sources: Vec<TrackSource>,
+    pub known_bp_tracks: KnownBpTracks,
 }
 
 /// Searches for recent releases by the collection's top artists and labels, streaming matches
@@ -2601,6 +2825,7 @@ pub async fn search_new_releases(
         labels,
         existing_yt_ids,
         sources,
+        known_bp_tracks,
     } = q;
     let limit = limit.min(NEW_RELEASES_MAX_LIMIT);
     run_search(&tx, query_id, "search_new_releases", || async {
@@ -2615,8 +2840,17 @@ pub async fn search_new_releases(
             .map(|(name, is_label)| {
                 let client = client.clone();
                 let sources = sources.clone();
+                let known_bp_tracks = known_bp_tracks.clone();
                 async move {
-                    gather_new_release_raw_tracks(&client, &name, is_label, cutoff, &sources).await
+                    gather_new_release_raw_tracks(
+                        &client,
+                        &name,
+                        is_label,
+                        cutoff,
+                        &sources,
+                        &known_bp_tracks,
+                    )
+                    .await
                 }
             })
             .buffer_unordered(NEW_RELEASES_CONCURRENCY)
@@ -2852,20 +3086,63 @@ mod remix_match_tests {
     }
 
     #[test]
+    fn parses_track_page_credits() {
+        let track = serde_json::json!({
+            "artists": [
+                { "id": 6223, "name": "Riton", "type": "Artist", "slug": "riton" },
+                { "id": 168391, "name": "Kid Enigma", "slug": "kid-enigma" },
+                { "name": "no id" },
+            ],
+            "label": { "id": 59027, "name": "Ministry of Sound Recordings" },
+        });
+        let (artists, label) = parse_bp_track_credits(&track);
+        let artists: Vec<_> = artists
+            .iter()
+            .map(|a| (a.id, a.display_name.as_str(), a.name.as_str()))
+            .collect();
+        assert_eq!(
+            artists,
+            [
+                (6223, "Riton", "riton"),
+                (168391, "Kid Enigma", "kid-enigma")
+            ]
+        );
+        let label = label.unwrap();
+        assert_eq!(label.id, 59027);
+        assert_eq!(label.name, "ministry-of-sound-recordings");
+    }
+
+    #[test]
+    fn known_bp_tracks_match_names_like_searches() {
+        let known = KnownBpTracks::new(vec![
+            (1, vec!["LuchQ".into()], Some("Defected".into())),
+            (
+                2,
+                vec!["Bedouin".into(), "Luch".into()],
+                Some("Crosstown Rebels".into()),
+            ),
+            (3, vec!["luch".into()], None),
+        ]);
+        assert_eq!(known.by_artist("Luch"), [2, 3]);
+        assert_eq!(known.on_label("crosstown rebels"), [2]);
+        assert!(known.on_label("Defected Records").is_empty());
+    }
+
+    #[test]
     fn same_artist_requires_the_whole_name() {
-        assert!(is_same_artist("Luch", "luch"));
-        assert!(is_same_artist("LUCH", "Luch"));
-        assert!(!is_same_artist("LuchQ", "Luch"));
-        assert!(!is_same_artist("LUCH!Q", "Luch"));
-        assert!(!is_same_artist("Lucho Salari", "Luch"));
-        assert!(!is_same_artist("Lucho (AR)", "Luch"));
+        assert!(is_same_name("Luch", "luch"));
+        assert!(is_same_name("LUCH", "Luch"));
+        assert!(!is_same_name("LuchQ", "Luch"));
+        assert!(!is_same_name("LUCH!Q", "Luch"));
+        assert!(!is_same_name("Lucho Salari", "Luch"));
+        assert!(!is_same_name("Lucho (AR)", "Luch"));
     }
 
     #[test]
     fn same_artist_ignores_disambiguator_unless_searched_for() {
-        assert!(is_same_artist("Lucho (AR)", "Lucho"));
-        assert!(is_same_artist("Lucho (AR)", "Lucho (AR)"));
-        assert!(!is_same_artist("Lucho (VE)", "Lucho (AR)"));
+        assert!(is_same_name("Lucho (AR)", "Lucho"));
+        assert!(is_same_name("Lucho (AR)", "Lucho (AR)"));
+        assert!(!is_same_name("Lucho (VE)", "Lucho (AR)"));
     }
 
     #[test]

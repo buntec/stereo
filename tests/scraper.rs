@@ -245,6 +245,7 @@ async fn test_search_by_label() {
         1,
         3,
         all_sources(),
+        Default::default(),
     ));
 
     let mut tracks = vec![];
@@ -279,6 +280,7 @@ async fn test_search_by_artist() {
         1,
         3,
         all_sources(),
+        Default::default(),
     ));
 
     let mut tracks = vec![];

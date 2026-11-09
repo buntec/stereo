@@ -167,6 +167,9 @@ export type ClientMsg =
   | { type: "get-spotify-session"; id?: number }
   | { type: "set-spotify-session"; id?: number; cookie: string | null }
   | { type: "detect-spotify-session"; id?: number }
+  | { type: "get-beatport-session"; id?: number }
+  | { type: "connect-beatport-session"; id?: number; user_agent: string }
+  | { type: "disconnect-beatport-session"; id?: number }
   | {
       type: "create-spotify-playlist";
       id?: number;
@@ -271,6 +274,7 @@ export type ServerMsg =
       retryable: boolean;
     }
   | { type: "spotify-session"; id: number; connected: boolean }
+  | { type: "beatport-session"; id: number; browser: string | null }
   | {
       type: "spotify-playlist";
       id: number;
