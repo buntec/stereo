@@ -41,8 +41,9 @@ function BeatportSessionDialog({
         setConnecting(false);
         onReply(r);
       },
-      // Reading the browser's cookies may wait on an OS keychain prompt.
-      60000,
+      // Reading the browser's cookies may wait on an OS keychain prompt, and
+      // each clearance found is then tried with a Beatport search.
+      120000,
     );
   };
 

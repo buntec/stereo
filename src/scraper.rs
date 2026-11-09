@@ -148,6 +148,31 @@ async fn bp_page<Q: serde::Serialize + ?Sized>(
     get_next_data(&html).context("page has no __NEXT_DATA__ (did Beatport change its markup?)")
 }
 
+/// Whether Beatport's search lets a request with this `Cookie` header and User-Agent past its bot
+/// check. Fails when that can't be told, e.g. because Beatport is unreachable.
+pub async fn bp_clearance_works(
+    client: &Client,
+    cookie: &str,
+    user_agent: &str,
+) -> anyhow::Result<bool> {
+    let req = client
+        .get(crate::beatport::SEARCH_URL)
+        .query(&[("q", "stereo"), ("per_page", "1")])
+        .header("Cookie", cookie)
+        .header("User-Agent", user_agent);
+    match response_text(req.send().await?).await {
+        Ok(html) => {
+            anyhow::ensure!(
+                get_next_data(&html).is_some(),
+                "Beatport's search page has no __NEXT_DATA__ (did Beatport change its markup?)"
+            );
+            Ok(true)
+        }
+        Err(e) if e.is::<BotCheckBlocked>() => Ok(false),
+        Err(e) => Err(e.context("checking the clearance with a Beatport search failed")),
+    }
+}
+
 fn get_next_data(html: &str) -> Option<serde_json::Value> {
     let doc = Html::parse_document(html);
     let sel = Selector::parse("script#__NEXT_DATA__").ok()?;

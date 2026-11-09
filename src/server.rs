@@ -882,11 +882,11 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         MsgClient::ConnectBeatportSession { id, user_agent } => {
             // Reading the browser's cookie store can block on an OS keychain prompt.
             let tx = tx.clone();
+            let client = client.clone();
             let data_home = data_home.to_path_buf();
             tokio::spawn(async move {
-                match beatport::connect(&data_home, user_agent).await {
-                    Ok(session) => {
-                        let browser = Some(session.browser);
+                match beatport::connect(&client, &data_home, user_agent).await {
+                    Ok(browser) => {
                         let _ = tx.send(MsgServer::BeatportSession { id, browser }).await;
                     }
                     Err(e) => {

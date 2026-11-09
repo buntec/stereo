@@ -3616,6 +3616,7 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
+ "glob",
  "regex",
  "rookie",
  "rust-embed",
