@@ -495,6 +495,15 @@ pub async fn bp_search_artist(
     Ok(artists)
 }
 
+/// Finds the Beatport artist named `name`: the most relevant search result whose name actually
+/// matches, rather than the top hit, which may only be a similar name.
+async fn bp_find_artist(client: &Client, name: &str) -> anyhow::Result<Option<BPArtist>> {
+    Ok(bp_search_artist(client, name, 10)
+        .await?
+        .into_iter()
+        .find(|a| is_same_artist(&a.display_name, name)))
+}
+
 async fn bp_get_releases(
     client: &Client,
     url: &str,
@@ -792,7 +801,19 @@ async fn sc_tracks_by_person(
     limit: usize,
     set_label: bool,
 ) -> anyhow::Result<Vec<SCTrack>> {
-    let Some(user) = sc_search_users(client, name, 1).await?.into_iter().next() else {
+    // For artists, take the first account actually named `name` rather than the top hit, which
+    // may just be a similar name (searching "Luch" also returns "LUCH!Q"). Label accounts are
+    // often named differently from the label itself ("Defected" for "Defected Records"), so
+    // label lookups keep the top hit.
+    let users = sc_search_users(client, name, if set_label { 1 } else { 10 }).await?;
+    let user = if set_label {
+        users.into_iter().next()
+    } else {
+        users
+            .into_iter()
+            .find(|u| is_same_artist(&u.username, name))
+    };
+    let Some(user) = user else {
         return Ok(vec![]);
     };
     let mut tracks = sc_get_user_tracks(client, user.id, limit).await?;
@@ -2036,6 +2057,50 @@ fn source_results<T>(
     })
 }
 
+/// True if `candidate` is the artist `wanted`, ignoring case and punctuation. A Beatport-style
+/// disambiguator on the candidate ("Lucho (AR)") is ignored unless `wanted` carries one too, so a
+/// search for "Lucho" finds "Lucho (AR)" while "LuchQ" or "Lucho Salari" never match "Luch".
+fn is_same_artist(candidate: &str, wanted: &str) -> bool {
+    let wanted = crate::utils::normalize_for_match(wanted);
+    !wanted.is_empty()
+        && (crate::utils::normalize_for_match(candidate) == wanted
+            || crate::utils::normalize_for_match(&crate::utils::strip_artist_disambiguators(
+                candidate,
+            )) == wanted)
+}
+
+/// The remixer names credited by a mix tag, e.g. "Luch & Nils Hoffmann Remix" ->
+/// ["Luch", "Nils Hoffmann"]. Everything from the first mix keyword on is dropped.
+fn mix_credits(mix: &str) -> Vec<String> {
+    let mut names = vec![];
+    for word in mix.split_whitespace() {
+        let bare: String = word.chars().filter(|c| c.is_alphanumeric()).collect();
+        if MIX_KEYWORDS.contains(&bare.to_lowercase().as_str()) {
+            break;
+        }
+        names.push(word);
+    }
+    names
+        .join(" ")
+        .split([',', '&'])
+        .flat_map(|s| s.split(" and ").flat_map(|s| s.split(" x ")))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// True if a track found via plain-text search actually credits `wanted`, as an artist or as a
+/// remixer. Sources without an artist-catalog endpoint return anything whose text resembles the
+/// query (prefix matches, track titles), which this filters out.
+fn credits_artist(artists: &[String], track_name: &str, mix_name: &str, wanted: &str) -> bool {
+    artists.iter().any(|a| is_same_artist(a, wanted))
+        || [Some(mix_name.to_string()), extract_mix_tag(track_name)]
+            .into_iter()
+            .flatten()
+            .flat_map(|mix| mix_credits(&mix))
+            .any(|name| is_same_artist(&name, wanted))
+}
+
 /// Tells the client which backends failed, so missing results aren't mistaken for "no matches".
 async fn report_source_failures(tx: &mpsc::Sender<MsgServer>, failures: &[String]) {
     if failures.is_empty() {
@@ -2286,8 +2351,7 @@ pub async fn search_by_artist(
                 if !sources.contains(&TrackSource::Beatport) {
                     return Ok(vec![]);
                 }
-                let artists = bp_search_artist(&client, &artist_name, 1).await?;
-                match artists.into_iter().next() {
+                match bp_find_artist(&client, &artist_name).await? {
                     Some(artist) => bp_get_artist_releases(&client, &artist, None).await,
                     None => Ok(vec![]),
                 }
@@ -2327,10 +2391,13 @@ pub async fn search_by_artist(
         let mut failures = Vec::new();
         let bp_tracks = source_results(bp_res, "Beatport", "artist search", &mut failures);
         let sc_tracks = source_results(sc_res, "SoundCloud", "artist search", &mut failures);
-        let vl_tracks = source_results(vl_res, "Volumo", "artist search", &mut failures);
-        let tx_tracks = source_results(tx_res, "Traxsource", "artist search", &mut failures);
-        let sp_tracks = source_results(sp_res, "Spotify", "artist search", &mut failures);
+        let mut vl_tracks = source_results(vl_res, "Volumo", "artist search", &mut failures);
+        let mut tx_tracks = source_results(tx_res, "Traxsource", "artist search", &mut failures);
+        let mut sp_tracks = source_results(sp_res, "Spotify", "artist search", &mut failures);
         report_source_failures(&tx, &failures).await;
+        vl_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, &t.mix_name, &artist_name));
+        tx_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, &t.mix_name, &artist_name));
+        sp_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, "", &artist_name));
         stream_raw_tracks(
             &client,
             &tx,
@@ -2366,7 +2433,7 @@ async fn gather_new_release_raw_tracks(
                     None => Ok(vec![]),
                 }
             } else {
-                match bp_search_artist(client, name, 1).await?.into_iter().next() {
+                match bp_find_artist(client, name).await? {
                     Some(artist) => bp_get_artist_releases(client, &artist, Some(cutoff)).await,
                     None => Ok(vec![]),
                 }
@@ -2424,6 +2491,7 @@ async fn gather_new_release_raw_tracks(
         })
         .into_iter()
         .filter(|t| in_range(t.release_date))
+        .filter(|t| is_label || credits_artist(&t.artists, &t.track_name, &t.mix_name, name))
         .collect();
     let tx_tracks: Vec<TXTrack> = tx_res
         .unwrap_or_else(|e| {
@@ -2432,6 +2500,7 @@ async fn gather_new_release_raw_tracks(
         })
         .into_iter()
         .filter(|t| in_range(t.release_date))
+        .filter(|t| is_label || credits_artist(&t.artists, &t.track_name, &t.mix_name, name))
         .collect();
 
     bp_tracks
@@ -2780,6 +2849,59 @@ mod remix_match_tests {
         let other_remix = video("Aquarius Heaven - Just Like Magic (Other Artist Remix)");
         assert!(match_score(&raw, &matching_remix).total > match_score(&raw, &original).total);
         assert!(match_score(&raw, &matching_remix).total > match_score(&raw, &other_remix).total);
+    }
+
+    #[test]
+    fn same_artist_requires_the_whole_name() {
+        assert!(is_same_artist("Luch", "luch"));
+        assert!(is_same_artist("LUCH", "Luch"));
+        assert!(!is_same_artist("LuchQ", "Luch"));
+        assert!(!is_same_artist("LUCH!Q", "Luch"));
+        assert!(!is_same_artist("Lucho Salari", "Luch"));
+        assert!(!is_same_artist("Lucho (AR)", "Luch"));
+    }
+
+    #[test]
+    fn same_artist_ignores_disambiguator_unless_searched_for() {
+        assert!(is_same_artist("Lucho (AR)", "Lucho"));
+        assert!(is_same_artist("Lucho (AR)", "Lucho (AR)"));
+        assert!(!is_same_artist("Lucho (VE)", "Lucho (AR)"));
+    }
+
+    #[test]
+    fn credits_artist_as_artist_or_remixer() {
+        let artists = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(credits_artist(
+            &artists(&["Bedouin", "Luch"]),
+            "The Only One",
+            "",
+            "Luch"
+        ));
+        assert!(credits_artist(
+            &artists(&["Nils Hoffmann"]),
+            "Everlight (Luch Remix)",
+            "",
+            "Luch"
+        ));
+        assert!(credits_artist(
+            &artists(&["Nils Hoffmann"]),
+            "Everlight",
+            "Luch & Someone Else Extended Remix",
+            "Luch"
+        ));
+        assert!(!credits_artist(
+            &artists(&["Gol'man"]),
+            "Luch",
+            "Original Mix",
+            "Luch"
+        ));
+        assert!(!credits_artist(&artists(&["LuchQ"]), "Energy", "", "Luch"));
+        assert!(!credits_artist(
+            &artists(&["St.Ego", "Lucho (AR)"]),
+            "Choice (Lucho AR Remix)",
+            "",
+            "Luch"
+        ));
     }
 
     #[test]
