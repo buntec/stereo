@@ -15,6 +15,26 @@
   min-width: 0;
 }
 
+/* Account buttons in the nav bar: brand color when connected, muted otherwise. */
+.stereo-app {
+  --stereo-brand-youtube: #ff0000;
+  --stereo-brand-spotify: #1ed760;
+  --stereo-brand-beatport: #01ff95;
+}
+.account-button svg {
+  color: var(--color-text-secondary);
+  transition: color var(--duration-medium) var(--ease-standard);
+}
+.account-youtube[data-connected="true"] svg {
+  color: var(--stereo-brand-youtube);
+}
+.account-spotify[data-connected="true"] svg {
+  color: var(--stereo-brand-spotify);
+}
+.account-beatport[data-connected="true"] svg {
+  color: var(--stereo-brand-beatport);
+}
+
 @media (max-width: 48rem) {
   .header-search {
     order: 1;
