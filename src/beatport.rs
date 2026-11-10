@@ -9,18 +9,16 @@
 //! be told for sure (Chromium-based browsers share Chrome's User-Agent, and each profile has its
 //! own store), so each candidate clearance is tried with a Beatport search before one is kept.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::LazyLock,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{path::Path, sync::LazyLock};
 
-use rookie::enums::Cookie;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use wreq::{Client, RequestBuilder};
 
-use crate::{scraper, utils};
+use crate::{
+    browser_cookies::{self, browsers_for, Browser, Cookie},
+    scraper, utils,
+};
 
 const BEATPORT_SESSION_FILE: &str = "beatport_session.json";
 
@@ -190,73 +188,6 @@ async fn commit(
     Ok(Some(browser))
 }
 
-/// A browser Stereo can read cookies from, by its name in rookie's browser config.
-#[derive(Clone, Copy)]
-struct Browser {
-    /// Shown to the user.
-    name: &'static str,
-    engine: Engine,
-}
-
-#[derive(Clone, Copy)]
-enum Engine {
-    Chromium(&'static str),
-    Firefox(&'static str),
-    #[cfg(target_os = "macos")]
-    Safari,
-}
-
-const fn chromium(name: &'static str, config: &'static str) -> Browser {
-    Browser {
-        name,
-        engine: Engine::Chromium(config),
-    }
-}
-
-const fn firefox(name: &'static str, config: &'static str) -> Browser {
-    Browser {
-        name,
-        engine: Engine::Firefox(config),
-    }
-}
-
-/// The browsers whose User-Agent looks like `user_agent`. Several Chromium-based browsers
-/// (Brave, Arc, Vivaldi) send exactly Chrome's User-Agent, so all of them are candidates.
-fn browsers_for(user_agent: &str) -> Vec<Browser> {
-    if user_agent.contains("Firefox/") {
-        vec![
-            firefox("Firefox", "firefox"),
-            firefox("Zen", "zen"),
-            firefox("LibreWolf", "librewolf"),
-        ]
-    } else if user_agent.contains("Edg/") {
-        vec![chromium("Edge", "edge")]
-    } else if user_agent.contains("OPR/") {
-        vec![chromium("Opera", "opera"), chromium("Opera GX", "opera_gx")]
-    } else if user_agent.contains("Chrome/") {
-        vec![
-            chromium("Chrome", "chrome"),
-            chromium("Brave", "brave"),
-            chromium("Arc", "arc"),
-            chromium("Vivaldi", "vivaldi"),
-            chromium("Chromium", "chromium"),
-        ]
-    } else if user_agent.contains("Safari/") {
-        #[cfg(target_os = "macos")]
-        return vec![Browser {
-            name: "Safari",
-            engine: Engine::Safari,
-        }];
-        #[cfg(not(target_os = "macos"))]
-        vec![]
-    } else {
-        vec![]
-    }
-}
-
-/// The cookies read from one browser profile, or why they couldn't be.
-type CookieRead = Result<Vec<Cookie>, String>;
-
 /// A clearance found in one browser profile.
 struct Clearance {
     /// The browser, plus the profile when the browser has several.
@@ -268,55 +199,18 @@ struct Clearance {
 /// The clearances in all of `browser`'s profiles, freshest first since the one the user just
 /// earned is the likeliest to work, plus a description of each profile that couldn't be read.
 fn read_clearances(browser: Browser) -> (Vec<Clearance>, Vec<String>) {
-    let domains = || Some(vec!["beatport.com".to_string()]);
-    let stores: Vec<(Option<String>, CookieRead)> = match browser.engine {
-        Engine::Chromium(config) => existing_paths(config)
-            .into_iter()
-            .filter(|db| db.is_file())
-            .map(|db| {
-                (
-                    chromium_profile_name(&db),
-                    read_chromium(config, db, domains()),
-                )
-            })
-            .collect(),
-        Engine::Firefox(config) => firefox_cookie_dbs(config)
-            .into_iter()
-            .map(|db| {
-                // Profile directories are named "<random>.<profile name>".
-                let profile = db.parent().and_then(|dir| dir.file_name()).map(|dir| {
-                    let dir = dir.to_string_lossy();
-                    dir.split_once('.')
-                        .map_or(&*dir, |(_, name)| name)
-                        .to_string()
-                });
-                let cookies = rookie::firefox_based(db, domains()).map_err(|e| e.to_string());
-                (profile, cookies)
-            })
-            .collect(),
-        #[cfg(target_os = "macos")]
-        Engine::Safari => vec![(None, rookie::safari(domains()).map_err(|e| e.to_string()))],
-    };
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let several = stores.len() > 1;
+    let now = browser_cookies::now();
     let mut clearances = vec![];
     let mut errors = vec![];
-    for (profile, cookies) in stores {
-        let source = match profile {
-            Some(profile) if several => format!("{} ({profile})", browser.name),
-            _ => browser.name.to_string(),
-        };
-        match cookies {
+    for profile in browser_cookies::profiles(browser) {
+        match browser_cookies::read(&profile.store, "beatport.com") {
             Ok(cookies) => {
                 if let Some((cookie, expires)) = search_clearance(cookies, now) {
+                    let source = profile.source;
                     clearances.push((expires, Clearance { source, cookie }));
                 }
             }
-            Err(e) => errors.push(format!("{source}: {e}")),
+            Err(e) => errors.push(format!("{}: {e}", profile.source)),
         }
     }
     clearances.sort_by_key(|(expires, _)| std::cmp::Reverse(*expires));
@@ -325,201 +219,23 @@ fn read_clearances(browser: Browser) -> (Vec<Clearance>, Vec<String>) {
 
 /// The `Cookie` header a browser holding `cookies` would send to Beatport's search, limited to
 /// Cloudflare's unexpired cookies, together with the clearance's expiry; `None` without a
-/// clearance among them. rookie's domain filter is a substring match, so `cookies` can also hold
-/// cookies of other Beatport hosts and of unrelated domains merely containing "beatport.com",
-/// which are left out the way the browser would. Of several applicable cookies with the same
-/// name, only the most specific one is kept, so the header never offers Cloudflare a choice.
+/// clearance among them. `cookies` can also hold cookies of other Beatport hosts and of unrelated
+/// domains merely containing "beatport.com", which are left out the way the browser would. Of
+/// several applicable cookies with the same name, only the most specific one is kept, so the
+/// header never offers Cloudflare a choice.
 fn search_clearance(cookies: Vec<Cookie>, now: u64) -> Option<(String, u64)> {
-    let specificity = |c: &Cookie| {
-        (
-            c.path.len(),
-            c.domain.trim_start_matches('.').len(),
-            c.expires.unwrap_or(u64::MAX),
-        )
-    };
-    let mut chosen: Vec<Cookie> = vec![];
-    for cookie in cookies {
-        if !CLOUDFLARE_COOKIES.contains(&cookie.name.as_str())
-            || cookie.expires.is_some_and(|e| e <= now)
-            || !applies_to_search(&cookie)
-        {
-            continue;
-        }
-        match chosen.iter_mut().find(|c| c.name == cookie.name) {
-            Some(c) if specificity(&cookie) > specificity(c) => *c = cookie,
-            Some(_) => {}
-            None => chosen.push(cookie),
-        }
-    }
+    let chosen: Vec<Cookie> = browser_cookies::sent_to(cookies, SEARCH_HOST, SEARCH_PATH, now)
+        .into_iter()
+        .filter(|c| CLOUDFLARE_COOKIES.contains(&c.name.as_str()))
+        .collect();
     let clearance = chosen.iter().find(|c| c.name == "cf_clearance")?;
     let expires = clearance.expires.unwrap_or(u64::MAX);
-    let header = chosen
-        .iter()
-        .map(|c| format!("{}={}", c.name, c.value))
-        .collect::<Vec<_>>()
-        .join("; ");
-    Some((header, expires))
-}
-
-/// Whether a browser sends `cookie` to Beatport's search, by RFC 6265 domain and path matching.
-/// A domain with a leading dot covers its subdomains; one without is host-only, as browsers
-/// store them.
-fn applies_to_search(cookie: &Cookie) -> bool {
-    let domain = cookie.domain.to_ascii_lowercase();
-    let domain_matches = match domain.strip_prefix('.') {
-        Some(parent) => {
-            SEARCH_HOST == parent
-                || SEARCH_HOST
-                    .strip_suffix(parent)
-                    .is_some_and(|sub| sub.ends_with('.'))
-        }
-        None => SEARCH_HOST == domain,
-    };
-    let path = if cookie.path.is_empty() {
-        "/"
-    } else {
-        cookie.path.as_str()
-    };
-    let path_matches = SEARCH_PATH
-        .strip_prefix(path)
-        .is_some_and(|rest| rest.is_empty() || path.ends_with('/') || rest.starts_with('/'));
-    domain_matches && path_matches
-}
-
-/// The existing files or directories matching rookie's path patterns for browser `config`.
-/// rookie itself only reads the first, which for Chromium browsers is the `Default` profile even
-/// when the user browses in another one, so profiles are enumerated here instead.
-fn existing_paths(config: &str) -> Vec<PathBuf> {
-    let config = rookie::config::get_browser_config(config);
-    let channels = config
-        .channels
-        .clone()
-        .unwrap_or_else(|| vec![String::new()]);
-    let mut paths = vec![];
-    for pattern in &config.paths {
-        for channel in &channels {
-            let Some(pattern) = expand_path(&pattern.replace("{channel}", channel)) else {
-                continue;
-            };
-            let Ok(matches) = glob::glob(&pattern) else {
-                continue;
-            };
-            for path in matches.flatten() {
-                if path.exists() && !paths.contains(&path) {
-                    paths.push(path);
-                }
-            }
-        }
-    }
-    paths
-}
-
-/// The cookie databases of all profiles of the Firefox-based browser `config`.
-fn firefox_cookie_dbs(config: &str) -> Vec<PathBuf> {
-    let mut dbs = vec![];
-    for dir in existing_paths(config) {
-        let dir = glob::Pattern::escape(&dir.to_string_lossy());
-        for pattern in [
-            format!("{dir}/*/cookies.sqlite"),
-            format!("{dir}/Profiles/*/cookies.sqlite"),
-        ] {
-            let Ok(matches) = glob::glob(&pattern) else {
-                continue;
-            };
-            for db in matches.flatten() {
-                if db.is_file() && !dbs.contains(&db) {
-                    dbs.push(db);
-                }
-            }
-        }
-    }
-    dbs
-}
-
-/// Expands the home directory placeholders in rookie's path patterns, escaping their values so
-/// they match literally.
-#[cfg(unix)]
-fn expand_path(pattern: &str) -> Option<String> {
-    let home = glob::Pattern::escape(&std::env::var("HOME").ok()?);
-    Some(pattern.replace('~', &home).replace("$HOME", &home))
-}
-
-#[cfg(windows)]
-fn expand_path(pattern: &str) -> Option<String> {
-    let mut pattern = pattern.to_string();
-    for var in ["APPDATA", "LOCALAPPDATA"] {
-        let placeholder = format!("%{var}%");
-        if pattern.contains(&placeholder) {
-            let value = glob::Pattern::escape(&std::env::var(var).ok()?);
-            pattern = pattern.replace(&placeholder, &value);
-        }
-    }
-    Some(pattern)
-}
-
-/// The `Local State` file of the Chromium user data dir holding cookie database `db`, found the
-/// way rookie finds it.
-fn local_state(db: &Path) -> Option<PathBuf> {
-    let dir = db.parent()?;
-    ["../../Local State", "../Local State", "Local State"]
-        .iter()
-        .map(|p| dir.join(p))
-        .find(|p| p.is_file())
-}
-
-/// The name the user gave the Chromium profile holding cookie database `db`, falling back to the
-/// profile's directory name.
-fn chromium_profile_name(db: &Path) -> Option<String> {
-    let mut dir = db.parent()?;
-    if dir.file_name().is_some_and(|name| name == "Network") {
-        dir = dir.parent()?;
-    }
-    let dir_name = dir.file_name()?.to_str()?;
-    let name = local_state(db)
-        .and_then(|path| std::fs::read(path).ok())
-        .and_then(|data| serde_json::from_slice::<serde_json::Value>(&data).ok())
-        .and_then(|state| {
-            state["profile"]["info_cache"][dir_name]["name"]
-                .as_str()
-                .map(str::to_string)
-        });
-    Some(name.unwrap_or_else(|| dir_name.to_string()))
-}
-
-#[cfg(unix)]
-fn read_chromium(config: &str, db: PathBuf, domains: Option<Vec<String>>) -> CookieRead {
-    rookie::chromium_based(rookie::config::get_browser_config(config), db, domains)
-        .map_err(|e| e.to_string())
-}
-
-#[cfg(windows)]
-fn read_chromium(_config: &str, db: PathBuf, domains: Option<Vec<String>>) -> CookieRead {
-    let key = local_state(&db).ok_or("no Local State file found next to its cookies")?;
-    rookie::chromium_based(key, db, domains).map_err(|e| e.to_string())
+    Some((browser_cookies::header(&chosen), expires))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn names(user_agent: &str) -> Vec<&'static str> {
-        browsers_for(user_agent)
-            .into_iter()
-            .map(|b| b.name)
-            .collect()
-    }
-
-    #[test]
-    fn picks_browsers_by_user_agent() {
-        let chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
-                      (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36";
-        assert_eq!(names(chrome)[0], "Chrome");
-        assert_eq!(names(&format!("{chrome} Edg/157.0.0.0")), ["Edge"]);
-        assert_eq!(
-            names("Mozilla/5.0 (Macintosh; rv:151.0) Gecko/20100101 Firefox/151.0")[0],
-            "Firefox"
-        );
-    }
 
     fn cookie(domain: &str, path: &str, name: &str, value: &str, expires: Option<u64>) -> Cookie {
         Cookie {

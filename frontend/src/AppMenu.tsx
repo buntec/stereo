@@ -21,15 +21,18 @@ import YouTubeIcon from "./YouTubeIcon.tsx";
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
 import BeatportSessionDialog from "./BeatportSessionDialog.tsx";
 import YouTubeSessionDialog from "./YouTubeSessionDialog.tsx";
-import type { AppearanceType, RequestReply } from "./Types.tsx";
+import {
+  youTubeConnection,
+  type AppearanceType,
+  type RequestReply,
+  type YouTubeConnection,
+} from "./Types.tsx";
 
 type AppMenuProps = {
   version?: string;
   appearance: AppearanceType;
   setAppearance: (appearance: AppearanceType) => void;
   requestReply: RequestReply;
-  youtubeConnected: boolean;
-  youtubeClientId: string | null;
   collectionOpen: boolean;
   spotifyBackfillRunning: boolean;
   spotifyBackfillChecked?: number;
@@ -57,8 +60,6 @@ function AppMenu({
   appearance,
   setAppearance,
   requestReply,
-  youtubeConnected,
-  youtubeClientId,
   collectionOpen,
   spotifyBackfillRunning,
   spotifyBackfillChecked,
@@ -69,6 +70,8 @@ function AppMenu({
   const [menuOpen, setMenuOpen] = useState(false);
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
+  const [youtubeConnection, setYoutubeConnection] =
+    useState<YouTubeConnection | null>(null);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const [beatportBrowser, setBeatportBrowser] = useState<string | null>(null);
   const [beatportOpen, setBeatportOpen] = useState(false);
@@ -87,6 +90,12 @@ function AppMenu({
         setBeatportBrowser(r.browser);
     });
 
+  const refreshYouTubeSession = () =>
+    requestReply({ type: "get-youtube-session" }, (r) => {
+      if (r.type === "youtube-session" && "browser" in r)
+        setYoutubeConnection(youTubeConnection(r));
+    });
+
   const openDialog = (open: (v: boolean) => void) => {
     setDialogKey((k) => k + 1);
     open(true);
@@ -102,6 +111,7 @@ function AppMenu({
           if (open) {
             refreshSpotifySession();
             refreshBeatportSession();
+            refreshYouTubeSession();
           }
           setMenuOpen(open);
         }}
@@ -124,7 +134,7 @@ function AppMenu({
         <DropdownMenuItem
           icon={<YouTubeIcon />}
           label="YouTube"
-          description={connectionLabel(youtubeConnected)}
+          description={connectionLabel(youtubeConnection !== null)}
           onClick={() => openDialog(setYoutubeOpen)}
         />
         <DropdownMenuItem
@@ -188,9 +198,9 @@ function AppMenu({
         key={`youtube-${dialogKey}`}
         isOpen={youtubeOpen}
         onOpenChange={setYoutubeOpen}
+        connection={youtubeConnection}
+        setConnection={setYoutubeConnection}
         requestReply={requestReply}
-        connected={youtubeConnected}
-        clientId={youtubeClientId}
       />
     </>
   );

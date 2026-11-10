@@ -44,21 +44,16 @@ Work in progress! 🚧
 
 ## Connecting a YouTube account (for playlist export)
 
-Exporting tracks to a YouTube playlist requires a Google OAuth client, since stereo
-doesn't ship its own (that would require bundling a client secret and passing Google's
-verification for a public app). Set one up once and connect via the YouTube button in
-the toolbar, next to the Spotify one:
+Stereo exports playlists to your YouTube account through YouTube's own web API, using
+the YouTube login of the browser you run stereo in: no Google Cloud project, OAuth
+client or API quota needed. Log in to youtube.com in that browser, then connect under
+**Settings → Accounts → YouTube**. If several profiles of that browser are logged in,
+stereo asks which one to use. On macOS, the first connect asks for keychain access
+to the browser's cookie store.
 
-1. Go to the [Google Cloud Console credentials page](https://console.cloud.google.com/apis/credentials)
-   and select or create a project.
-2. Under **APIs & Services → Enabled APIs**, enable the **YouTube Data API v3**.
-3. Under **OAuth 2.0 Client IDs**, create a client of type **Desktop app**.
-4. Add your stereo origin (e.g. `http://localhost:8005`) as an authorized redirect URI.
-5. Copy the client ID and client secret into the YouTube login dialog in stereo.
-
-If you forget your credentials later, they're always visible under the same
-[credentials page](https://console.cloud.google.com/apis/credentials) — reset the
-client secret there if needed.
+Stereo only remembers which browser profile holds the login and reads its YouTube
+cookies afresh for every export, so logging out of YouTube there disconnects stereo too.
+The API is undocumented, so exports may break until stereo is updated.
 
 # Development
 

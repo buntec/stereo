@@ -85,7 +85,6 @@ import {
 } from "./YouTubePlaylistDialog.tsx";
 import { YouTubeFixupProgressDialog } from "./YouTubePlaylistImportDialog.tsx";
 import YouTubePlaylistStagingDialog from "./YouTubePlaylistStagingDialog.tsx";
-import { useYouTubeOAuthCallback } from "./YouTubeSessionDialog.tsx";
 import SpotifyPlaylistDialog, {
   SpotifyPlaylistProgressDialog,
   type SpotifyPlaylistTarget,
@@ -250,9 +249,6 @@ type State = {
   spotify_playlist_matched?: number;
   spotify_playlist_total?: number;
   spotify_playlist_open_url?: string | null;
-
-  youtube_connected: boolean;
-  youtube_client_id?: string | null;
 
   youtube_playlist_id?: number;
   youtube_playlist_running: boolean;
@@ -592,6 +588,8 @@ const reducer = (state: State, action: Action): State => {
     case "yt-anon-playlist":
     case "spotify-session":
     case "beatport-session":
+    case "youtube-session":
+    case "youtube-logins":
     case "tracks":
     case "row-index":
     case "heartbeat":
@@ -672,13 +670,6 @@ const reducer = (state: State, action: Action): State => {
 
     case "clear-spotify-playlist-open-url":
       return { ...state, spotify_playlist_open_url: undefined };
-
-    case "youtube-session":
-      return {
-        ...state,
-        youtube_connected: action.connected,
-        youtube_client_id: action.client_id,
-      };
 
     case "start-youtube-playlist-export":
       return {
@@ -771,7 +762,7 @@ const reducer = (state: State, action: Action): State => {
           youtube_playlist_id: undefined,
         },
         action.reason === "timeout"
-          ? "YouTube playlist export stalled (possibly hit the API quota) — cancelled"
+          ? "YouTube playlist export stalled — cancelled"
           : "Cancelled YouTube playlist export",
         action.reason === "timeout" ? "warning" : "info",
       );
@@ -800,7 +791,6 @@ function App() {
     notification_next_id: 1,
     spotify_backfill_running: false,
     spotify_playlist_running: false,
-    youtube_connected: false,
     youtube_playlist_running: false,
     youtube_fixup_running: false,
   });
@@ -1661,11 +1651,13 @@ function App() {
     [sendMsg],
   );
 
-  // Auto-cancel if the server goes quiet for 15s (e.g. hitting the YouTube
-  // API quota) so the progress dialog never gets stuck open indefinitely.
+  // Auto-cancel if the server goes quiet so the progress dialog never gets
+  // stuck open indefinitely. Generous, since before the first batch the server
+  // reads the YouTube login from the browser, which may wait on a keychain
+  // prompt; every request after that times out on its own within 30s.
   useEffect(() => {
     if (!state.youtube_playlist_running) return;
-    const timer = setTimeout(() => cancelYouTubePlaylist("timeout"), 15000);
+    const timer = setTimeout(() => cancelYouTubePlaylist("timeout"), 120000);
     return () => clearTimeout(timer);
   }, [
     state.youtube_playlist_running,
@@ -1737,8 +1729,6 @@ function App() {
       );
     }
   }, [requestReply]);
-
-  useYouTubeOAuthCallback(requestReply, dispatch);
 
   const addTracksToCollection = useCallback(
     async (tracks: ITrack[]) => {
@@ -2493,8 +2483,6 @@ function App() {
                     setSettings({ ...settings, appearance })
                   }
                   requestReply={requestReply}
-                  youtubeConnected={state.youtube_connected}
-                  youtubeClientId={state.youtube_client_id ?? null}
                   collectionOpen={!!state.collection}
                   spotifyBackfillRunning={state.spotify_backfill_running}
                   spotifyBackfillChecked={state.spotify_backfill_checked}

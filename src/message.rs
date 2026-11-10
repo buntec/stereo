@@ -183,11 +183,20 @@ pub enum MsgServer {
         total: i64,
         error_message: Option<String>,
     },
+    /// Reply to the YouTube session requests: the browser the YouTube login is read from, or
+    /// `None` when not connected, and the account logged in there when connecting, if known.
     #[serde(rename = "youtube-session")]
     YouTubeSession {
         id: i64,
-        connected: bool,
-        client_id: Option<String>,
+        browser: Option<String>,
+        account: Option<String>,
+    },
+    /// Reply to `connect-youtube-session` when several browser profiles are logged in to
+    /// YouTube: the user picks one, which is connected by sending its `id` as `login`.
+    #[serde(rename = "youtube-logins")]
+    YouTubeLogins {
+        id: i64,
+        logins: Vec<YouTubeLogin>,
     },
     #[serde(rename = "youtube-playlist")]
     YouTubePlaylist {
@@ -213,6 +222,16 @@ pub enum MsgServer {
         matched: i64,
         total: i64,
     },
+}
+
+/// A browser profile logged in to YouTube.
+#[derive(Debug, Clone, Serialize)]
+pub struct YouTubeLogin {
+    pub id: String,
+    /// The browser, plus the profile when it has several.
+    pub browser: String,
+    /// The YouTube account or channel logged in there, if YouTube said.
+    pub account: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -492,22 +511,18 @@ pub enum MsgClient {
     GetYouTubeSession {
         id: i64,
     },
-    #[serde(rename = "set-youtube-credentials")]
-    SetYouTubeCredentials {
+    /// Finds the YouTube login of the browser the requesting tab runs in, identified by that
+    /// tab's `navigator.userAgent`; `login` is the profile the user picked from `youtube-logins`.
+    #[serde(rename = "connect-youtube-session")]
+    ConnectYouTubeSession {
         id: i64,
-        client_id: String,
-        client_secret: String,
+        user_agent: String,
+        #[serde(default)]
+        login: Option<String>,
     },
     #[serde(rename = "disconnect-youtube-session")]
     DisconnectYouTubeSession {
         id: i64,
-    },
-    #[serde(rename = "exchange-youtube-code")]
-    ExchangeYouTubeCode {
-        id: i64,
-        code: String,
-        verifier: String,
-        redirect_uri: String,
     },
     #[serde(rename = "create-youtube-playlist")]
     CreateYouTubePlaylist {
@@ -555,9 +570,8 @@ impl MsgClient {
             | Self::CheckSpotifyId { id, .. }
             | Self::FixupTrack { id, .. }
             | Self::GetYouTubeSession { id }
-            | Self::SetYouTubeCredentials { id, .. }
-            | Self::DisconnectYouTubeSession { id }
-            | Self::ExchangeYouTubeCode { id, .. } => Some(*id),
+            | Self::ConnectYouTubeSession { id, .. }
+            | Self::DisconnectYouTubeSession { id } => Some(*id),
             _ => None,
         }
     }
