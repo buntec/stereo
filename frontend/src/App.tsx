@@ -91,6 +91,7 @@ import SpotifyPlaylistDialog, {
 } from "./SpotifyPlaylistDialog.tsx";
 import AddTracksDialog from "./AddTracksDialog.tsx";
 import NavBarControls from "./NavBarControls.tsx";
+import StereoLogo from "./StereoLogo.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
@@ -2406,6 +2407,7 @@ function App() {
               className="app-header"
             >
               <HStack vAlign="center" gap={2} className="collection-controls">
+                <StereoLogo size={28} />
                 <CollectionSelector
                   isValid={state.collection_is_valid ?? true}
                   collections={state.collections ?? []}
