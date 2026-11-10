@@ -97,6 +97,7 @@ export type ClientMsg =
   | { type: "check-spotify-id"; sp_id: string; id?: number }
   | { type: "create-collection"; name: string }
   | { type: "delete-collection"; path: string }
+  | { type: "rename-collection"; path: string; name: string }
   | { type: "collection-contains-ids"; yt_ids: string[] }
   | { type: "get-track-info"; yt_id: string }
   | { type: "import-from"; path: string; keep_user_data: boolean }

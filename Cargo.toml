@@ -57,3 +57,7 @@ rookie = "0.5"
 # Finds every browser profile's cookie store from rookie's path patterns (rookie only reads the
 # first), for importing Beatport's Cloudflare clearance from the profile that earned it.
 glob = "0.3"
+
+[dev-dependencies]
+# WebSocket client for end-to-end session tests (the version axum already uses).
+tokio-tungstenite = "0.24"
