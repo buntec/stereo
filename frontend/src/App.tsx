@@ -774,6 +774,21 @@ const reducer = (state: State, action: Action): State => {
   }
 };
 
+// The tracks grid state saved before column sizing was reworked, minus its column widths:
+// those were saved without flex and would pin every column to its old width.
+const LEGACY_GRID_STATE_KEY = "stereo_app_grid_state";
+const legacyGridState = (): GridState | undefined => {
+  try {
+    const item = window.localStorage.getItem(LEGACY_GRID_STATE_KEY);
+    if (!item) return undefined;
+    const state = JSON.parse(item) as GridState;
+    delete state.columnSizing;
+    return state;
+  } catch {
+    return undefined;
+  }
+};
+
 function App() {
   const [state, dispatch] = useReducer(reducer, {
     playlist: [],
@@ -824,8 +839,8 @@ function App() {
   );
 
   const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
-    "stereo_app_grid_state",
-    undefined,
+    "stereo_app_grid_state_v2",
+    legacyGridState,
   );
 
   const wsOnMessage = useCallback(

@@ -20,14 +20,16 @@ export function formatDuration(totalSeconds: number): string {
   return `${paddedMinutes}:${paddedSeconds}`;
 }
 
-export function useLocalStorage<T>(key: string, initialValue: T) {
+export function useLocalStorage<T>(key: string, initialValue: T | (() => T)) {
   const [storedValue, setStoredValue] = useState<T>(() => {
+    const initial = () =>
+      initialValue instanceof Function ? initialValue() : initialValue;
     try {
       const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
+      return item ? JSON.parse(item) : initial();
     } catch (error) {
       console.error(`Error reading local storage at "${key}":`, error);
-      return initialValue;
+      return initial();
     }
   });
 
