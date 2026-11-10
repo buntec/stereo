@@ -205,6 +205,20 @@ pub fn list_repo_collections(repo: &Path) -> Vec<crate::models::Collection> {
         .collect()
 }
 
+/// Removes a collection's database file along with any SQLite journal files left beside it.
+pub fn remove_collection_file(path: &Path) -> std::io::Result<()> {
+    std::fs::remove_file(path)?;
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let mut sidecar = path.as_os_str().to_owned();
+        sidecar.push(suffix);
+        match std::fs::remove_file(PathBuf::from(sidecar)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn get_path_completions(prefix: &str) -> Vec<String> {
     let expanded = expand_tilde(prefix);
     let path = PathBuf::from(&expanded);

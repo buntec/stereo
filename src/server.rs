@@ -988,7 +988,25 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             });
         }
 
-        MsgClient::DeleteTracks { ids } => {
+        MsgClient::DeleteTracks { ids, collection } => {
+            // The ids were chosen in the client's view of a collection, which may since have been
+            // switched; deleting them from another collection could remove the wrong tracks.
+            let is_open = state
+                .collection
+                .as_ref()
+                .is_some_and(|c| c.path == std::path::Path::new(&collection));
+            if !is_open {
+                notify(
+                    tx,
+                    &format!(
+                        "Delete failed: {} is no longer the open collection",
+                        utils::collection_label(&collection)
+                    ),
+                    "error",
+                )
+                .await;
+                return Ok(());
+            }
             let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
                 let deleted = db::delete_tracks(pool, &ids).await?;
@@ -1942,6 +1960,54 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 })
                 .await;
             schedule_collection_sync(state, tx).await;
+        }
+
+        MsgClient::DeleteCollection { path } => {
+            let _repo_guard = lock_current_repo(state).await;
+            let Some(repo) = state.repo.clone() else {
+                notify(tx, "No repo selected", "error").await;
+                return Ok(());
+            };
+            let path = std::path::PathBuf::from(&path);
+            // Only collections listed for the current repo, never an arbitrary file.
+            if !utils::list_repo_collections(&repo)
+                .iter()
+                .any(|c| c.path == path)
+            {
+                notify(tx, "Cannot delete: not a collection of this repo", "error").await;
+                return Ok(());
+            }
+            let was_open = state.collection.as_ref().is_some_and(|c| c.path == path);
+            if was_open {
+                if let Some(pool) = state.pool.take() {
+                    pool.close().await;
+                }
+                state.collection = None;
+            }
+            let label = path
+                .file_stem()
+                .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+            if let Err(e) = utils::remove_collection_file(&path) {
+                notify(tx, &format!("Could not delete {label}: {e}"), "error").await;
+                return Ok(());
+            }
+            let _ = tx
+                .send(MsgServer::Collections {
+                    collections: utils::list_repo_collections(&repo),
+                })
+                .await;
+            if was_open {
+                let _ = tx
+                    .send(MsgServer::CollectionInfo {
+                        id: None,
+                        collection: None,
+                        error_message: None,
+                        path_completions: None,
+                    })
+                    .await;
+            }
+            notify(tx, &format!("Deleted collection {label}"), "info").await;
+            schedule_git_sync(tx, repo, path).await;
         }
 
         MsgClient::SetCollection { id, path } => {

@@ -39,6 +39,8 @@ import {
   type ColDef,
   type RowSelectionOptions,
   type SelectionChangedEvent,
+  type CellKeyDownEvent,
+  type FullWidthCellKeyDownEvent,
   themeQuartz,
   colorSchemeDark,
   type SizeColumnsToContentStrategy,
@@ -664,12 +666,17 @@ interface TracksGridProps {
   playId: (id: string) => void;
   updateRating: (yt_id: string, rating: number | null) => void;
   requestReply: RequestReply;
-  dispatch: Dispatch<Action>;
   sendMsg: (msg: ClientMsg) => void;
   setGridReady: (ready: boolean) => void;
   initialState?: GridState;
   onStateUpdate: (event: StateUpdatedEvent<ITrack>) => void;
   onRowCountChange?: (count: number) => void;
+  onSelectionChanged: (event: SelectionChangedEvent<ITrack>) => void;
+  // Called after a block of rows has loaded into the grid.
+  onRowsLoaded: () => void;
+  onFilterChanged: () => void;
+  // Cmd/Ctrl+A, which ag-Grid can't do itself with the infinite row model.
+  onSelectAll: () => void;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
   onShazamSimilar: (track: ITrack) => void;
@@ -691,12 +698,15 @@ export const TracksGrid = ({
   playId,
   updateRating,
   requestReply,
-  dispatch,
   sendMsg,
   setGridReady,
   initialState,
   onStateUpdate,
   onRowCountChange,
+  onSelectionChanged,
+  onRowsLoaded,
+  onFilterChanged,
+  onSelectAll,
   onArtistClick,
   onLabelClick,
   onShazamSimilar,
@@ -847,6 +857,7 @@ export const TracksGrid = ({
           function (msg: ServerMsg | { type: string }) {
             if ("rows" in msg) {
               params.successCallback(msg.rows, msg.last_row);
+              onRowsLoaded();
               if (msg.last_row !== undefined) {
                 onRowCountChange?.(msg.last_row);
                 if (msg.last_row === 0)
@@ -861,7 +872,7 @@ export const TracksGrid = ({
         );
       },
     };
-  }, [requestReply, onRowCountChange, gridRef]);
+  }, [requestReply, onRowCountChange, onRowsLoaded, gridRef]);
 
   const rowClassRules = useMemo(() => {
     return {
@@ -899,17 +910,20 @@ export const TracksGrid = ({
     onShazamSimilar,
   ]);
 
-  const onSelectionChanged = useCallback(
-    (ev: SelectionChangedEvent<ITrack>) => {
-      dispatch({
-        type: "selection-changed",
-        selected:
-          ev.selectedNodes?.flatMap((node) =>
-            node.data ? [node.data.yt_id] : [],
-          ) ?? [],
-      });
+  const onCellKeyDown = useCallback(
+    (ev: CellKeyDownEvent<ITrack> | FullWidthCellKeyDownEvent<ITrack>) => {
+      const key = ev.event as KeyboardEvent | null | undefined;
+      if (
+        key &&
+        (key.metaKey || key.ctrlKey) &&
+        !key.altKey &&
+        !key.shiftKey &&
+        key.key.toLowerCase() === "a"
+      ) {
+        onSelectAll();
+      }
     },
-    [dispatch],
+    [onSelectAll],
   );
 
   const getRowId = useCallback(
@@ -951,6 +965,8 @@ export const TracksGrid = ({
         noRowsOverlayComponent={NoFilterMatchesOverlay}
         datasource={dataSource}
         onSelectionChanged={onSelectionChanged}
+        onFilterChanged={onFilterChanged}
+        onCellKeyDown={onCellKeyDown}
       />
     </StackItem>
   );

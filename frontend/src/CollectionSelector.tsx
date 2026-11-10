@@ -7,7 +7,13 @@ import {
 } from "@astryxdesign/core/DropdownMenu";
 import { Divider } from "@astryxdesign/core/Divider";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
-import { BarChartIcon, DownloadIcon, PlusIcon } from "@radix-ui/react-icons";
+import { AlertDialog } from "@astryxdesign/core/AlertDialog";
+import {
+  BarChartIcon,
+  DownloadIcon,
+  PlusIcon,
+  TrashIcon,
+} from "@radix-ui/react-icons";
 import { MenuCheck, MenuHeading } from "./Menu.tsx";
 import NewCollectionDialog from "./NewCollectionDialog.tsx";
 import CloneRepoDialog from "./CloneRepoDialog.tsx";
@@ -27,6 +33,7 @@ export type CollectionSelectorProps = {
   value: string;
   setValue: (path: string) => void;
   onCreate: (name: string) => void;
+  onDelete: (path: string) => void;
   isValid: boolean;
   repos: IRepo[];
   repoPath: string;
@@ -43,6 +50,7 @@ function CollectionSelector({
   value,
   setValue,
   onCreate,
+  onDelete,
   isValid,
   repos,
   repoPath,
@@ -54,6 +62,8 @@ function CollectionSelector({
 }: CollectionSelectorProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
+  // The collection awaiting delete confirmation.
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
   const selectedCollection = collections.some((c) => c.path === value)
     ? value
@@ -116,6 +126,16 @@ function CollectionSelector({
           label="New collection…"
           onClick={() => setCreateOpen(true)}
         />
+        <DropdownMenuItem
+          icon={<TrashIcon />}
+          label={
+            selectedCollection
+              ? `Delete ${collectionLabel(selectedCollection)}…`
+              : "Delete collection…"
+          }
+          isDisabled={!selectedCollection}
+          onClick={() => setPendingDelete(selectedCollection ?? null)}
+        />
 
         <Divider />
 
@@ -162,6 +182,26 @@ function CollectionSelector({
         isOpen={cloneOpen}
         onOpenChange={setCloneOpen}
         onClone={onClone}
+      />
+      <AlertDialog
+        isOpen={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title="Delete collection?"
+        description={
+          pendingDelete
+            ? `This deletes ${collectionLabel(pendingDelete)} with all its tracks, ratings and play counts.` +
+              (selectedRepo?.remote
+                ? " The deletion is synced to the repository's remote, so it also disappears on your other machines."
+                : "")
+            : ""
+        }
+        actionLabel="Delete collection"
+        onAction={() => {
+          if (pendingDelete) onDelete(pendingDelete);
+          setPendingDelete(null);
+        }}
       />
     </>
   );

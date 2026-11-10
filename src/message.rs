@@ -304,6 +304,8 @@ pub enum MsgClient {
     },
     DeleteTracks {
         ids: Vec<String>,
+        /// The collection the ids were chosen from; refused unless it is the open one.
+        collection: String,
     },
     UpdateRating {
         yt_id: String,
@@ -333,6 +335,10 @@ pub enum MsgClient {
     },
     CreateCollection {
         name: String,
+    },
+    /// Deletes a collection of the current repo; the deletion is committed by the next sync.
+    DeleteCollection {
+        path: String,
     },
     GetPathCompletions {
         id: i64,
