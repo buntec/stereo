@@ -190,20 +190,8 @@ export type ClientMsg =
   | { type: "cancel-fixup-tracks"; id: number }
   | { type: "backfill-spotify-ids"; id: number }
   | { type: "get-youtube-session"; id?: number }
-  | {
-      type: "set-youtube-credentials";
-      id?: number;
-      client_id: string;
-      client_secret: string;
-    }
+  | { type: "connect-youtube-session"; id?: number; user_agent: string }
   | { type: "disconnect-youtube-session"; id?: number }
-  | {
-      type: "exchange-youtube-code";
-      id?: number;
-      code: string;
-      verifier: string;
-      redirect_uri: string;
-    }
   | {
       type: "create-youtube-playlist";
       id?: number;
@@ -353,8 +341,8 @@ export type ServerMsg =
   | {
       type: "youtube-session";
       id: number;
-      connected: boolean;
-      client_id: string | null;
+      /** Browser the YouTube login is read from, or null when not connected. */
+      browser: string | null;
     }
   | {
       type: "youtube-playlist";

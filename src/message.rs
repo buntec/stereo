@@ -183,11 +183,12 @@ pub enum MsgServer {
         total: i64,
         error_message: Option<String>,
     },
+    /// Reply to the YouTube session requests: the browser the YouTube login is read from, or
+    /// `None` when not connected.
     #[serde(rename = "youtube-session")]
     YouTubeSession {
         id: i64,
-        connected: bool,
-        client_id: Option<String>,
+        browser: Option<String>,
     },
     #[serde(rename = "youtube-playlist")]
     YouTubePlaylist {
@@ -492,22 +493,16 @@ pub enum MsgClient {
     GetYouTubeSession {
         id: i64,
     },
-    #[serde(rename = "set-youtube-credentials")]
-    SetYouTubeCredentials {
+    /// Finds the YouTube login of the browser the requesting tab runs in, identified by that
+    /// tab's `navigator.userAgent`.
+    #[serde(rename = "connect-youtube-session")]
+    ConnectYouTubeSession {
         id: i64,
-        client_id: String,
-        client_secret: String,
+        user_agent: String,
     },
     #[serde(rename = "disconnect-youtube-session")]
     DisconnectYouTubeSession {
         id: i64,
-    },
-    #[serde(rename = "exchange-youtube-code")]
-    ExchangeYouTubeCode {
-        id: i64,
-        code: String,
-        verifier: String,
-        redirect_uri: String,
     },
     #[serde(rename = "create-youtube-playlist")]
     CreateYouTubePlaylist {
@@ -555,9 +550,8 @@ impl MsgClient {
             | Self::CheckSpotifyId { id, .. }
             | Self::FixupTrack { id, .. }
             | Self::GetYouTubeSession { id }
-            | Self::SetYouTubeCredentials { id, .. }
-            | Self::DisconnectYouTubeSession { id }
-            | Self::ExchangeYouTubeCode { id, .. } => Some(*id),
+            | Self::ConnectYouTubeSession { id, .. }
+            | Self::DisconnectYouTubeSession { id } => Some(*id),
             _ => None,
         }
     }

@@ -3623,6 +3623,7 @@ dependencies = [
  "scraper",
  "serde",
  "serde_json",
+ "sha1",
  "sqlx",
  "strsim",
  "tempfile",

@@ -1,159 +1,49 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
-import { TextInput } from "@astryxdesign/core/TextInput";
+import { Link } from "@astryxdesign/core/Link";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
-import { Code } from "@astryxdesign/core/Code";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 
-import type { Action, RequestReply } from "./Types.tsx";
-
-// ─── PKCE helpers ─────────────────────────────────────────────────────────────
-
-function generateCodeVerifier(): string {
-  const bytes = new Uint8Array(64);
-  crypto.getRandomValues(bytes);
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
-}
-
-async function generateCodeChallenge(verifier: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(verifier),
-  );
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
-}
-
-const SS_VERIFIER = "yt_oauth_verifier";
-const SS_REDIRECT_URI = "yt_oauth_redirect_uri";
-const OAUTH_STATE = "stereo-yt-login";
-
-function startOAuth(clientId: string) {
-  const verifier = generateCodeVerifier();
-  generateCodeChallenge(verifier).then((challenge) => {
-    sessionStorage.setItem(SS_VERIFIER, verifier);
-    sessionStorage.setItem(SS_REDIRECT_URI, window.location.origin);
-
-    const authParams = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: window.location.origin,
-      response_type: "code",
-      scope: "https://www.googleapis.com/auth/youtube",
-      code_challenge_method: "S256",
-      code_challenge: challenge,
-      state: OAUTH_STATE,
-      access_type: "offline",
-      prompt: "consent",
-    });
-
-    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${authParams}`;
-  });
-}
-
-// ─── Hook: handle OAuth callback on app load ──────────────────────────────────
-
-export function useYouTubeOAuthCallback(
-  requestReply: RequestReply,
-  dispatch: (action: Action) => void,
-) {
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    const state = params.get("state");
-    if (!code || state !== OAUTH_STATE) return;
-
-    history.replaceState({}, "", window.location.pathname);
-
-    const verifier = sessionStorage.getItem(SS_VERIFIER);
-    const redirectUri = sessionStorage.getItem(SS_REDIRECT_URI);
-    sessionStorage.removeItem(SS_VERIFIER);
-    sessionStorage.removeItem(SS_REDIRECT_URI);
-
-    if (!verifier || !redirectUri) {
-      dispatch({
-        type: "notification",
-        message: "YouTube sign-in: missing session data, please try again",
-        kind: "error",
-      });
-      return;
-    }
-
-    requestReply(
-      {
-        type: "exchange-youtube-code",
-        code,
-        verifier,
-        redirect_uri: redirectUri,
-      },
-      (r) => {
-        if ("connected" in r && r.connected) {
-          dispatch({
-            type: "notification",
-            message: "Connected to YouTube",
-            kind: "info",
-          });
-        }
-      },
-      15000,
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-}
-
-// ─── Dialog component ─────────────────────────────────────────────────────────
+import type { RequestReply, ServerMsg } from "./Types.tsx";
 
 type YouTubeSessionDialogProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Browser the YouTube login is read from, or null when not connected. */
+  browser: string | null;
+  setBrowser: (browser: string | null) => void;
   requestReply: RequestReply;
-  connected: boolean;
-  clientId: string | null;
 };
 
-// Mount fresh for each opening (via `key`) so the inputs start from the saved
-// client ID.
 function YouTubeSessionDialog({
   isOpen,
   onOpenChange,
+  browser,
+  setBrowser,
   requestReply,
-  connected,
-  clientId,
 }: YouTubeSessionDialogProps) {
-  const [clientIdInput, setClientIdInput] = useState(clientId ?? "");
-  const [clientSecretInput, setClientSecretInput] = useState("");
+  const [connecting, setConnecting] = useState(false);
 
-  const hasStoredCredentials = !!clientId;
-
-  const handleConnect = () => {
-    const id = clientIdInput.trim();
-    const secret = clientSecretInput.trim();
-    if (secret) {
-      requestReply(
-        {
-          type: "set-youtube-credentials",
-          client_id: id,
-          client_secret: secret,
-        },
-        (r) => {
-          if ("client_id" in r && r.client_id) startOAuth(r.client_id);
-        },
-      );
-    } else if (hasStoredCredentials) {
-      startOAuth(id);
-    }
+  const onReply = (r: ServerMsg | { type: string }) => {
+    if (r.type === "youtube-session" && "browser" in r) setBrowser(r.browser);
   };
 
-  const canConnect =
-    !!clientIdInput.trim() &&
-    (!!clientSecretInput.trim() || hasStoredCredentials);
+  const connect = () => {
+    setConnecting(true);
+    requestReply(
+      // The login is read from the browser this tab runs in.
+      { type: "connect-youtube-session", user_agent: navigator.userAgent },
+      (r) => {
+        setConnecting(false);
+        onReply(r);
+      },
+      // Reading the browser's cookies may wait on an OS keychain prompt.
+      120000,
+    );
+  };
 
   const closeDialog = () => onOpenChange(false);
 
@@ -162,14 +52,14 @@ function YouTubeSessionDialog({
       <Layout
         header={
           <DialogHeader
-            title="YouTube Account"
+            title="YouTube"
             onOpenChange={closeDialog}
             endContent={
-              connected ? (
+              browser ? (
                 <HStack gap={1} vAlign="center">
                   <StatusDot variant="success" label="Connected" />
                   <Text type="supporting" color="secondary">
-                    Connected
+                    Connected via {browser}
                   </Text>
                 </HStack>
               ) : undefined
@@ -180,63 +70,47 @@ function YouTubeSessionDialog({
           <LayoutContent>
             <VStack gap={3}>
               <Text as="div" type="body">
-                Stereo needs a Google OAuth client to create playlists on your
-                behalf. Create a <strong>Desktop app</strong> OAuth client in
-                Google Cloud Console with the YouTube Data API v3 enabled, and
-                register <Code>{window.location.origin}</Code> as an authorized
-                redirect URI.
+                Stereo creates playlists on your YouTube account using the
+                YouTube login of this browser. Make sure you&rsquo;re logged in
+                to{" "}
+                <Link href="https://www.youtube.com" isExternalLink>
+                  youtube.com
+                </Link>{" "}
+                here with the account you want playlists on, then connect.
               </Text>
-
-              <TextInput
-                label="Google OAuth client ID"
-                value={clientIdInput}
-                onChange={setClientIdInput}
-                placeholder="...apps.googleusercontent.com"
-              />
-
-              <TextInput
-                label="Google OAuth client secret"
-                type="password"
-                value={clientSecretInput}
-                onChange={setClientSecretInput}
-                placeholder={
-                  hasStoredCredentials
-                    ? "Leave blank to keep the saved secret"
-                    : "GOCSPX-..."
-                }
-              />
+              <Text as="div" type="supporting" color="secondary">
+                Stereo reads your YouTube cookies from this browser each time it
+                exports a playlist and never keeps a copy, so logging out of
+                YouTube here disconnects it too. It uses YouTube&rsquo;s own,
+                undocumented web API, which has no quota but may change without
+                notice.
+              </Text>
             </VStack>
           </LayoutContent>
         }
         footer={
           <LayoutFooter>
             <HStack gap={2} hAlign="end">
-              {connected && (
+              {browser && (
                 <Button
                   label="Disconnect"
                   variant="destructive"
                   onClick={() => {
                     requestReply(
                       { type: "disconnect-youtube-session" },
-                      () => {},
+                      onReply,
                     );
                     closeDialog();
                   }}
                 />
               )}
+              <Button label="Close" variant="secondary" onClick={closeDialog} />
               <Button
-                label="Cancel"
-                variant="secondary"
-                onClick={closeDialog}
-              />
-              <Button
-                label="Connect"
+                label={browser ? "Reconnect" : "Connect"}
                 variant="primary"
-                isDisabled={!canConnect}
-                onClick={() => {
-                  handleConnect();
-                  closeDialog();
-                }}
+                onClick={connect}
+                isLoading={connecting}
+                isDisabled={connecting}
               />
             </HStack>
           </LayoutFooter>
