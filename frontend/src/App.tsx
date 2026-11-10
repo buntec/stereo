@@ -2414,6 +2414,9 @@ function App() {
                   onDelete={(path) =>
                     sendMsg({ type: "delete-collection", path })
                   }
+                  onRename={(path, name) =>
+                    sendMsg({ type: "rename-collection", path, name })
+                  }
                   repos={state.repos ?? []}
                   repoPath={settings.repoPath}
                   setRepoPath={(path) => {

@@ -11,11 +11,13 @@ import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import {
   BarChartIcon,
   DownloadIcon,
+  Pencil1Icon,
   PlusIcon,
   TrashIcon,
 } from "@radix-ui/react-icons";
 import { MenuCheck, MenuHeading } from "./Menu.tsx";
 import NewCollectionDialog from "./NewCollectionDialog.tsx";
+import RenameCollectionDialog from "./RenameCollectionDialog.tsx";
 import CloneRepoDialog from "./CloneRepoDialog.tsx";
 import { gitSyncLabels, gitSyncVariant } from "./gitSync.ts";
 import type { GitSyncState, ICollection, IRepo } from "./Types.tsx";
@@ -34,6 +36,7 @@ export type CollectionSelectorProps = {
   setValue: (path: string) => void;
   onCreate: (name: string) => void;
   onDelete: (path: string) => void;
+  onRename: (path: string, name: string) => void;
   isValid: boolean;
   repos: IRepo[];
   repoPath: string;
@@ -51,6 +54,7 @@ function CollectionSelector({
   setValue,
   onCreate,
   onDelete,
+  onRename,
   isValid,
   repos,
   repoPath,
@@ -64,6 +68,8 @@ function CollectionSelector({
   const [cloneOpen, setCloneOpen] = useState(false);
   // The collection awaiting delete confirmation.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // The collection being renamed.
+  const [pendingRename, setPendingRename] = useState<string | null>(null);
 
   const selectedCollection = collections.some((c) => c.path === value)
     ? value
@@ -127,6 +133,16 @@ function CollectionSelector({
           onClick={() => setCreateOpen(true)}
         />
         <DropdownMenuItem
+          icon={<Pencil1Icon />}
+          label={
+            selectedCollection
+              ? `Rename ${collectionLabel(selectedCollection)}…`
+              : "Rename collection…"
+          }
+          isDisabled={!selectedCollection}
+          onClick={() => setPendingRename(selectedCollection ?? null)}
+        />
+        <DropdownMenuItem
           icon={<TrashIcon />}
           label={
             selectedCollection
@@ -177,6 +193,14 @@ function CollectionSelector({
         isOpen={createOpen}
         onOpenChange={setCreateOpen}
         onCreate={onCreate}
+      />
+      <RenameCollectionDialog
+        currentName={pendingRename && collectionLabel(pendingRename)}
+        onClose={() => setPendingRename(null)}
+        onRename={(name) => {
+          if (pendingRename) onRename(pendingRename, name);
+        }}
+        hasRemote={!!selectedRepo?.remote}
       />
       <CloneRepoDialog
         isOpen={cloneOpen}

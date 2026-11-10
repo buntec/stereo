@@ -384,7 +384,11 @@ async fn commit_dirty(repo: &Path, dirty: &mut BTreeSet<String>) -> anyhow::Resu
         write_dirty(repo, dirty).await?;
         return Ok(());
     }
-    let message = if names.len() == 1 && !repo.join(&names[0]).exists() {
+    let missing: Vec<&String> = names.iter().filter(|n| !repo.join(n).exists()).collect();
+    let message = if names.len() == 2 && missing.len() == 1 {
+        let added = names.iter().find(|n| *n != missing[0]).expect("two names");
+        format!("rename {} to {added}", missing[0])
+    } else if names.len() == 1 && !missing.is_empty() {
         format!("delete {}", names[0])
     } else if names.len() == 1 {
         format!("update {}", names[0])
@@ -1282,6 +1286,49 @@ mod tests {
         let pushed = tree_paths(&remote, "HEAD").await.unwrap();
         assert!(pushed.contains("keep.db"));
         assert!(!pushed.contains("gone.db"));
+    }
+
+    #[tokio::test]
+    async fn sync_commits_and_pushes_renamed_collection() {
+        let temp = tempfile::tempdir().unwrap();
+        let remote = temp.path().join("remote.git");
+        std::fs::create_dir(&remote).unwrap();
+        command(&remote, &["init", "--bare"]);
+        let repo = temp.path().join("repo");
+        init_if_needed(&repo).await.unwrap();
+        set_remote(&repo, Some(remote.to_str().unwrap()))
+            .await
+            .unwrap();
+        let old = repo.join("old.db");
+        let new = repo.join("new.db");
+        create_collection(&old, &track("one")).await;
+        let report = sync_repository(repo.clone(), Some(old.clone()), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        crate::utils::rename_collection_file(&old, &new).unwrap();
+        // Only the new path is passed; the old one is found as a deleted file.
+        let report = sync_repository(repo.clone(), Some(new.clone()), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        let pushed = tree_paths(&remote, "HEAD").await.unwrap();
+        assert!(pushed.contains("new.db"));
+        assert!(!pushed.contains("old.db"));
+        let ids = db::get_all_yt_ids(&db::open_pool(&new).await.unwrap())
+            .await
+            .unwrap();
+        assert!(ids.contains("one"));
+    }
+
+    #[test]
+    fn renaming_collection_does_not_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let a = temp.path().join("a.db");
+        let b = temp.path().join("b.db");
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        assert!(crate::utils::rename_collection_file(&a, &b).is_err());
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "a");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "b");
     }
 
     #[tokio::test]

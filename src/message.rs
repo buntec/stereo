@@ -340,6 +340,12 @@ pub enum MsgClient {
     DeleteCollection {
         path: String,
     },
+    /// Renames a collection of the current repo to `name` (without the `.db` extension); the
+    /// rename is committed by the next sync.
+    RenameCollection {
+        path: String,
+        name: String,
+    },
     GetPathCompletions {
         id: i64,
         path_prefix: String,

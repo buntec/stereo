@@ -2010,6 +2010,81 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             schedule_git_sync(tx, repo, path).await;
         }
 
+        MsgClient::RenameCollection { path, name } => {
+            let _repo_guard = lock_current_repo(state).await;
+            let Some(repo) = state.repo.clone() else {
+                notify(tx, "No repo selected", "error").await;
+                return Ok(());
+            };
+            let path = std::path::PathBuf::from(&path);
+            if !utils::list_repo_collections(&repo)
+                .iter()
+                .any(|c| c.path == path)
+            {
+                notify(tx, "Cannot rename: not a collection of this repo", "error").await;
+                return Ok(());
+            }
+            let name = name.trim();
+            if name.is_empty() || name.contains('/') || name.contains('\\') {
+                notify(tx, "Invalid collection name", "error").await;
+                return Ok(());
+            }
+            let new_path = repo.join(format!("{name}.db"));
+            if new_path == path {
+                return Ok(());
+            }
+            if new_path.exists() {
+                notify(
+                    tx,
+                    &format!("Cannot rename — a collection named {name} already exists"),
+                    "error",
+                )
+                .await;
+                return Ok(());
+            }
+            let label = path
+                .file_stem()
+                .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+            let was_open = state.collection.as_ref().is_some_and(|c| c.path == path);
+            if was_open {
+                if let Some(pool) = state.pool.take() {
+                    pool.close().await;
+                }
+                state.collection = None;
+            }
+            let renamed = utils::rename_collection_file(&path, &new_path);
+            if let Err(e) = &renamed {
+                notify(tx, &format!("Could not rename {label}: {e}"), "error").await;
+            }
+            let open_path = if renamed.is_ok() { &new_path } else { &path };
+            if was_open {
+                state.set_collection(open_path.clone(), false).await?;
+                // Sent before the new collection list so that the client follows the rename
+                // rather than falling back to another collection when the old path disappears.
+                let _ = tx
+                    .send(MsgServer::CollectionInfo {
+                        id: None,
+                        collection: state.collection.clone(),
+                        error_message: None,
+                        path_completions: None,
+                    })
+                    .await;
+            }
+            if renamed.is_err() {
+                return Ok(());
+            }
+            let _ = tx
+                .send(MsgServer::Collections {
+                    collections: utils::list_repo_collections(&repo),
+                })
+                .await;
+            if was_open {
+                send_collection_stats(state, tx).await;
+            }
+            notify(tx, &format!("Renamed collection {label} to {name}"), "info").await;
+            schedule_git_sync(tx, repo, new_path).await;
+        }
+
         MsgClient::SetCollection { id, path } => {
             let p = std::path::PathBuf::from(&path);
             // Don't open a database while an update sync may still be replacing it.

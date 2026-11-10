@@ -219,6 +219,29 @@ pub fn remove_collection_file(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Moves a collection's database file (and any SQLite journal files beside it) to `to`, failing
+/// rather than overwriting if `to` already exists. Both paths must be on the same filesystem.
+pub fn rename_collection_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    // A hard link can't clobber an existing file, unlike `rename`. On a case-insensitive
+    // filesystem this also refuses case-only renames, which git wouldn't pick up anyway.
+    std::fs::hard_link(from, to)?;
+    if let Err(e) = std::fs::remove_file(from) {
+        let _ = std::fs::remove_file(to);
+        return Err(e);
+    }
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let mut src = from.as_os_str().to_owned();
+        src.push(suffix);
+        let mut dst = to.as_os_str().to_owned();
+        dst.push(suffix);
+        match std::fs::rename(PathBuf::from(src), PathBuf::from(dst)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn get_path_completions(prefix: &str) -> Vec<String> {
     let expanded = expand_tilde(prefix);
     let path = PathBuf::from(&expanded);
