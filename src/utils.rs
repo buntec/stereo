@@ -221,22 +221,53 @@ pub fn remove_collection_file(path: &Path) -> std::io::Result<()> {
 
 /// Moves a collection's database file (and any SQLite journal files beside it) to `to`, failing
 /// rather than overwriting if `to` already exists. Both paths must be on the same filesystem.
+///
+/// Either everything moves or nothing does: on error, every file is back at its original path.
 pub fn rename_collection_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    // A hard link can't clobber an existing file, unlike `rename`. On a case-insensitive
-    // filesystem this also refuses case-only renames, which git wouldn't pick up anyway.
-    std::fs::hard_link(from, to)?;
-    if let Err(e) = std::fs::remove_file(from) {
-        let _ = std::fs::remove_file(to);
-        return Err(e);
-    }
+    let with_suffix = |path: &Path, suffix: &str| {
+        let mut path = path.as_os_str().to_owned();
+        path.push(suffix);
+        PathBuf::from(path)
+    };
+    let mut pairs = vec![(from.to_path_buf(), to.to_path_buf())];
     for suffix in ["-journal", "-wal", "-shm"] {
-        let mut src = from.as_os_str().to_owned();
-        src.push(suffix);
-        let mut dst = to.as_os_str().to_owned();
-        dst.push(suffix);
-        match std::fs::rename(PathBuf::from(src), PathBuf::from(dst)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
-            _ => {}
+        let (src, dst) = (with_suffix(from, suffix), with_suffix(to, suffix));
+        let src_exists = std::fs::symlink_metadata(&src).is_ok();
+        if std::fs::symlink_metadata(&dst).is_ok() {
+            // Even without a counterpart to move, a stray journal at the destination would be
+            // taken for the moved database's own and could be "rolled back" into it.
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("{} already exists", dst.display()),
+            ));
+        }
+        if src_exists {
+            pairs.push((src, dst));
+        }
+    }
+
+    // Link every file under its new name before removing any old name, so that undoing a
+    // failure only means removing the links made so far. A hard link can't clobber an existing
+    // file, unlike `rename`. On a case-insensitive filesystem this also refuses case-only
+    // renames, which git wouldn't pick up anyway.
+    for (linked, (src, dst)) in pairs.iter().enumerate() {
+        if let Err(e) = std::fs::hard_link(src, dst) {
+            for (_, dst) in &pairs[..linked] {
+                let _ = std::fs::remove_file(dst);
+            }
+            return Err(e);
+        }
+    }
+    // The main file goes last, so a failure leaves it at its original path.
+    for (removed, (src, _)) in pairs.iter().enumerate().rev() {
+        if let Err(e) = std::fs::remove_file(src) {
+            for (src, dst) in &pairs[removed + 1..] {
+                let _ = std::fs::hard_link(dst, src);
+            }
+            for (_, dst) in &pairs {
+                let _ = std::fs::remove_file(dst);
+            }
+            return Err(e);
         }
     }
     Ok(())
@@ -332,6 +363,55 @@ pub async fn download_file(url: &str, destination: &Path) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renaming_collection_moves_journal_along() {
+        let temp = tempfile::tempdir().unwrap();
+        let (old, new) = (temp.path().join("old.db"), temp.path().join("new.db"));
+        std::fs::write(&old, "db").unwrap();
+        std::fs::write(temp.path().join("old.db-journal"), "journal").unwrap();
+        rename_collection_file(&old, &new).unwrap();
+        assert!(!old.exists());
+        assert!(!temp.path().join("old.db-journal").exists());
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "db");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("new.db-journal")).unwrap(),
+            "journal"
+        );
+    }
+
+    #[test]
+    fn failed_sidecar_move_leaves_collection_in_place() {
+        let temp = tempfile::tempdir().unwrap();
+        let (old, new) = (temp.path().join("old.db"), temp.path().join("new.db"));
+        std::fs::write(&old, "db").unwrap();
+        std::fs::write(temp.path().join("old.db-journal"), "journal").unwrap();
+        // Directories can't be hard-linked, so the database and journal are linked before the
+        // "shm file" fails, as a full disk or a permission error could; nothing may stay moved.
+        std::fs::create_dir(temp.path().join("old.db-shm")).unwrap();
+
+        assert!(rename_collection_file(&old, &new).is_err());
+        assert_eq!(std::fs::read_to_string(&old).unwrap(), "db");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("old.db-journal")).unwrap(),
+            "journal"
+        );
+        assert!(temp.path().join("old.db-shm").is_dir());
+        assert!(!new.exists());
+        assert!(!temp.path().join("new.db-journal").exists());
+        assert!(!temp.path().join("new.db-shm").exists());
+    }
+
+    #[test]
+    fn renaming_collection_refuses_stray_destination_journal() {
+        let temp = tempfile::tempdir().unwrap();
+        let (old, new) = (temp.path().join("old.db"), temp.path().join("new.db"));
+        std::fs::write(&old, "db").unwrap();
+        std::fs::write(temp.path().join("new.db-journal"), "stale").unwrap();
+        assert!(rename_collection_file(&old, &new).is_err());
+        assert_eq!(std::fs::read_to_string(&old).unwrap(), "db");
+        assert!(!new.exists());
+    }
 
     #[test]
     fn normalize_for_match_ignores_case_order_and_punctuation() {

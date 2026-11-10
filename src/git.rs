@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
     process::Output,
     sync::{Arc, LazyLock, Mutex},
@@ -429,14 +429,51 @@ async fn is_ancestor(repo: &Path, older: &str, newer: &str) -> bool {
     git_ok(repo, &["merge-base", "--is-ancestor", older, newer]).await
 }
 
+/// Paths that `range` changed. A rename counts as a deletion of its old path plus an addition of
+/// its new one: Git's rename detection is a content-similarity guess, and reporting only the new
+/// path would hide that the old one changed (see `renamed_paths` for following renames).
 async fn changed_paths(repo: &Path, range: &str) -> Result<BTreeSet<String>, GitFailure> {
-    let out = run_git(repo, &["diff", "--name-only", "-z", range], GIT_TIMEOUT).await?;
+    let out = run_git(
+        repo,
+        &["diff", "--no-renames", "--name-only", "-z", range],
+        GIT_TIMEOUT,
+    )
+    .await?;
     Ok(out
         .stdout
         .split(|b| *b == 0)
         .filter(|s| !s.is_empty())
         .map(|s| String::from_utf8_lossy(s).to_string())
         .collect())
+}
+
+/// Files that `range` renamed (as far as Git's rename detection can tell), old path → new path.
+async fn renamed_paths(repo: &Path, range: &str) -> Result<BTreeMap<String, String>, GitFailure> {
+    let out = run_git(
+        repo,
+        &[
+            "diff",
+            "-M",
+            "--diff-filter=R",
+            "--name-status",
+            "-z",
+            range,
+        ],
+        GIT_TIMEOUT,
+    )
+    .await?;
+    // `-z` output is `R<score>\0<old>\0<new>\0` per rename.
+    let mut fields = out
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).to_string());
+    let mut renames = BTreeMap::new();
+    while let (Some(_status), Some(from), Some(to)) = (fields.next(), fields.next(), fields.next())
+    {
+        renames.insert(from, to);
+    }
+    Ok(renames)
 }
 
 async fn tree_paths(repo: &Path, revision: &str) -> Result<BTreeSet<String>, GitFailure> {
@@ -593,20 +630,91 @@ async fn write_blob(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     quick_check(path).await
 }
 
+/// A path that both sides of a merge changed, differently.
+struct Conflict {
+    /// The changed path; for a rename that's being followed, its old path.
+    path: String,
+    /// Where the local version is: `path`, or where the local side renamed it to.
+    local: String,
+    /// Where the upstream version is: `path`, or where upstream renamed it to.
+    remote: String,
+}
+
+impl Conflict {
+    /// Where the reconciled version goes. At most one side renamed the file, the other didn't
+    /// touch the new path, so following the rename can't clobber anything.
+    fn target(&self) -> &str {
+        if self.local != self.path {
+            &self.local
+        } else {
+            &self.remote
+        }
+    }
+
+    fn paths(&self) -> [&str; 3] {
+        [&self.path, &self.local, &self.remote]
+    }
+}
+
+/// The paths both sides changed (with renames counted as deletion plus addition, see
+/// `changed_paths`), skipping those that ended up the same on both sides. A path one side
+/// deleted because it renamed it, which the other side edited, follows the rename, so that the
+/// edit is merged into the renamed collection rather than conflicting with its deletion.
+async fn find_conflicts(
+    repo: &Path,
+    base: &str,
+    remote_ref: &str,
+    local_paths: &BTreeSet<String>,
+    remote_paths: &BTreeSet<String>,
+) -> anyhow::Result<Vec<Conflict>> {
+    let local_renames = renamed_paths(repo, &format!("{base}..HEAD")).await?;
+    let remote_renames = renamed_paths(repo, &format!("{base}..{remote_ref}")).await?;
+    let mut conflicts = Vec::new();
+    for path in local_paths.intersection(remote_paths) {
+        let local_blob = show_blob(repo, "HEAD", path).await?;
+        let remote_blob = show_blob(repo, remote_ref, path).await?;
+        if local_blob == remote_blob {
+            continue;
+        }
+        let mut conflict = Conflict {
+            path: path.clone(),
+            local: path.clone(),
+            remote: path.clone(),
+        };
+        if local_blob.is_none() {
+            if let Some(to) = local_renames
+                .get(path)
+                .filter(|to| !remote_paths.contains(*to))
+            {
+                conflict.local = to.clone();
+            }
+        } else if remote_blob.is_none() {
+            if let Some(to) = remote_renames
+                .get(path)
+                .filter(|to| !local_paths.contains(*to))
+            {
+                conflict.remote = to.clone();
+            }
+        }
+        conflicts.push(conflict);
+    }
+    Ok(conflicts)
+}
+
 async fn build_merged_database(
     repo: &Path,
     base_rev: &str,
     remote_rev: &str,
-    path: &str,
+    conflict: &Conflict,
     temp_dir: &Path,
 ) -> anyhow::Result<PathBuf> {
-    let local_bytes = show_blob(repo, "HEAD", path)
+    let local_bytes = show_blob(repo, "HEAD", &conflict.local)
         .await?
         .context("local collection was deleted")?;
-    let remote_bytes = show_blob(repo, remote_rev, path)
+    let remote_bytes = show_blob(repo, remote_rev, &conflict.remote)
         .await?
         .context("upstream collection was deleted")?;
-    let base_bytes = show_blob(repo, base_rev, path).await?;
+    let base_bytes = show_blob(repo, base_rev, &conflict.path).await?;
     let local_path = temp_dir.join("local.db");
     let remote_path = temp_dir.join("remote.db");
     let base_path = temp_dir.join("base.db");
@@ -764,18 +872,24 @@ async fn merge_diverged(
     };
     let local_paths = changed_paths(repo, &format!("{base}..HEAD")).await?;
     let remote_paths = changed_paths(repo, &format!("{base}..{remote_ref}")).await?;
-    let conflicts: BTreeSet<String> = local_paths.intersection(&remote_paths).cloned().collect();
+    let conflicts = find_conflicts(repo, &base, remote_ref, &local_paths, &remote_paths).await?;
     let recovery = if conflicts.is_empty() {
         None
     } else {
-        Some(create_recovery(repo, remote_ref, &conflicts).await?)
+        let paths: BTreeSet<String> = conflicts
+            .iter()
+            .flat_map(Conflict::paths)
+            .map(str::to_string)
+            .collect();
+        Some(create_recovery(repo, remote_ref, &paths).await?)
     };
 
     let temp = tempfile::tempdir()?;
     let mut merged_files = HashMap::new();
     if resolution.is_none() {
-        for path in &conflicts {
-            if !path.ends_with(".db") {
+        for conflict in &conflicts {
+            let path = &conflict.path;
+            if !conflict.paths().iter().all(|p| p.ends_with(".db")) {
                 return Ok(SyncReport::new(
                     GitSyncState::ConflictRequiresAttention,
                     format!(
@@ -785,7 +899,7 @@ async fn merge_diverged(
                     false,
                 ));
             }
-            match build_merged_database(repo, &base, remote_ref, path, temp.path()).await {
+            match build_merged_database(repo, &base, remote_ref, conflict, temp.path()).await {
                 Ok(merged) => {
                     let unique = temp.path().join(path.replace('/', "__"));
                     tokio::fs::copy(merged, &unique).await?;
@@ -808,9 +922,19 @@ async fn merge_diverged(
     validate_revision_databases(repo, remote_ref, &remote_paths).await?;
     let merge_marker = repo.join(".git").join(MERGE_MARKER);
     tokio::fs::write(&merge_marker, remote_ref).await?;
+    // Without rename detection, like `changed_paths`: otherwise Git may merge a rename on one
+    // side with an edit of the old path on the other into a binary conflict at the new path,
+    // which none of the paths handled below cover.
     let merge = run_git(
         repo,
-        &["merge", "--no-commit", "--no-edit", remote_ref],
+        &[
+            "merge",
+            "--no-commit",
+            "--no-edit",
+            "-X",
+            "no-renames",
+            remote_ref,
+        ],
         GIT_TIMEOUT,
     )
     .await;
@@ -821,28 +945,46 @@ async fn merge_diverged(
             return Err(error.into());
         }
     }
-    for path in &conflicts {
-        match resolution {
+    for conflict in &conflicts {
+        // A strategy picks whose content wins; a rename is followed either way.
+        let content = match resolution {
             Some(GitConflictStrategy::KeepLocal) => {
-                if show_blob(repo, "HEAD", path).await?.is_some() {
-                    run_git(repo, &["checkout", "--ours", "--", path], GIT_TIMEOUT).await?;
-                } else {
-                    run_git(repo, &["rm", "-f", "--", path], GIT_TIMEOUT).await?;
-                }
+                show_blob(repo, "HEAD", &conflict.local).await?
             }
             Some(GitConflictStrategy::KeepUpstream) => {
-                if show_blob(repo, remote_ref, path).await?.is_some() {
-                    run_git(repo, &["checkout", "--theirs", "--", path], GIT_TIMEOUT).await?;
-                } else {
-                    run_git(repo, &["rm", "-f", "--", path], GIT_TIMEOUT).await?;
-                }
+                show_blob(repo, remote_ref, &conflict.remote).await?
+            }
+            None => Some(tokio::fs::read(&merged_files[&conflict.path]).await?),
+        };
+        let target = conflict.target();
+        if target != conflict.path {
+            run_git(
+                repo,
+                &[
+                    "rm",
+                    "-f",
+                    "--quiet",
+                    "--ignore-unmatch",
+                    "--",
+                    &conflict.path,
+                ],
+                GIT_TIMEOUT,
+            )
+            .await?;
+        }
+        match content {
+            Some(bytes) => {
+                tokio::fs::write(repo.join(target), bytes).await?;
+                run_git(repo, &["add", "--", target], GIT_TIMEOUT).await?;
             }
             None => {
-                tokio::fs::copy(&merged_files[path], repo.join(path)).await?;
+                run_git(
+                    repo,
+                    &["rm", "-f", "--quiet", "--ignore-unmatch", "--", target],
+                    GIT_TIMEOUT,
+                )
+                .await?;
             }
-        }
-        if repo.join(path).exists() {
-            run_git(repo, &["add", "--", path], GIT_TIMEOUT).await?;
         }
     }
     run_git(
@@ -1317,6 +1459,138 @@ mod tests {
             .await
             .unwrap();
         assert!(ids.contains("one"));
+    }
+
+    /// Two clones of a remote that has `music.db` with track "one".
+    async fn two_clones(temp: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let remote = temp.join("remote.git");
+        std::fs::create_dir(&remote).unwrap();
+        command(&remote, &["init", "--bare"]);
+        let first = temp.join("first");
+        init_if_needed(&first).await.unwrap();
+        set_remote(&first, Some(remote.to_str().unwrap()))
+            .await
+            .unwrap();
+        let db_path = first.join("music.db");
+        create_collection(&db_path, &track("one")).await;
+        let report = sync_repository(first.clone(), Some(db_path), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+        let second = temp.join("second");
+        clone_repo(remote.to_str().unwrap(), &second).await.unwrap();
+        (remote, first, second)
+    }
+
+    async fn set_rating(db_path: &Path, rating: i64) {
+        let pool = db::open_pool(db_path).await.unwrap();
+        db::update_rating(&pool, "one", Some(rating)).await.unwrap();
+        pool.close().await;
+    }
+
+    async fn play(db_path: &Path) {
+        let pool = db::open_pool(db_path).await.unwrap();
+        db::inc_play_count(
+            &pool,
+            "one",
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 18).unwrap(),
+        )
+        .await
+        .unwrap();
+        pool.close().await;
+    }
+
+    async fn track_one(db_path: &Path) -> Track {
+        let pool = db::open_pool(db_path).await.unwrap();
+        let track = db::get_track(&pool, "one").await.unwrap().unwrap();
+        pool.close().await;
+        track
+    }
+
+    #[tokio::test]
+    async fn sync_merges_upstream_edit_into_locally_renamed_collection() {
+        let temp = tempfile::tempdir().unwrap();
+        let (remote, first, second) = two_clones(temp.path()).await;
+        set_rating(&first.join("music.db"), 5).await;
+        let report = sync_repository(first, None, false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        let renamed = second.join("renamed.db");
+        play(&second.join("music.db")).await;
+        crate::utils::rename_collection_file(&second.join("music.db"), &renamed).unwrap();
+        let report = sync_repository(second.clone(), Some(renamed.clone()), false, None).await;
+        assert_eq!(report.state, GitSyncState::ConflictRequiresAttention);
+        let report = sync_repository(second.clone(), None, true, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        let merged = track_one(&renamed).await;
+        assert_eq!(merged.rating, Some(5));
+        assert_eq!(merged.play_count, 1);
+        assert!(!second.join("music.db").exists());
+        let pushed = tree_paths(&remote, "HEAD").await.unwrap();
+        assert!(pushed.contains("renamed.db"));
+        assert!(!pushed.contains("music.db"));
+    }
+
+    #[tokio::test]
+    async fn sync_merges_local_edit_into_upstream_renamed_collection() {
+        let temp = tempfile::tempdir().unwrap();
+        let (remote, first, second) = two_clones(temp.path()).await;
+        set_rating(&first.join("music.db"), 5).await;
+        crate::utils::rename_collection_file(&first.join("music.db"), &first.join("renamed.db"))
+            .unwrap();
+        let report = sync_repository(first, None, false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        play(&second.join("music.db")).await;
+        let report = sync_repository(second.clone(), None, true, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        let merged = track_one(&second.join("renamed.db")).await;
+        assert_eq!(merged.rating, Some(5));
+        assert_eq!(merged.play_count, 1);
+        assert!(!second.join("music.db").exists());
+        let pushed = tree_paths(&remote, "HEAD").await.unwrap();
+        assert!(pushed.contains("renamed.db"));
+        assert!(!pushed.contains("music.db"));
+    }
+
+    #[tokio::test]
+    async fn explicit_resolution_follows_rename() {
+        for (strategy, rating) in [
+            (GitConflictStrategy::KeepLocal, 4),
+            (GitConflictStrategy::KeepUpstream, 5),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let (remote, first, second) = two_clones(temp.path()).await;
+            set_rating(&first.join("music.db"), 5).await;
+            let report = sync_repository(first, None, false, None).await;
+            assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+            let renamed = second.join("renamed.db");
+            set_rating(&second.join("music.db"), 4).await;
+            crate::utils::rename_collection_file(&second.join("music.db"), &renamed).unwrap();
+            let report = sync_repository(second.clone(), Some(renamed.clone()), true, None).await;
+            assert_eq!(report.state, GitSyncState::ConflictRequiresAttention);
+            let recovery = std::fs::read_dir(temp.path().join(".stereo-recovery/second"))
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path();
+            assert!(recovery.join("local-renamed.db").exists());
+            assert!(recovery.join("upstream-music.db").exists());
+
+            let report = sync_repository(second.clone(), None, true, Some(strategy)).await;
+            assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+            assert_eq!(
+                track_one(&renamed).await.rating,
+                Some(rating),
+                "{strategy:?}"
+            );
+            assert!(!second.join("music.db").exists());
+            let pushed = tree_paths(&remote, "HEAD").await.unwrap();
+            assert!(pushed.contains("renamed.db"));
+            assert!(!pushed.contains("music.db"));
+        }
     }
 
     #[test]

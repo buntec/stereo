@@ -18,7 +18,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::{
     beatport, db, git,
@@ -40,6 +40,47 @@ const GIT_SYNC_DELAY: Duration = Duration::from_secs(5 * 60);
 static SCHEDULED_SYNCS: LazyLock<Mutex<HashMap<PathBuf, tokio::task::JoinHandle<()>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// A collection file that a session moved or deleted, announced to all sessions: any other
+/// session with it open still has a pool on the old path, which SQLite refuses to write to.
+#[derive(Clone, Debug)]
+struct CollectionMoved {
+    /// The session that moved it, which has already updated itself.
+    origin: uuid::Uuid,
+    from: PathBuf,
+    /// `None` if the collection was deleted.
+    to: Option<PathBuf>,
+}
+
+static COLLECTION_MOVES: LazyLock<broadcast::Sender<CollectionMoved>> =
+    LazyLock::new(|| broadcast::channel(64).0);
+
+/// Tells the other sessions that a collection moved; sent while the repo lock is still held, so
+/// that their reopening (which takes it too) can't race a follow-up change to the same file.
+fn announce_collection_moved(origin: uuid::Uuid, from: PathBuf, to: Option<PathBuf>) {
+    // An error only means there are no sessions to tell.
+    let _ = COLLECTION_MOVES.send(CollectionMoved { origin, from, to });
+}
+
+/// Feeds other sessions' `CollectionMoved` announcements into this session's event queue.
+async fn forward_collection_moves(session: uuid::Uuid, events: mpsc::Sender<SessionEvent>) {
+    let mut moves = COLLECTION_MOVES.subscribe();
+    loop {
+        match moves.recv().await {
+            Ok(moved) if moved.origin == session => {}
+            Ok(CollectionMoved { from, to, .. }) => {
+                let event = InternalEvent::CollectionMoved { from, to };
+                if events.send(SessionEvent::Internal(event)).await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(missed)) => {
+                tracing::warn!("Missed {missed} collection move announcements");
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
 /// Work for a session's message loop: a message from the browser, or a follow-up posted by a task
 /// the session spawned. Slow work (network, git) runs in spawned tasks so the loop stays
 /// responsive, while any session-state changes it implies still happen in order on the loop.
@@ -49,6 +90,11 @@ enum SessionEvent {
 }
 
 enum InternalEvent {
+    /// Another session moved (`to`) or deleted (`to: None`) the collection at `from`.
+    CollectionMoved {
+        from: PathBuf,
+        to: Option<PathBuf>,
+    },
     /// A sync that may have updated the repo's working tree finished; the repo's collection list
     /// is re-sent so the client reopens its collection.
     RepoSynced {
@@ -244,6 +290,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
 
     // Spawn send / recv tasks
     let recv_task = tokio::spawn(recv_loop(ws_stream, event_tx.clone()));
+    let moves_task = tokio::spawn(forward_collection_moves(uid, event_tx.clone()));
     let send_task = tokio::spawn(send_loop(server_rx, ws_sink));
 
     // Send initial messages
@@ -293,6 +340,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
                     client: &http_client,
                     data_home: &home,
                     home: &repos_dir,
+                    session_id: uid,
                 };
                 (request_id, handle_msg(&mut state, &ctx, *msg).await)
             }
@@ -326,6 +374,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
         pool.close().await;
     }
     recv_task.abort();
+    moves_task.abort();
     send_task.abort();
     tracing::info!("WS disconnected: {uid}");
 }
@@ -416,6 +465,8 @@ struct Ctx<'a> {
     data_home: &'a Path,
     /// The directory holding the git repos.
     home: &'a Path,
+    /// Identifies this session in announcements to the others.
+    session_id: uuid::Uuid,
 }
 
 /// Fails a request/reply message so the client's callback fires instead of waiting forever.
@@ -625,6 +676,43 @@ async fn handle_internal(
     event: InternalEvent,
 ) -> anyhow::Result<()> {
     match event {
+        InternalEvent::CollectionMoved { from, to } => {
+            if state.collection.as_ref().is_some_and(|c| c.path == from) {
+                if let Some(pool) = state.pool.take() {
+                    pool.close().await;
+                }
+                state.collection = None;
+                if let Some(to) = to {
+                    let _repo_guard = match collection_repo(&to) {
+                        Some(repo) => Some(git::lock_repository(&repo).await),
+                        None => None,
+                    };
+                    // Validated, so that a file that has since moved on again isn't recreated
+                    // as an empty database.
+                    if let Err(e) = state.set_collection(to, true).await {
+                        tracing::warn!("Reopening a moved collection failed: {e:#}");
+                    }
+                }
+                // Sent before the collection list, as in `RenameCollection`.
+                let _ = tx
+                    .send(MsgServer::CollectionInfo {
+                        id: None,
+                        collection: state.collection.clone(),
+                        error_message: None,
+                        path_completions: None,
+                    })
+                    .await;
+                send_collection_stats(state, tx).await;
+            }
+            if let Some(repo) = state.repo.as_deref().filter(|r| from.parent() == Some(*r)) {
+                let _ = tx
+                    .send(MsgServer::Collections {
+                        collections: utils::list_repo_collections(repo),
+                    })
+                    .await;
+            }
+        }
+
         InternalEvent::RepoSynced { repo } => {
             if state.repo.as_deref() == Some(repo.as_path()) {
                 let _ = tx
@@ -697,6 +785,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         client,
         data_home,
         home,
+        session_id,
     } = *ctx;
     match msg {
         MsgClient::Heartbeat { timestamp } => {
@@ -1991,6 +2080,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 notify(tx, &format!("Could not delete {label}: {e}"), "error").await;
                 return Ok(());
             }
+            announce_collection_moved(session_id, path.clone(), None);
             let _ = tx
                 .send(MsgServer::Collections {
                     collections: utils::list_repo_collections(&repo),
@@ -2054,11 +2144,23 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             }
             let renamed = utils::rename_collection_file(&path, &new_path);
             if let Err(e) = &renamed {
+                // The helper puts everything back on failure, so the original is still there.
                 notify(tx, &format!("Could not rename {label}: {e}"), "error").await;
+            } else {
+                announce_collection_moved(session_id, path.clone(), Some(new_path.clone()));
             }
-            let open_path = if renamed.is_ok() { &new_path } else { &path };
             if was_open {
-                state.set_collection(open_path.clone(), false).await?;
+                let open_path = if renamed.is_ok() { &new_path } else { &path };
+                // Validated, so that a missing file is reported rather than created empty.
+                match state.set_collection(open_path.clone(), true).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        notify(tx, &format!("Could not reopen {label}"), "error").await;
+                    }
+                    Err(e) => {
+                        notify(tx, &format!("Could not reopen {label}: {e:#}"), "error").await;
+                    }
+                }
                 // Sent before the new collection list so that the client follows the rename
                 // rather than falling back to another collection when the old path disappears.
                 let _ = tx
@@ -2361,5 +2463,239 @@ mod websocket_security_tests {
         );
         assert!(websocket_auth_supplied(&headers, &protocol));
         assert!(!websocket_auth_supplied(&headers, "stereo.auth.bad"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use serde_json::{json, Value};
+    use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
+
+    use super::*;
+
+    type Socket = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    const TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// A home dir with repo `music` holding the given collections (each with track "one"), and
+    /// a backend serving it; returns the repo and the port.
+    async fn start_backend(home: &Path, collections: &[&str]) -> (PathBuf, u16) {
+        let repo = home.join("gitrepos").join("music");
+        git::init_if_needed(&repo).await.unwrap();
+        for name in collections {
+            let pool = db::open_pool(&repo.join(format!("{name}.db")))
+                .await
+                .unwrap();
+            db::init_db(&pool).await.unwrap();
+            let track = Track {
+                yt_id: "one".into(),
+                title: "One".into(),
+                artists: vec!["Artist".into()],
+                ..Default::default()
+            };
+            db::insert_track(&pool, &track, false).await.unwrap();
+            pool.close().await;
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let settings = Settings {
+            home: Some(home.to_path_buf()),
+            host: "127.0.0.1".into(),
+            port,
+            allowed_origins: vec![],
+            ws_token: None,
+            verbosity: 0,
+            dev: false,
+        };
+        let router = axum::Router::new()
+            .route("/ws", axum::routing::get(ws_handler))
+            .with_state(Arc::new(settings));
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        (repo, port)
+    }
+
+    struct Client {
+        socket: Socket,
+        /// Received messages not yet consumed by `expect`.
+        pending: VecDeque<Value>,
+    }
+
+    impl Client {
+        async fn connect(port: u16) -> Self {
+            let mut request = format!("ws://127.0.0.1:{port}/ws")
+                .into_client_request()
+                .unwrap();
+            request.headers_mut().insert(
+                header::ORIGIN,
+                format!("http://127.0.0.1:{port}").parse().unwrap(),
+            );
+            let (socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+            Client {
+                socket,
+                pending: VecDeque::new(),
+            }
+        }
+
+        async fn send(&mut self, msg: Value) {
+            self.socket
+                .send(tungstenite::Message::Text(msg.to_string()))
+                .await
+                .unwrap();
+        }
+
+        /// Consumes the first message (received so far or later) that `matches`, leaving the
+        /// others for later calls.
+        async fn expect(&mut self, what: &str, matches: impl Fn(&Value) -> bool) -> Value {
+            let deadline = tokio::time::Instant::now() + TIMEOUT;
+            loop {
+                if let Some(i) = self.pending.iter().position(&matches) {
+                    return self.pending.remove(i).unwrap();
+                }
+                let frame = tokio::time::timeout_at(deadline, self.socket.next())
+                    .await
+                    .unwrap_or_else(|_| panic!("timed out waiting for {what}: {:?}", self.pending))
+                    .expect("socket closed")
+                    .unwrap();
+                if let tungstenite::Message::Text(text) = frame {
+                    let batch: Vec<Value> = serde_json::from_str(&text).unwrap();
+                    self.pending.extend(batch);
+                }
+            }
+        }
+
+        async fn open(&mut self, repo: &Path, collection: &Path) {
+            self.send(json!({ "type": "set-repo", "path": repo })).await;
+            self.send(json!({ "type": "set-collection", "id": 1, "path": collection }))
+                .await;
+            self.expect("collection opened", |m| {
+                m["type"] == "collection-info"
+                    && m["id"] == 1
+                    && m["collection"]["path"].is_string()
+            })
+            .await;
+        }
+
+        async fn rate(&mut self, rating: i64) {
+            self.send(json!({ "type": "update-rating", "yt_id": "one", "rating": rating }))
+                .await;
+            self.expect("track update", |m| {
+                m["type"] == "track-update" && m["track"]["rating"] == rating
+            })
+            .await;
+        }
+    }
+
+    fn is_collection_info(m: &Value, path: Option<&Path>) -> bool {
+        m["type"] == "collection-info"
+            && m["id"].is_null()
+            && match path {
+                Some(path) => m["collection"]["path"] == json!(path),
+                None => m["collection"].is_null(),
+            }
+    }
+
+    fn is_collection_list(m: &Value, paths: &[&Path]) -> bool {
+        let expected: Vec<Value> = paths
+            .iter()
+            .map(|p| json!({ "path": p, "size": 0 }))
+            .collect();
+        m["type"] == "collections" && m["collections"] == json!(expected)
+    }
+
+    async fn rating(db_path: &Path) -> Option<i64> {
+        let pool = db::open_pool(db_path).await.unwrap();
+        let rating = db::get_track(&pool, "one").await.unwrap().unwrap().rating;
+        pool.close().await;
+        rating
+    }
+
+    #[tokio::test]
+    async fn other_session_follows_renamed_collection() {
+        let home = tempfile::tempdir().unwrap();
+        let (repo, port) = start_backend(home.path(), &["old"]).await;
+        let (old, new) = (repo.join("old.db"), repo.join("new.db"));
+        let mut a = Client::connect(port).await;
+        let mut b = Client::connect(port).await;
+        a.open(&repo, &old).await;
+        b.open(&repo, &old).await;
+
+        a.send(json!({ "type": "rename-collection", "path": old, "name": "new" }))
+            .await;
+        a.expect("renamed collection", |m| is_collection_info(m, Some(&new)))
+            .await;
+
+        b.expect("followed rename", |m| is_collection_info(m, Some(&new)))
+            .await;
+        b.expect("updated collection list", |m| {
+            is_collection_list(m, &[&new])
+        })
+        .await;
+        b.rate(5).await;
+        assert_eq!(rating(&new).await, Some(5));
+        assert!(!old.exists());
+    }
+
+    #[tokio::test]
+    async fn other_session_closes_deleted_collection() {
+        let home = tempfile::tempdir().unwrap();
+        let (repo, port) = start_backend(home.path(), &["gone", "keep"]).await;
+        let (gone, keep) = (repo.join("gone.db"), repo.join("keep.db"));
+        let mut a = Client::connect(port).await;
+        let mut b = Client::connect(port).await;
+        a.open(&repo, &gone).await;
+        b.open(&repo, &gone).await;
+
+        a.send(json!({ "type": "delete-collection", "path": gone }))
+            .await;
+        b.expect("closed collection", |m| is_collection_info(m, None))
+            .await;
+        b.expect("updated collection list", |m| {
+            is_collection_list(m, &[&keep])
+        })
+        .await;
+        assert!(!gone.exists());
+    }
+
+    #[tokio::test]
+    async fn failed_rename_keeps_collection_open() {
+        let home = tempfile::tempdir().unwrap();
+        let (repo, port) = start_backend(home.path(), &["old"]).await;
+        let (old, new) = (repo.join("old.db"), repo.join("new.db"));
+        let size = std::fs::metadata(&old).unwrap().len();
+        let mut a = Client::connect(port).await;
+        a.open(&repo, &old).await;
+        // Moving the database succeeds, then moving this "sidecar" fails: directories can't be
+        // hard-linked.
+        std::fs::create_dir(repo.join("old.db-shm")).unwrap();
+
+        a.send(json!({ "type": "rename-collection", "path": old, "name": "new" }))
+            .await;
+        a.expect("rename error", |m| {
+            m["type"] == "notification"
+                && m["kind"] == "error"
+                && m["message"]
+                    .as_str()
+                    .is_some_and(|s| s.starts_with("Could not rename old"))
+        })
+        .await;
+        a.expect("collection still open", |m| {
+            is_collection_info(m, Some(&old))
+        })
+        .await;
+        assert_eq!(std::fs::metadata(&old).unwrap().len(), size);
+        assert!(!new.exists());
+        a.rate(5).await;
+        assert_eq!(rating(&old).await, Some(5));
+        // Everything the rename sent came before the rating's reply; nothing else failed.
+        let errors: Vec<_> = a
+            .pending
+            .iter()
+            .filter(|m| m["type"] == "notification" && m["kind"] == "error")
+            .collect();
+        assert!(errors.is_empty(), "{errors:?}");
     }
 }
