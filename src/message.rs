@@ -184,11 +184,19 @@ pub enum MsgServer {
         error_message: Option<String>,
     },
     /// Reply to the YouTube session requests: the browser the YouTube login is read from, or
-    /// `None` when not connected.
+    /// `None` when not connected, and the account logged in there when connecting, if known.
     #[serde(rename = "youtube-session")]
     YouTubeSession {
         id: i64,
         browser: Option<String>,
+        account: Option<String>,
+    },
+    /// Reply to `connect-youtube-session` when several browser profiles are logged in to
+    /// YouTube: the user picks one, which is connected by sending its `id` as `login`.
+    #[serde(rename = "youtube-logins")]
+    YouTubeLogins {
+        id: i64,
+        logins: Vec<YouTubeLogin>,
     },
     #[serde(rename = "youtube-playlist")]
     YouTubePlaylist {
@@ -214,6 +222,16 @@ pub enum MsgServer {
         matched: i64,
         total: i64,
     },
+}
+
+/// A browser profile logged in to YouTube.
+#[derive(Debug, Clone, Serialize)]
+pub struct YouTubeLogin {
+    pub id: String,
+    /// The browser, plus the profile when it has several.
+    pub browser: String,
+    /// The YouTube account or channel logged in there, if YouTube said.
+    pub account: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -494,11 +512,13 @@ pub enum MsgClient {
         id: i64,
     },
     /// Finds the YouTube login of the browser the requesting tab runs in, identified by that
-    /// tab's `navigator.userAgent`.
+    /// tab's `navigator.userAgent`; `login` is the profile the user picked from `youtube-logins`.
     #[serde(rename = "connect-youtube-session")]
     ConnectYouTubeSession {
         id: i64,
         user_agent: String,
+        #[serde(default)]
+        login: Option<String>,
     },
     #[serde(rename = "disconnect-youtube-session")]
     DisconnectYouTubeSession {

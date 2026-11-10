@@ -190,7 +190,13 @@ export type ClientMsg =
   | { type: "cancel-fixup-tracks"; id: number }
   | { type: "backfill-spotify-ids"; id: number }
   | { type: "get-youtube-session"; id?: number }
-  | { type: "connect-youtube-session"; id?: number; user_agent: string }
+  | {
+      type: "connect-youtube-session";
+      id?: number;
+      user_agent: string;
+      /** The `id` of the login picked from a `youtube-logins` reply. */
+      login?: string;
+    }
   | { type: "disconnect-youtube-session"; id?: number }
   | {
       type: "create-youtube-playlist";
@@ -343,6 +349,14 @@ export type ServerMsg =
       id: number;
       /** Browser the YouTube login is read from, or null when not connected. */
       browser: string | null;
+      /** YouTube account or channel logged in there when connecting, if known. */
+      account: string | null;
+    }
+  | {
+      /** Several browser profiles are logged in to YouTube; the user picks one. */
+      type: "youtube-logins";
+      id: number;
+      logins: YouTubeLogin[];
     }
   | {
       type: "youtube-playlist";
@@ -405,6 +419,25 @@ export type RequestReply = (
   cb: (response: ServerMsg | { type: string }) => void,
   timeout?: number,
 ) => void;
+
+export type YouTubeLogin = {
+  id: string;
+  /** The browser, plus the profile when it has several. */
+  browser: string;
+  account: string | null;
+};
+
+/** The connected YouTube login. */
+export type YouTubeConnection = { browser: string; account: string | null };
+
+/** The connection a `youtube-session` reply describes. */
+export const youTubeConnection = (r: {
+  browser: string | null;
+  account?: string | null;
+}): YouTubeConnection | null =>
+  r.browser === null
+    ? null
+    : { browser: r.browser, account: r.account ?? null };
 
 export type AppearanceType = "system" | "light" | "dark";
 

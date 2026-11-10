@@ -456,6 +456,16 @@ struct Ctx<'a> {
 }
 
 /// Fails a request/reply message so the client's callback fires instead of waiting forever.
+/// The reply describing the connected YouTube `session`.
+fn youtube_session_msg(id: i64, session: Option<youtube::YouTubeSession>) -> MsgServer {
+    let (browser, account) = session.map_or((None, None), |s| (Some(s.browser), s.account));
+    MsgServer::YouTubeSession {
+        id,
+        browser,
+        account,
+    }
+}
+
 async fn reply_error(tx: &mpsc::Sender<MsgServer>, id: i64, message: &str) {
     let _ = tx
         .send(MsgServer::ErrorReply {
@@ -1441,19 +1451,26 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         }
 
         MsgClient::GetYouTubeSession { id } => {
-            let browser = youtube::connected_browser(data_home).await;
-            let _ = tx.send(MsgServer::YouTubeSession { id, browser }).await;
+            let session = youtube::YouTubeSession::load(data_home).await;
+            let _ = tx.send(youtube_session_msg(id, session)).await;
         }
 
-        MsgClient::ConnectYouTubeSession { id, user_agent } => {
+        MsgClient::ConnectYouTubeSession {
+            id,
+            user_agent,
+            login,
+        } => {
             // Reading the browser's cookie store can block on an OS keychain prompt.
             let tx = tx.clone();
             let client = client.clone();
             let data_home = data_home.to_path_buf();
             tokio::spawn(async move {
-                match youtube::connect(&client, &data_home, user_agent).await {
-                    Ok(browser) => {
-                        let _ = tx.send(MsgServer::YouTubeSession { id, browser }).await;
+                match youtube::connect(&client, &data_home, user_agent, login).await {
+                    Ok(youtube::Connected::Session(session)) => {
+                        let _ = tx.send(youtube_session_msg(id, session)).await;
+                    }
+                    Ok(youtube::Connected::Choose(logins)) => {
+                        let _ = tx.send(MsgServer::YouTubeLogins { id, logins }).await;
                     }
                     Err(e) => {
                         let message = format!("Could not connect YouTube: {e}");
@@ -1466,9 +1483,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
 
         MsgClient::DisconnectYouTubeSession { id } => {
             youtube::disconnect(data_home).await?;
-            let _ = tx
-                .send(MsgServer::YouTubeSession { id, browser: None })
-                .await;
+            let _ = tx.send(youtube_session_msg(id, None)).await;
         }
 
         MsgClient::CreateYouTubePlaylist { id, name, yt_ids } => {

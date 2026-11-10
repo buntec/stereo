@@ -4,38 +4,61 @@ import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { Link } from "@astryxdesign/core/Link";
+import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 
-import type { RequestReply, ServerMsg } from "./Types.tsx";
+import {
+  youTubeConnection,
+  type RequestReply,
+  type ServerMsg,
+  type YouTubeConnection,
+  type YouTubeLogin,
+} from "./Types.tsx";
 
 type YouTubeSessionDialogProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Browser the YouTube login is read from, or null when not connected. */
-  browser: string | null;
-  setBrowser: (browser: string | null) => void;
+  /** The connected YouTube login, or null when not connected. */
+  connection: YouTubeConnection | null;
+  setConnection: (connection: YouTubeConnection | null) => void;
   requestReply: RequestReply;
 };
+
+const describe = ({ browser, account }: YouTubeConnection) =>
+  account ? `${account} in ${browser}` : browser;
 
 function YouTubeSessionDialog({
   isOpen,
   onOpenChange,
-  browser,
-  setBrowser,
+  connection,
+  setConnection,
   requestReply,
 }: YouTubeSessionDialogProps) {
   const [connecting, setConnecting] = useState(false);
+  // Set when several browser profiles are logged in, for the user to pick one.
+  const [logins, setLogins] = useState<YouTubeLogin[] | null>(null);
+  const [picked, setPicked] = useState("");
 
   const onReply = (r: ServerMsg | { type: string }) => {
-    if (r.type === "youtube-session" && "browser" in r) setBrowser(r.browser);
+    if (r.type === "youtube-session" && "browser" in r) {
+      setConnection(youTubeConnection(r));
+      setLogins(null);
+    } else if (r.type === "youtube-logins" && "logins" in r) {
+      setLogins(r.logins);
+      setPicked(r.logins[0]?.id ?? "");
+    }
   };
 
-  const connect = () => {
+  const connect = (login?: string) => {
     setConnecting(true);
     requestReply(
       // The login is read from the browser this tab runs in.
-      { type: "connect-youtube-session", user_agent: navigator.userAgent },
+      {
+        type: "connect-youtube-session",
+        user_agent: navigator.userAgent,
+        login,
+      },
       (r) => {
         setConnecting(false);
         onReply(r);
@@ -55,11 +78,11 @@ function YouTubeSessionDialog({
             title="YouTube"
             onOpenChange={closeDialog}
             endContent={
-              browser ? (
+              connection ? (
                 <HStack gap={1} vAlign="center">
                   <StatusDot variant="success" label="Connected" />
                   <Text type="supporting" color="secondary">
-                    Connected via {browser}
+                    Connected via {connection.browser}
                   </Text>
                 </HStack>
               ) : undefined
@@ -68,30 +91,54 @@ function YouTubeSessionDialog({
         }
         content={
           <LayoutContent>
-            <VStack gap={3}>
-              <Text as="div" type="body">
-                Stereo creates playlists on your YouTube account using the
-                YouTube login of this browser. Make sure you&rsquo;re logged in
-                to{" "}
-                <Link href="https://www.youtube.com" isExternalLink>
-                  youtube.com
-                </Link>{" "}
-                here with the account you want playlists on, then connect.
-              </Text>
-              <Text as="div" type="supporting" color="secondary">
-                Stereo reads your YouTube cookies from this browser each time it
-                exports a playlist and never keeps a copy, so logging out of
-                YouTube here disconnects it too. It uses YouTube&rsquo;s own,
-                undocumented web API, which has no quota but may change without
-                notice.
-              </Text>
-            </VStack>
+            {logins ? (
+              <RadioList
+                label="Which YouTube login should Stereo use?"
+                description="More than one profile of this browser is logged in to YouTube."
+                value={picked}
+                onChange={setPicked}
+              >
+                {logins.map((login) => (
+                  <RadioListItem
+                    key={login.id}
+                    value={login.id}
+                    label={login.account ?? login.browser}
+                    description={login.account ? login.browser : undefined}
+                  />
+                ))}
+              </RadioList>
+            ) : (
+              <VStack gap={3}>
+                {connection && (
+                  <Text as="div" type="body">
+                    Playlists are created as {describe(connection)}.
+                  </Text>
+                )}
+                <Text as="div" type="body">
+                  Stereo creates playlists on your YouTube account using the
+                  YouTube login of this browser. Make sure you&rsquo;re logged
+                  in to{" "}
+                  <Link href="https://www.youtube.com" isExternalLink>
+                    youtube.com
+                  </Link>{" "}
+                  here with the account or channel you want playlists on, then
+                  connect.
+                </Text>
+                <Text as="div" type="supporting" color="secondary">
+                  Stereo reads your YouTube cookies from this browser each time
+                  it exports a playlist and never keeps a copy, so logging out
+                  of YouTube here disconnects it too. It uses YouTube&rsquo;s
+                  own, undocumented web API, which has no quota but may change
+                  without notice.
+                </Text>
+              </VStack>
+            )}
           </LayoutContent>
         }
         footer={
           <LayoutFooter>
             <HStack gap={2} hAlign="end">
-              {browser && (
+              {connection && !logins && (
                 <Button
                   label="Disconnect"
                   variant="destructive"
@@ -106,11 +153,11 @@ function YouTubeSessionDialog({
               )}
               <Button label="Close" variant="secondary" onClick={closeDialog} />
               <Button
-                label={browser ? "Reconnect" : "Connect"}
+                label={connection && !logins ? "Reconnect" : "Connect"}
                 variant="primary"
-                onClick={connect}
+                onClick={() => connect(logins ? picked : undefined)}
                 isLoading={connecting}
-                isDisabled={connecting}
+                isDisabled={connecting || (logins !== null && !picked)}
               />
             </HStack>
           </LayoutFooter>

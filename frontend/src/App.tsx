@@ -589,6 +589,7 @@ const reducer = (state: State, action: Action): State => {
     case "spotify-session":
     case "beatport-session":
     case "youtube-session":
+    case "youtube-logins":
     case "tracks":
     case "row-index":
     case "heartbeat":

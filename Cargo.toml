@@ -59,6 +59,9 @@ rookie = "0.5"
 glob = "0.3"
 # Signs YouTube API requests (SAPISIDHASH) the way YouTube's web client does.
 sha1 = "0.10"
+# Applies a browser cookie database's write-ahead log to a copy before rookie reads it (rookie opens
+# databases as immutable, which skips the WAL). The version rookie already uses.
+rusqlite = "0.31"
 
 [dev-dependencies]
 # WebSocket client for end-to-end session tests (the version axum already uses).

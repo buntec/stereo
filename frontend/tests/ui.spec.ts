@@ -105,6 +105,41 @@ async function openApp(
         case "get-spotify-session":
           send({ type: "spotify-session", id: message.id, connected: true });
           break;
+        case "get-youtube-session":
+          send({
+            type: "youtube-session",
+            id: message.id,
+            browser: null,
+            account: null,
+          });
+          break;
+        case "connect-youtube-session":
+          send(
+            message.login
+              ? {
+                  type: "youtube-session",
+                  id: message.id,
+                  browser: "Firefox (work)",
+                  account: "Work Channel (@work)",
+                }
+              : {
+                  type: "youtube-logins",
+                  id: message.id,
+                  logins: [
+                    {
+                      id: "/p/personal/cookies.sqlite",
+                      browser: "Firefox (personal)",
+                      account: "Me (@me)",
+                    },
+                    {
+                      id: "/p/work/cookies.sqlite",
+                      browser: "Firefox (work)",
+                      account: "Work Channel (@work)",
+                    },
+                  ],
+                },
+          );
+          break;
         case "search":
           send([
             { type: "search-results", query_id: message.query_id, tracks: [] },
@@ -484,4 +519,26 @@ test("slider arrow keys seek one slider step instead of triggering global shortc
   await expect
     .poll(() => page.evaluate(() => Reflect.get(window, "__lastSeek")))
     .toBe(2.4);
+});
+
+test("connecting YouTube asks which login to use when several are logged in", async ({
+  page,
+}) => {
+  const { messages } = await openApp(page);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: /YouTube/ }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+  await dialog.getByRole("radio", { name: /Work Channel/ }).check();
+  await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(
+    dialog.getByText(
+      "Playlists are created as Work Channel (@work) in Firefox (work).",
+    ),
+  ).toBeVisible();
+  const connects = messages.filter((m) => m.type === "connect-youtube-session");
+  expect(connects.map((m) => m.login)).toEqual([
+    undefined,
+    "/p/work/cookies.sqlite",
+  ]);
 });

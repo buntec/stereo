@@ -3,9 +3,9 @@
 //!
 //! Requests are signed in with the YouTube login of the user's browser, the way YouTube's web
 //! client signs them: the login cookies, plus an `Authorization` header hashed from the
-//! `SAPISID` cookies. Connecting only records which browser profile holds that login; the
-//! cookies are read from it afresh for every export, since Google rotates them while the
-//! browser is open and a saved copy would soon stop working.
+//! `SAPISID` cookies. Connecting only records which browser profile holds that login (the user
+//! picks one when several are logged in); the cookies are read from it afresh for every export,
+//! since Google rotates them while the browser is open and a saved copy would soon stop working.
 //!
 //! The API is undocumented and may change without notice.
 
@@ -22,13 +22,18 @@ use tokio::sync::Mutex;
 use wreq::Client;
 
 use crate::{
-    browser_cookies::{self, browsers_for, Cookie, Store},
+    browser_cookies::{self, browsers_for, Cookie, Profile, Store},
+    message::YouTubeLogin,
     utils,
 };
 
 const YOUTUBE_SESSION_FILE: &str = "youtube_session.json";
 const ORIGIN: &str = "https://www.youtube.com";
 const HOST: &str = "www.youtube.com";
+
+/// The cookies holding a login's `SAPISID`, one of which [`sapisids`] needs; whether they're
+/// still logged in is up to YouTube.
+const LOGIN_COOKIES: [&str; 3] = ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID"];
 
 /// Videos sent per request. YouTube accepts at least 200, but smaller batches report progress
 /// more often.
@@ -39,7 +44,19 @@ pub const BATCH_SIZE: usize = 100;
 pub struct YouTubeSession {
     /// The browser, plus the profile when it has several; shown to the user.
     pub browser: String,
+    /// The YouTube account or channel logged in there when connecting, as YouTube names it.
+    #[serde(default)]
+    pub account: Option<String>,
     store: Store,
+}
+
+/// The outcome of [`connect`].
+pub enum Connected {
+    /// The session connected afterwards: normally the one just found, but a disconnect or newer
+    /// connect arriving meanwhile wins, and this is whatever state that left.
+    Session(Option<YouTubeSession>),
+    /// Several profiles are logged in to YouTube, so the user has to say which to use.
+    Choose(Vec<YouTubeLogin>),
 }
 
 /// Bumped by every connect and disconnect, so a connect still reading cookies when a disconnect
@@ -57,23 +74,18 @@ impl YouTubeSession {
     }
 }
 
-/// The browser the YouTube login is read from, if connected.
-pub async fn connected_browser(home: &Path) -> Option<String> {
-    YouTubeSession::load(home).await.map(|s| s.browser)
-}
-
 /// Finds the YouTube login in the browser identified by `user_agent` and saves where it is.
-/// Every profile of every browser that sends this User-Agent is looked at, and a profile is only
-/// accepted once YouTube confirms its cookies are logged in. Fails if none is, i.e. the user
-/// isn't logged in to youtube.com in this browser.
-///
-/// Returns the browser connected afterwards: normally the one just found, but a disconnect or
-/// newer connect arriving meanwhile wins, and this one returns whatever state that left.
+/// Every profile of every browser that sends this User-Agent is looked at (only the one with id
+/// `login` if given, as picked from an earlier [`Connected::Choose`]), and a profile only counts
+/// once YouTube confirms its cookies are logged in. A single such profile is connected; several
+/// are returned for the user to choose from, since neither the User-Agent nor the order of the
+/// profiles tells which one the user means. Fails if none is logged in.
 pub async fn connect(
     client: &Client,
     home: &Path,
     user_agent: String,
-) -> anyhow::Result<Option<String>> {
+    login: Option<String>,
+) -> anyhow::Result<Connected> {
     let browsers = browsers_for(&user_agent);
     anyhow::ensure!(
         !browsers.is_empty(),
@@ -85,12 +97,18 @@ pub async fn connect(
         *current
     };
     let names: Vec<&str> = browsers.iter().map(|b| b.name).collect();
+    let mut found: Vec<(Profile, Option<String>)> = vec![];
     let mut logged_out = vec![];
     let mut unreadable = vec![];
+    let mut matched = false;
     for browser in browsers {
         for profile in browser_cookies::profiles(browser) {
+            if login.as_ref().is_some_and(|id| *id != profile.store.id()) {
+                continue;
+            }
+            matched = true;
             if *GENERATION.lock().await != generation {
-                return Ok(connected_browser(home).await);
+                return Ok(Connected::Session(YouTubeSession::load(home).await));
             }
             let cookies = match read_login(profile.store.clone()).await? {
                 Ok(Some(cookies)) => cookies,
@@ -100,21 +118,41 @@ pub async fn connect(
                     continue;
                 }
             };
-            match Api::open(client, cookies).await {
-                Ok(_) => {}
+            let api = match Api::open(client, cookies).await {
+                Ok(api) => api,
                 Err(e) => {
                     tracing::info!("YouTube login in {} not accepted: {e:#}", profile.source);
                     logged_out.push(profile.source);
                     continue;
                 }
-            }
-            let session = YouTubeSession {
-                browser: profile.source,
-                store: profile.store,
             };
-            return commit(home, generation, session).await;
+            let account = api.account().await;
+            found.push((profile, account));
         }
     }
+    if found.len() > 1 {
+        let logins = found
+            .into_iter()
+            .map(|(profile, account)| YouTubeLogin {
+                id: profile.store.id(),
+                browser: profile.source,
+                account,
+            })
+            .collect();
+        return Ok(Connected::Choose(logins));
+    }
+    if let Some((profile, account)) = found.pop() {
+        let session = YouTubeSession {
+            browser: profile.source,
+            account,
+            store: profile.store,
+        };
+        return Ok(Connected::Session(commit(home, generation, session).await?));
+    }
+    anyhow::ensure!(
+        matched,
+        "That browser profile isn't there anymore. Connect again to pick another."
+    );
     let mut message = if logged_out.is_empty() {
         format!("No YouTube login found in {}.", names.join(" / "))
     } else {
@@ -149,10 +187,10 @@ async fn commit(
     home: &Path,
     generation: u64,
     session: YouTubeSession,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Option<YouTubeSession>> {
     let current = GENERATION.lock().await;
     if *current != generation {
-        return Ok(connected_browser(home).await);
+        return Ok(YouTubeSession::load(home).await);
     }
     utils::write_secret_file(
         &home.join(YOUTUBE_SESSION_FILE),
@@ -160,7 +198,7 @@ async fn commit(
     )
     .await?;
     tracing::info!("Connected YouTube login from {}", session.browser);
-    Ok(Some(session.browser))
+    Ok(Some(session))
 }
 
 /// The cookies `store` would send to YouTube, if they include a login (`None` if not), or why
@@ -171,7 +209,7 @@ async fn read_login(store: Store) -> anyhow::Result<Result<Option<Vec<Cookie>>, 
         let cookies = browser_cookies::sent_to(cookies, HOST, "/", browser_cookies::now());
         Ok(cookies
             .iter()
-            .any(|c| c.name == "SAPISID")
+            .any(|c| LOGIN_COOKIES.contains(&c.name.as_str()))
             .then_some(cookies))
     })
     .await?)
@@ -184,13 +222,49 @@ struct ClientConfig {
     visitor_data: Option<String>,
     client_name: Option<String>,
     client_version: Option<String>,
+    /// The brand channel the login is acting as, if not the Google account's own channel.
+    delegated_session_id: Option<String>,
+}
+
+impl ClientConfig {
+    fn from_ytcfg(ytcfg: &Value) -> ClientConfig {
+        ClientConfig {
+            context: ytcfg["INNERTUBE_CONTEXT"].clone(),
+            session_index: match &ytcfg["SESSION_INDEX"] {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                _ => "0".to_string(),
+            },
+            visitor_data: ytcfg["VISITOR_DATA"].as_str().map(str::to_string),
+            client_name: match &ytcfg["INNERTUBE_CONTEXT_CLIENT_NAME"] {
+                Value::String(s) => Some(s.clone()),
+                Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            },
+            client_version: ytcfg["INNERTUBE_CONTEXT_CLIENT_VERSION"]
+                .as_str()
+                .map(str::to_string),
+            delegated_session_id: delegated_session_id(ytcfg),
+        }
+    }
+}
+
+/// The brand channel a login acts as, the way yt-dlp reads it: `DELEGATED_SESSION_ID`, or else
+/// the first half of `DATASYNC_ID`, which is `<delegated>||<user>` when acting as a brand channel
+/// and `<user>||` otherwise.
+fn delegated_session_id(ytcfg: &Value) -> Option<String> {
+    if let Some(id) = ytcfg["DELEGATED_SESSION_ID"].as_str() {
+        return (!id.is_empty()).then(|| id.to_string());
+    }
+    let (delegated, user) = ytcfg["DATASYNC_ID"].as_str()?.split_once("||")?;
+    (!delegated.is_empty() && !user.is_empty()).then(|| delegated.to_string())
 }
 
 /// A logged-in connection to YouTube's API.
 pub struct Api<'a> {
     client: &'a Client,
     cookie_header: String,
-    /// The `SAPISID` cookies the `Authorization` header is hashed from, with their schemes.
+    /// The `SAPISID` cookies the `Authorization` header is hashed from, by their schemes.
     sapisids: Vec<(&'static str, String)>,
     config: ClientConfig,
 }
@@ -223,17 +297,7 @@ impl<'a> Api<'a> {
     /// logged in.
     async fn open(client: &'a Client, cookies: Vec<Cookie>) -> anyhow::Result<Api<'a>> {
         let cookie_header = browser_cookies::header(&cookies);
-        let sapisids = [
-            ("SAPISID", "SAPISIDHASH"),
-            ("__Secure-1PAPISID", "SAPISID1PHASH"),
-            ("__Secure-3PAPISID", "SAPISID3PHASH"),
-        ]
-        .into_iter()
-        .filter_map(|(name, scheme)| {
-            let cookie = cookies.iter().find(|c| c.name == name)?;
-            Some((scheme, cookie.value.clone()))
-        })
-        .collect();
+        let sapisids = sapisids(&cookies);
         let resp = client
             .get(ORIGIN)
             .header("Cookie", &cookie_header)
@@ -250,29 +314,28 @@ impl<'a> Api<'a> {
             ytcfg["LOGGED_IN"] == json!(true),
             "YouTube doesn't consider these cookies logged in"
         );
-        let config = ClientConfig {
-            context: ytcfg["INNERTUBE_CONTEXT"].clone(),
-            session_index: match &ytcfg["SESSION_INDEX"] {
-                Value::String(s) => s.clone(),
-                Value::Number(n) => n.to_string(),
-                _ => "0".to_string(),
-            },
-            visitor_data: ytcfg["VISITOR_DATA"].as_str().map(str::to_string),
-            client_name: match &ytcfg["INNERTUBE_CONTEXT_CLIENT_NAME"] {
-                Value::String(s) => Some(s.clone()),
-                Value::Number(n) => Some(n.to_string()),
-                _ => None,
-            },
-            client_version: ytcfg["INNERTUBE_CONTEXT_CLIENT_VERSION"]
-                .as_str()
-                .map(str::to_string),
-        };
         Ok(Api {
             client,
             cookie_header,
             sapisids,
-            config,
+            config: ClientConfig::from_ytcfg(&ytcfg),
         })
+    }
+
+    /// The account or channel the login acts as, as YouTube's account switcher names it. Only
+    /// shown to the user, so `None` if YouTube doesn't say.
+    async fn account(&self) -> Option<String> {
+        let body = json!({
+            "requestType": "ACCOUNTS_LIST_REQUEST_TYPE_CHANNEL_SWITCHER",
+            "callCircumstance": "SWITCHING_USERS_FULL",
+        });
+        match self.post("account/accounts_list", body).await {
+            Ok(data) => selected_account(&data),
+            Err(e) => {
+                tracing::info!("Could not tell which YouTube account is logged in: {e:#}");
+                None
+            }
+        }
     }
 
     /// Creates a private playlist named `title` holding `video_ids`, returning its id. Ids of
@@ -325,7 +388,13 @@ impl<'a> Api<'a> {
             .header("X-Origin", ORIGIN)
             .header("Referer", format!("{ORIGIN}/"))
             .header("X-Goog-AuthUser", &self.config.session_index)
+            .header("X-Youtube-Bootstrap-Logged-In", "true")
             .json(&body);
+        // Without this, requests act as the Google account's own channel rather than the brand
+        // channel selected on youtube.com.
+        if let Some(v) = &self.config.delegated_session_id {
+            req = req.header("X-Goog-PageId", v);
+        }
         if let Some(v) = &self.config.visitor_data {
             req = req.header("X-Goog-Visitor-Id", v);
         }
@@ -357,6 +426,73 @@ impl<'a> Api<'a> {
 
 pub fn playlist_url(playlist_id: &str) -> String {
     format!("{ORIGIN}/playlist?list={playlist_id}")
+}
+
+/// The `SAPISID` cookies of a login by the `Authorization` scheme each is hashed for. Logins may
+/// lack the plain `SAPISID`, which YouTube's web client then takes from `__Secure-3PAPISID`.
+fn sapisids(cookies: &[Cookie]) -> Vec<(&'static str, String)> {
+    let value = |name: &str| {
+        cookies
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.value.clone())
+    };
+    [
+        (
+            "SAPISIDHASH",
+            value("SAPISID").or_else(|| value("__Secure-3PAPISID")),
+        ),
+        ("SAPISID1PHASH", value("__Secure-1PAPISID")),
+        ("SAPISID3PHASH", value("__Secure-3PAPISID")),
+    ]
+    .into_iter()
+    .filter_map(|(scheme, value)| Some((scheme, value?)))
+    .collect()
+}
+
+/// The selected entry of an `account/accounts_list` response, as "<name> (<handle>)".
+fn selected_account(data: &Value) -> Option<String> {
+    let mut items = vec![];
+    find_all(data, "accountItem", &mut items);
+    let item = match items.iter().find(|item| item["isSelected"] == json!(true)) {
+        Some(item) => item,
+        None if items.len() == 1 => items[0],
+        None => return None,
+    };
+    let name = text(&item["accountName"])?;
+    match text(&item["channelHandle"]).or_else(|| text(&item["accountByline"])) {
+        Some(detail) if detail != name => Some(format!("{name} ({detail})")),
+        _ => Some(name),
+    }
+}
+
+/// Every value under `key` anywhere in `value`.
+fn find_all<'v>(value: &'v Value, key: &str, found: &mut Vec<&'v Value>) {
+    match value {
+        Value::Object(obj) => {
+            for (k, v) in obj {
+                if k == key {
+                    found.push(v);
+                }
+                find_all(v, key, found);
+            }
+        }
+        Value::Array(values) => values.iter().for_each(|v| find_all(v, key, found)),
+        _ => {}
+    }
+}
+
+/// The text of one of YouTube's text objects (`simpleText`, or `runs` of text).
+fn text(value: &Value) -> Option<String> {
+    let text = match value["simpleText"].as_str() {
+        Some(text) => text.to_string(),
+        None => value["runs"]
+            .as_array()?
+            .iter()
+            .filter_map(|run| run["text"].as_str())
+            .collect(),
+    };
+    (!text.is_empty()).then_some(text)
 }
 
 /// `<scheme> <timestamp>_<sha1("<timestamp> <cookie> <origin>")>` for each `SAPISID` cookie.
@@ -416,6 +552,83 @@ mod tests {
         assert!(parse_ytcfg(r#"ytcfg.set({"LOGGED_IN":true});"#).is_none());
     }
 
+    fn cookie(name: &str, value: &str) -> Cookie {
+        Cookie {
+            domain: ".youtube.com".to_string(),
+            path: "/".to_string(),
+            secure: true,
+            expires: None,
+            name: name.to_string(),
+            value: value.to_string(),
+            http_only: false,
+            same_site: 0,
+        }
+    }
+
+    #[test]
+    fn signs_with_the_secure_sapisid_when_the_plain_one_is_missing() {
+        let cookies = [
+            cookie("__Secure-3PAPISID", "three"),
+            cookie("LOGIN_INFO", "x"),
+        ];
+        assert!(cookies
+            .iter()
+            .any(|c| LOGIN_COOKIES.contains(&c.name.as_str())));
+        assert_eq!(
+            sapisids(&cookies),
+            [
+                ("SAPISIDHASH", "three".to_string()),
+                ("SAPISID3PHASH", "three".to_string())
+            ]
+        );
+        let cookies = [
+            cookie("SAPISID", "plain"),
+            cookie("__Secure-3PAPISID", "three"),
+        ];
+        assert_eq!(sapisids(&cookies)[0], ("SAPISIDHASH", "plain".to_string()));
+    }
+
+    #[test]
+    fn keeps_the_brand_channel_a_login_acts_as() {
+        let brand = ClientConfig::from_ytcfg(&json!({
+            "SESSION_INDEX": 0,
+            "DELEGATED_SESSION_ID": "brand",
+            "DATASYNC_ID": "brand||user",
+        }));
+        assert_eq!(brand.session_index, "0");
+        assert_eq!(brand.delegated_session_id.as_deref(), Some("brand"));
+        let from_datasync = json!({ "DATASYNC_ID": "brand||user" });
+        assert_eq!(
+            delegated_session_id(&from_datasync).as_deref(),
+            Some("brand")
+        );
+        assert_eq!(
+            delegated_session_id(&json!({ "DATASYNC_ID": "user||" })),
+            None
+        );
+        assert_eq!(delegated_session_id(&json!({})), None);
+    }
+
+    #[test]
+    fn names_the_selected_account() {
+        let item = |name: &str, handle: &str, selected: bool| {
+            json!({ "accountItem": {
+                "accountName": { "simpleText": name },
+                "channelHandle": { "runs": [{ "text": handle }] },
+                "isSelected": selected,
+            }})
+        };
+        let data = json!({ "actions": [{ "contents": [
+            item("Me", "@me", false),
+            item("My Label", "@label", true),
+        ]}]});
+        assert_eq!(
+            selected_account(&data).as_deref(),
+            Some("My Label (@label)")
+        );
+        assert_eq!(selected_account(&json!({})), None);
+    }
+
     #[tokio::test]
     async fn disconnect_supersedes_a_pending_connect() {
         let home = tempfile::tempdir().unwrap();
@@ -427,12 +640,13 @@ mod tests {
         disconnect(home.path()).await.unwrap();
         let session = YouTubeSession {
             browser: "Chrome".to_string(),
+            account: None,
             store: Store::Safari,
         };
-        assert_eq!(
-            commit(home.path(), generation, session).await.unwrap(),
-            None
-        );
+        assert!(commit(home.path(), generation, session)
+            .await
+            .unwrap()
+            .is_none());
         assert!(!home.path().join(YOUTUBE_SESSION_FILE).exists());
     }
 
@@ -445,6 +659,6 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(connected_browser(home.path()).await.is_none());
+        assert!(YouTubeSession::load(home.path()).await.is_none());
     }
 }

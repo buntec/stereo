@@ -47,7 +47,8 @@ Work in progress! 🚧
 Stereo exports playlists to your YouTube account through YouTube's own web API, using
 the YouTube login of the browser you run stereo in: no Google Cloud project, OAuth
 client or API quota needed. Log in to youtube.com in that browser, then connect under
-**Settings → Accounts → YouTube**. On macOS, the first connect asks for keychain access
+**Settings → Accounts → YouTube**. If several profiles of that browser are logged in,
+stereo asks which one to use. On macOS, the first connect asks for keychain access
 to the browser's cookie store.
 
 Stereo only remembers which browser profile holds the login and reads its YouTube

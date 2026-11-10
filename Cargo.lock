@@ -3619,6 +3619,7 @@ dependencies = [
  "glob",
  "regex",
  "rookie",
+ "rusqlite",
  "rust-embed",
  "scraper",
  "serde",

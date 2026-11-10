@@ -21,7 +21,12 @@ import YouTubeIcon from "./YouTubeIcon.tsx";
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
 import BeatportSessionDialog from "./BeatportSessionDialog.tsx";
 import YouTubeSessionDialog from "./YouTubeSessionDialog.tsx";
-import type { AppearanceType, RequestReply } from "./Types.tsx";
+import {
+  youTubeConnection,
+  type AppearanceType,
+  type RequestReply,
+  type YouTubeConnection,
+} from "./Types.tsx";
 
 type AppMenuProps = {
   version?: string;
@@ -65,7 +70,8 @@ function AppMenu({
   const [menuOpen, setMenuOpen] = useState(false);
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
-  const [youtubeBrowser, setYoutubeBrowser] = useState<string | null>(null);
+  const [youtubeConnection, setYoutubeConnection] =
+    useState<YouTubeConnection | null>(null);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const [beatportBrowser, setBeatportBrowser] = useState<string | null>(null);
   const [beatportOpen, setBeatportOpen] = useState(false);
@@ -87,7 +93,7 @@ function AppMenu({
   const refreshYouTubeSession = () =>
     requestReply({ type: "get-youtube-session" }, (r) => {
       if (r.type === "youtube-session" && "browser" in r)
-        setYoutubeBrowser(r.browser);
+        setYoutubeConnection(youTubeConnection(r));
     });
 
   const openDialog = (open: (v: boolean) => void) => {
@@ -128,7 +134,7 @@ function AppMenu({
         <DropdownMenuItem
           icon={<YouTubeIcon />}
           label="YouTube"
-          description={connectionLabel(youtubeBrowser !== null)}
+          description={connectionLabel(youtubeConnection !== null)}
           onClick={() => openDialog(setYoutubeOpen)}
         />
         <DropdownMenuItem
@@ -192,8 +198,8 @@ function AppMenu({
         key={`youtube-${dialogKey}`}
         isOpen={youtubeOpen}
         onOpenChange={setYoutubeOpen}
-        browser={youtubeBrowser}
-        setBrowser={setYoutubeBrowser}
+        connection={youtubeConnection}
+        setConnection={setYoutubeConnection}
         requestReply={requestReply}
       />
     </>
