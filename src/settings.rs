@@ -45,13 +45,16 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// The data directory, always absolute: collection paths derived from it are sent to the
+    /// client and later accepted back only as absolute file paths (see `utils::is_file_or_url`).
     pub fn home_dir(&self) -> PathBuf {
-        self.home.clone().unwrap_or_else(|| {
+        let home = self.home.clone().unwrap_or_else(|| {
             let base = std::env::var("HOME")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("."));
             base.join(".local").join("share").join("stereo")
-        })
+        });
+        std::path::absolute(&home).unwrap_or(home)
     }
 
     pub fn is_loopback_bind(&self) -> bool {
@@ -152,5 +155,29 @@ mod tests {
         assert!(settings.validate_websocket_security().is_err());
         settings.ws_token = Some("secret".to_string());
         assert!(settings.validate_websocket_security().is_ok());
+    }
+
+    #[test]
+    fn relative_home_yields_importable_collection_paths() {
+        let rel = PathBuf::from(format!("target/test-relative-home-{}", std::process::id()));
+        let repo = rel.join("gitrepos").join("example");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("b.db"), b"").unwrap();
+
+        let mut settings = settings("localhost");
+        settings.home = Some(rel.clone());
+        let home = settings.home_dir();
+        assert!(home.is_absolute());
+
+        let collections =
+            crate::utils::list_repo_collections(&home.join("gitrepos").join("example"));
+        std::fs::remove_dir_all(&rel).unwrap();
+
+        assert_eq!(collections.len(), 1);
+        let path = collections[0].path.to_string_lossy();
+        assert_eq!(
+            crate::utils::is_file_or_url(&path),
+            Some(crate::utils::PathKind::File)
+        );
     }
 }

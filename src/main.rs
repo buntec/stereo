@@ -85,8 +85,12 @@ fn plist_content(settings: &Settings, exe: &std::path::Path, log_path: &std::pat
         "--host".to_string(),
         settings.host.clone(),
     ];
-    if let Some(ref h) = settings.home {
-        argv.extend(["--home".to_string(), h.display().to_string()]);
+    if settings.home.is_some() {
+        // launchd runs the service from `/`, so a relative --home must be resolved now.
+        argv.extend([
+            "--home".to_string(),
+            settings.home_dir().display().to_string(),
+        ]);
     }
     for origin in &settings.allowed_origins {
         argv.extend(["--allowed-origin".to_string(), origin.clone()]);
