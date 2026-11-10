@@ -9,8 +9,14 @@ import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { FormLayout } from "@astryxdesign/core/FormLayout";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { HStack } from "@astryxdesign/core/Stack";
+import { Selector } from "@astryxdesign/core/Selector";
 
 import { DownloadIcon } from "@radix-ui/react-icons";
+import { collectionLabel } from "./CollectionSelector.tsx";
+import type { ICollection } from "./Types.tsx";
+
+/** Where tracks are imported from: a collection in the current repo, or any file path/URL. */
+export type ImportSource = "repo" | "path";
 
 type ImportDialogProps = {
   setImportFrom: (path: string) => void;
@@ -19,6 +25,9 @@ type ImportDialogProps = {
   keepUserData: boolean;
   doImport: () => void;
   isValidImportFrom?: boolean;
+  source?: ImportSource;
+  /** Other collections in the current repo (the open one excluded); used when `source` is "repo". */
+  repoCollections?: ICollection[];
   showTrigger?: boolean;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -31,6 +40,8 @@ function ImportDialog({
   keepUserData,
   doImport,
   isValidImportFrom,
+  source = "path",
+  repoCollections = [],
   showTrigger = true,
   open,
   onOpenChange,
@@ -40,6 +51,14 @@ function ImportDialog({
   const setDialogOpen = onOpenChange ?? setInternalOpen;
   const closeDialog = () => setDialogOpen(false);
 
+  const fromRepo = source === "repo";
+  // Repo collections are known to exist, so only a failed validation blocks the import
+  // (the backend validates again when importing).
+  const canImport = fromRepo
+    ? repoCollections.some((c) => c.path === importFrom) &&
+      isValidImportFrom !== false
+    : !!isValidImportFrom;
+
   const status =
     isValidImportFrom === undefined || !importFrom
       ? undefined
@@ -47,8 +66,9 @@ function ImportDialog({
         ? ({ type: "success" } as const)
         : ({
             type: "error",
-            message:
-              "This collection could not be read. Check the file path or URL and try again.",
+            message: fromRepo
+              ? "This collection could not be read."
+              : "This collection could not be read. Check the file path or URL and try again.",
           } as const);
 
   return (
@@ -74,20 +94,52 @@ function ImportDialog({
           content={
             <LayoutContent>
               <FormLayout>
-                <Text as="div" type="body">
-                  Import tracks from another collection. You can use an absolute
-                  file path like <Code>/path/to/collection.db</Code> or a URL
-                  like <Code>https://example.com/collection.db</Code>. In any
-                  case, the import source is validated before the import button
-                  is enabled.
-                </Text>
+                {fromRepo ? (
+                  <>
+                    <Text as="div" type="body">
+                      Import tracks from another collection in this repository.
+                    </Text>
 
-                <TextInput
-                  label="Import from"
-                  value={importFrom}
-                  onChange={setImportFrom}
-                  status={status}
-                />
+                    <Selector
+                      label="Import from"
+                      placeholder={
+                        repoCollections.length > 0
+                          ? "Choose a collection"
+                          : "No other collections in this repository"
+                      }
+                      isDisabled={repoCollections.length === 0}
+                      options={repoCollections.map((c) => ({
+                        value: c.path,
+                        label: collectionLabel(c.path),
+                      }))}
+                      value={
+                        repoCollections.some((c) => c.path === importFrom)
+                          ? importFrom
+                          : undefined
+                      }
+                      onChange={setImportFrom}
+                      status={isValidImportFrom === false ? status : undefined}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Text as="div" type="body">
+                      Import tracks from another collection. You can use an
+                      absolute file path like{" "}
+                      <Code>/path/to/collection.db</Code> or a URL like{" "}
+                      <Code>https://example.com/collection.db</Code>. In any
+                      case, the import source is validated before the import
+                      button is enabled.
+                    </Text>
+
+                    <TextInput
+                      label="Import from"
+                      value={importFrom}
+                      onChange={setImportFrom}
+                      status={status}
+                    />
+                  </>
+                )}
 
                 <CheckboxInput
                   label="Keep user data (ratings, play count, etc.)"
@@ -108,7 +160,7 @@ function ImportDialog({
                 <Button
                   label="Import"
                   variant="primary"
-                  isDisabled={!isValidImportFrom}
+                  isDisabled={!canImport}
                   onClick={() => {
                     doImport();
                     closeDialog();

@@ -359,7 +359,15 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, title: action.title };
 
     case "set-import-from":
-      return { ...state, import_from: action.path };
+      // Drop the previous source's validity; a fresh check-import-from follows.
+      return {
+        ...state,
+        import_from: action.path,
+        import_from_is_valid:
+          action.path === state.import_from
+            ? state.import_from_is_valid
+            : undefined,
+      };
 
     case "set-import-keep-user-data":
       return { ...state, import_from_keep_user_data: action.keep };
@@ -2206,6 +2214,9 @@ function App() {
         }
       }}
       isValidImportFrom={state.import_from_is_valid}
+      repoCollections={(state.collections ?? []).filter(
+        (c) => c.path !== state.collection?.path,
+      )}
       requestReply={requestReply}
       onYouTubeImport={importYouTubePlaylist}
     />

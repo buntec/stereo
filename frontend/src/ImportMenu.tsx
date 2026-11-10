@@ -3,7 +3,8 @@ import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import { DownloadIcon } from "@radix-ui/react-icons";
 import ImportDialog from "./ImportDialog.tsx";
 import YouTubePlaylistImportDialog from "./YouTubePlaylistImportDialog.tsx";
-import type { ITrack, RequestReply } from "./Types.tsx";
+import type { ImportSource } from "./ImportDialog.tsx";
+import type { ICollection, ITrack, RequestReply } from "./Types.tsx";
 
 type ImportMenuProps = {
   setImportFrom: (path: string) => void;
@@ -12,6 +13,8 @@ type ImportMenuProps = {
   keepUserData: boolean;
   doImport: () => void;
   isValidImportFrom?: boolean;
+  /** Other collections in the current repo (the open one excluded). */
+  repoCollections: ICollection[];
   requestReply: RequestReply;
   onYouTubeImport: (name: string, tracks: ITrack[]) => void;
 };
@@ -23,11 +26,20 @@ export default function ImportMenu({
   keepUserData,
   doImport,
   isValidImportFrom,
+  repoCollections,
   requestReply,
   onYouTubeImport,
 }: ImportMenuProps) {
   const [collectionOpen, setCollectionOpen] = useState(false);
+  const [source, setSource] = useState<ImportSource>("path");
   const [youtubeOpen, setYoutubeOpen] = useState(false);
+
+  const openCollectionImport = (src: ImportSource) => {
+    // Start from a clean source so a path typed in one mode doesn't leak into the other.
+    if (src !== source) setImportFrom("");
+    setSource(src);
+    setCollectionOpen(true);
+  };
 
   return (
     <>
@@ -42,8 +54,13 @@ export default function ImportMenu({
         }}
         items={[
           {
-            label: "Import collection/database",
-            onClick: () => setCollectionOpen(true),
+            label: "Import from another collection in this repo",
+            onClick: () => openCollectionImport("repo"),
+            isDisabled: repoCollections.length === 0,
+          },
+          {
+            label: "Import collection/database (file or URL)",
+            onClick: () => openCollectionImport("path"),
           },
           {
             label: "Import YouTube playlist",
@@ -62,6 +79,8 @@ export default function ImportMenu({
         keepUserData={keepUserData}
         doImport={doImport}
         isValidImportFrom={isValidImportFrom}
+        source={source}
+        repoCollections={repoCollections}
       />
       <YouTubePlaylistImportDialog
         showTrigger={false}
