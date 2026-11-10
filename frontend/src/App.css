@@ -15,11 +15,14 @@
   min-width: 0;
 }
 
-/* Account buttons in the nav bar: brand color when connected, muted otherwise. */
+/* Account buttons in the nav bar: brand color when connected, muted otherwise.
+   Spotify's and Beatport's greens are too faint on the light nav surface, so
+   light mode uses darker variants (>= 3:1 against it); light-dark() follows the
+   color-scheme the Astryx Theme sets, which also covers the System appearance. */
 .stereo-app {
   --stereo-brand-youtube: #ff0000;
-  --stereo-brand-spotify: #1ed760;
-  --stereo-brand-beatport: #01ff95;
+  --stereo-brand-spotify: light-dark(#169c46, #1ed760);
+  --stereo-brand-beatport: light-dark(#009a5c, #01ff95);
 }
 .account-button svg {
   color: var(--color-text-secondary);
