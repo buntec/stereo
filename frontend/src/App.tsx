@@ -1478,12 +1478,16 @@ function App() {
   // Deletes wait for confirmation in an AlertDialog.
   const [pendingDelete, setPendingDelete] = useState<{
     ids: string[];
+    // The collection the ids came from: the server refuses the delete if another one is open.
+    collection: string;
     description: string;
     // Deleting the playing track also skips to the next one.
     isNowPlaying: boolean;
   } | null>(null);
 
   const deleteSelectedTracks = useCallback(() => {
+    if (!openCollectionPath) return;
+    const collection = openCollectionPath;
     getSelectedTracks((selectedRows) => {
       if (selectedRows.length > 0) {
         const what =
@@ -1492,12 +1496,13 @@ function App() {
             : `${selectedRows.length} tracks`;
         setPendingDelete({
           ids: selectedRows.map((t) => t.yt_id),
-          description: `This removes ${what} from ${collectionLabel(settings.collectionPath)}, including ratings and play counts.`,
+          collection,
+          description: `This removes ${what} from ${collectionLabel(collection)}, including ratings and play counts.`,
           isNowPlaying: false,
         });
       }
     });
-  }, [settings.collectionPath, getSelectedTracks]);
+  }, [openCollectionPath, getSelectedTracks]);
 
   const confirmDelete = useCallback(() => {
     if (!pendingDelete) return;
@@ -1506,7 +1511,11 @@ function App() {
     } else {
       deselectTracks();
     }
-    sendMsg({ type: "delete-tracks", ids: pendingDelete.ids });
+    sendMsg({
+      type: "delete-tracks",
+      ids: pendingDelete.ids,
+      collection: pendingDelete.collection,
+    });
     setPendingDelete(null);
   }, [pendingDelete, sendMsg, deselectTracks]);
 
@@ -2315,10 +2324,11 @@ function App() {
         }
       }}
       onDeleteFromCollection={() => {
-        if (state.current_id && state.track_info) {
+        if (state.current_id && state.track_info && openCollectionPath) {
           setPendingDelete({
             ids: [state.current_id],
-            description: `This removes “${state.track_info.title}” from ${collectionLabel(settings.collectionPath)}, including its rating and play count.`,
+            collection: openCollectionPath,
+            description: `This removes “${state.track_info.title}” from ${collectionLabel(openCollectionPath)}, including its rating and play count.`,
             isNowPlaying: true,
           });
         }

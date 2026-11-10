@@ -82,6 +82,9 @@ export function useTrackSelection(
 
   const deselectAll = useCallback(() => {
     exitSelectAll();
+    // Reset here too: without a grid (e.g. an empty collection) there's no event to do it.
+    gridSelection.current = new Set();
+    setGridCount(0);
     gridRef.current?.api?.deselectAll();
   }, [exitSelectAll, gridRef]);
 
@@ -104,10 +107,14 @@ export function useTrackSelection(
       // "api" is selectLoadedRows extending the grid's selection.
       if (!all || ev.source === "api") return;
       const removed = [...previous].filter((id) => !current.has(id));
-      const added = [...current].some((id) => !previous.has(id));
-      if (!added && removed.length === 1) {
+      const added = [...current].filter((id) => !previous.has(id));
+      if (added.length === 0 && removed.length === 1) {
         // A row toggled off (Cmd/Ctrl-click, checkbox): it leaves the selection.
         all.ids.delete(removed[0]);
+        setAllCount(all.ids.size);
+      } else if (added.length === 1 && removed.length === 0) {
+        // A row toggled back on: it rejoins the selection.
+        all.ids.add(added[0]);
         setAllCount(all.ids.size);
       } else {
         // Anything else (a plain click, a range) replaces the selection with the grid's.
@@ -128,6 +135,8 @@ export function useTrackSelection(
         cb(api.getSelectedRows());
         return;
       }
+      // Drop the reply if the select-all has ended since, e.g. because the collection changed.
+      const gen = generation.current;
       requestReply(
         {
           type: "get-rows",
@@ -137,7 +146,7 @@ export function useTrackSelection(
           sortModel: api.getState().sort?.sortModel ?? [],
         },
         (msg) => {
-          if ("rows" in msg) {
+          if (gen === generation.current && "rows" in msg) {
             cb(msg.rows.filter((t) => all.ids.has(t.yt_id)));
           }
         },

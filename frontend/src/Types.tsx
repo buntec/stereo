@@ -106,7 +106,7 @@ export type ClientMsg =
   | { type: "search-cancel-all" }
   | { type: "update-rating"; yt_id: string; rating: number | null }
   | { type: "update-track"; old: ITrack; new: ITrack }
-  | { type: "delete-tracks"; ids: string[] }
+  | { type: "delete-tracks"; ids: string[]; collection: string }
   | {
       type: "export-tracks-to-collection";
       tracks: ITrack[];

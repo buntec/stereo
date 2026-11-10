@@ -988,7 +988,25 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             });
         }
 
-        MsgClient::DeleteTracks { ids } => {
+        MsgClient::DeleteTracks { ids, collection } => {
+            // The ids were chosen in the client's view of a collection, which may since have been
+            // switched; deleting them from another collection could remove the wrong tracks.
+            let is_open = state
+                .collection
+                .as_ref()
+                .is_some_and(|c| c.path == std::path::Path::new(&collection));
+            if !is_open {
+                notify(
+                    tx,
+                    &format!(
+                        "Delete failed: {} is no longer the open collection",
+                        utils::collection_label(&collection)
+                    ),
+                    "error",
+                )
+                .await;
+                return Ok(());
+            }
             let _repo_guard = lock_current_repo(state).await;
             if let Some(pool) = state.pool() {
                 let deleted = db::delete_tracks(pool, &ids).await?;

@@ -304,6 +304,8 @@ pub enum MsgClient {
     },
     DeleteTracks {
         ids: Vec<String>,
+        /// The collection the ids were chosen from; refused unless it is the open one.
+        collection: String,
     },
     UpdateRating {
         yt_id: String,

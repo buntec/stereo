@@ -101,6 +101,9 @@ async fn run_git(repo: &Path, args: &[&str], timeout: Duration) -> Result<Output
         timeout,
         Command::new("git")
             .args(args)
+            // Collection names may contain `*`, `?` or `[`, which git would otherwise expand as
+            // patterns, so every pathspec is a literal path.
+            .env("GIT_LITERAL_PATHSPECS", "1")
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GCM_INTERACTIVE", "Never")
             .env(
@@ -337,14 +340,7 @@ async fn staged_paths(repo: &Path) -> Result<BTreeSet<String>, GitFailure> {
 async fn discover_dirty_databases(repo: &Path) -> Result<BTreeSet<String>, GitFailure> {
     let out = run_git(
         repo,
-        &[
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--",
-            "*.db",
-        ],
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         GIT_TIMEOUT,
     )
     .await?;
@@ -1286,6 +1282,34 @@ mod tests {
         let pushed = tree_paths(&remote, "HEAD").await.unwrap();
         assert!(pushed.contains("keep.db"));
         assert!(!pushed.contains("gone.db"));
+    }
+
+    #[tokio::test]
+    async fn collection_names_are_not_git_patterns() {
+        let temp = tempfile::tempdir().unwrap();
+        let remote = temp.path().join("remote.git");
+        std::fs::create_dir(&remote).unwrap();
+        command(&remote, &["init", "--bare"]);
+        let repo = temp.path().join("repo");
+        init_if_needed(&repo).await.unwrap();
+        set_remote(&repo, Some(remote.to_str().unwrap()))
+            .await
+            .unwrap();
+        let pattern = repo.join("mix*.db");
+        create_collection(&pattern, &track("one")).await;
+        create_collection(&repo.join("mix1.db"), &track("two")).await;
+        create_collection(&repo.join("keep.db"), &track("three")).await;
+        let report = sync_repository(repo.clone(), Some(pattern.clone()), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        crate::utils::remove_collection_file(&pattern).unwrap();
+        let report = sync_repository(repo.clone(), Some(pattern), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        let pushed = tree_paths(&remote, "HEAD").await.unwrap();
+        assert!(!pushed.contains("mix*.db"));
+        assert!(pushed.contains("mix1.db"));
+        assert!(pushed.contains("keep.db"));
     }
 
     #[tokio::test]
