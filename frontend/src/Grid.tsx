@@ -43,7 +43,6 @@ import {
   type FullWidthCellKeyDownEvent,
   themeQuartz,
   colorSchemeDark,
-  type SizeColumnsToContentStrategy,
   type GridState,
   type StateUpdatedEvent,
 } from "ag-grid-community";
@@ -81,6 +80,25 @@ const fixedWidth = (width: number): ColDef => ({
   resizable: false,
   suppressAutoSize: true,
 });
+
+// Columns whose content has a typical length (e.g. "Extended Mix"): start at that width
+// instead of growing to the longest value, but stay manually resizable.
+const compactWidth = (width: number): ColDef => ({
+  width,
+  minWidth: 60,
+  suppressAutoSize: true,
+});
+
+// Free-text columns share whatever space the other columns leave. They are resizable;
+// resizing one takes space from the flex columns to its right.
+const flexWidth = (flex: number): ColDef => ({
+  flex,
+  minWidth: 120,
+});
+
+// Width of the play/add/edit controls column, which is fixed by its renderer's content.
+const SEARCH_CONTROLS_WIDTH = 144;
+const TRACK_CONTROLS_WIDTH = 226;
 
 const ArtistCellRenderer = (params: ICellRendererParams<ITrack, string[]>) => (
   <HStack as="span" gap={0} vAlign="center" height="100%">
@@ -370,32 +388,34 @@ export const SearchResultsGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: SearchPlayControlRenderer,
-      width: 180,
+      ...fixedWidth(SEARCH_CONTROLS_WIDTH),
     },
     {
       field: "title",
       headerName: "Title",
       filter: true,
-      width: 150,
-      suppressAutoSize: true,
+      ...flexWidth(3),
     },
-    { field: "mix_name", headerName: "Mix", filter: true },
+    {
+      field: "mix_name",
+      headerName: "Mix",
+      filter: true,
+      ...compactWidth(120),
+    },
     {
       field: "artists",
       headerName: "Artist",
       filter: true,
       type: "artists",
       cellRenderer: ArtistCellRenderer,
-      width: 150,
-      suppressAutoSize: true,
+      ...flexWidth(3),
     },
     {
       field: "label",
       headerName: "Label",
       filter: true,
       cellRenderer: LabelCellRenderer,
-      width: 150,
-      suppressAutoSize: true,
+      ...flexWidth(2),
     },
     {
       field: "release_date",
@@ -403,7 +423,7 @@ export const SearchResultsGrid = ({
       sortable: true,
       initialSort: isChart ? undefined : "desc",
       filter: true,
-      ...fixedWidth(120),
+      ...fixedWidth(130),
     },
     {
       field: "genre",
@@ -422,7 +442,7 @@ export const SearchResultsGrid = ({
       field: "source",
       headerName: "Source",
       filter: true,
-      width: 110,
+      ...compactWidth(120),
       valueFormatter: (params: ValueFormatterParams<ITrack, string>) => {
         switch (params.value) {
           case "beatport":
@@ -445,19 +465,6 @@ export const SearchResultsGrid = ({
   const rowSelection = useMemo<RowSelectionOptions>(() => {
     return {
       mode: "multiRow",
-    };
-  }, []);
-
-  const autoSizeStrategy = useMemo<SizeColumnsToContentStrategy>(() => {
-    return {
-      type: "fitCellContents",
-      scaleUpToFitGridWidth: true,
-    };
-  }, []);
-
-  const defaultColDef = useMemo<ColDef>(() => {
-    return {
-      // flex: 1,
     };
   }, []);
 
@@ -567,10 +574,8 @@ export const SearchResultsGrid = ({
         getRowId={getRowId}
         columnTypes={columnTypes}
         columnDefs={colDefs}
-        defaultColDef={defaultColDef}
         rowSelection={rowSelection}
         rowClassRules={rowClassRules}
-        autoSizeStrategy={autoSizeStrategy}
         rowHeight={32}
         context={context}
         onSelectionChanged={onSelectionChanged}
@@ -716,14 +721,13 @@ export const TracksGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: PlayControlRenderer,
-      width: 180,
+      ...fixedWidth(TRACK_CONTROLS_WIDTH),
     },
     {
       field: "title",
       headerName: "Title",
       filter: true,
-      width: 150,
-      suppressAutoSize: true,
+      ...flexWidth(3),
     },
     {
       field: "artists",
@@ -731,16 +735,14 @@ export const TracksGrid = ({
       filter: true,
       type: "artists",
       cellRenderer: ArtistCellRenderer,
-      width: 150,
-      suppressAutoSize: true,
+      ...flexWidth(3),
     },
     {
       field: "label",
       headerName: "Label",
       filter: true,
       cellRenderer: LabelCellRenderer,
-      width: 150,
-      suppressAutoSize: true,
+      ...flexWidth(2),
     },
     {
       field: "release_date",
@@ -748,7 +750,7 @@ export const TracksGrid = ({
       sortable: true,
       initialSort: "desc",
       filter: "agDateColumnFilter",
-      ...fixedWidth(120),
+      ...fixedWidth(130),
     },
     {
       field: "genre",
@@ -780,14 +782,14 @@ export const TracksGrid = ({
       field: "play_count",
       headerName: "Plays",
       filter: "agNumberColumnFilter",
-      width: 80,
+      ...compactWidth(90),
       cellStyle: { textAlign: "right" },
     },
     {
       field: "last_played",
       headerName: "Last played",
       filter: true,
-      ...fixedWidth(200),
+      ...fixedWidth(130),
     },
     {
       field: "bp_id",
@@ -812,17 +814,28 @@ export const TracksGrid = ({
     },
   ]);
 
+  // Restoring a saved state clears the flex of every column its sizing doesn't list, so
+  // add the flex defaults back for columns the user hasn't resized (resizing a flex
+  // column gives it a fixed width, which is then saved).
+  const restoredState = useMemo<GridState | undefined>(() => {
+    if (!initialState) return undefined;
+    const saved = initialState.columnSizing?.columnSizingModel ?? [];
+    const savedIds = new Set(saved.map((s) => s.colId));
+    const flexDefaults = colDefs.flatMap((c) =>
+      c.field && c.flex && !savedIds.has(c.field)
+        ? [{ colId: c.field, flex: c.flex }]
+        : [],
+    );
+    return {
+      ...initialState,
+      columnSizing: { columnSizingModel: [...saved, ...flexDefaults] },
+    };
+  }, [initialState, colDefs]);
+
   const rowSelection = useMemo<RowSelectionOptions>(() => {
     return {
       mode: "multiRow",
       headerCheckbox: false,
-    };
-  }, []);
-
-  const autoSizeStrategy = useMemo<SizeColumnsToContentStrategy>(() => {
-    return {
-      type: "fitCellContents",
-      scaleUpToFitGridWidth: true,
     };
   }, []);
 
@@ -831,7 +844,6 @@ export const TracksGrid = ({
       filterParams: {
         buttons: ["clear"],
       },
-      // flex: 1,
     };
   }, []);
 
@@ -947,12 +959,11 @@ export const TracksGrid = ({
         ref={gridRef}
         columnTypes={columnTypes}
         rowClassRules={rowClassRules}
-        initialState={initialState}
+        initialState={restoredState}
         onStateUpdated={onStateUpdate0}
         columnDefs={colDefs}
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}
-        autoSizeStrategy={autoSizeStrategy}
         rowHeight={32}
         getRowId={getRowId}
         context={context}
