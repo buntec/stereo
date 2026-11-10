@@ -373,7 +373,14 @@ async fn commit_dirty(repo: &Path, dirty: &mut BTreeSet<String>) -> anyhow::Resu
         if repo.join(name).exists() {
             stage_consistent_database(repo, name).await?;
         } else {
-            run_git(repo, &["add", "-u", "--", name], GIT_TIMEOUT).await?;
+            // A deleted collection. It may never have been committed (created and deleted
+            // before a sync ran), which `git add -u` would reject as an unmatched pathspec.
+            run_git(
+                repo,
+                &["rm", "--cached", "--quiet", "--ignore-unmatch", "--", name],
+                GIT_TIMEOUT,
+            )
+            .await?;
         }
     }
     if staged_paths(repo).await?.is_empty() {
@@ -381,7 +388,9 @@ async fn commit_dirty(repo: &Path, dirty: &mut BTreeSet<String>) -> anyhow::Resu
         write_dirty(repo, dirty).await?;
         return Ok(());
     }
-    let message = if names.len() == 1 {
+    let message = if names.len() == 1 && !repo.join(&names[0]).exists() {
+        format!("delete {}", names[0])
+    } else if names.len() == 1 {
         format!("update {}", names[0])
     } else {
         format!("update {} collections", names.len())
@@ -1250,6 +1259,62 @@ mod tests {
             .await
             .unwrap();
         assert!(ids.contains("two"));
+    }
+
+    #[tokio::test]
+    async fn sync_commits_and_pushes_deleted_collection() {
+        let temp = tempfile::tempdir().unwrap();
+        let remote = temp.path().join("remote.git");
+        std::fs::create_dir(&remote).unwrap();
+        command(&remote, &["init", "--bare"]);
+        let repo = temp.path().join("repo");
+        init_if_needed(&repo).await.unwrap();
+        set_remote(&repo, Some(remote.to_str().unwrap()))
+            .await
+            .unwrap();
+        let keep = repo.join("keep.db");
+        let gone = repo.join("gone.db");
+        create_collection(&keep, &track("one")).await;
+        create_collection(&gone, &track("two")).await;
+        let report = sync_repository(repo.clone(), Some(gone.clone()), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        crate::utils::remove_collection_file(&gone).unwrap();
+        let report = sync_repository(repo.clone(), Some(gone), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        let pushed = tree_paths(&remote, "HEAD").await.unwrap();
+        assert!(pushed.contains("keep.db"));
+        assert!(!pushed.contains("gone.db"));
+    }
+
+    #[tokio::test]
+    async fn deleting_never_committed_collection_does_not_block_sync() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        init_if_needed(&repo).await.unwrap();
+        let keep = repo.join("keep.db");
+        create_collection(&keep, &track("one")).await;
+        let report = sync_repository(repo.clone(), Some(keep.clone()), false, None).await;
+        assert_eq!(report.state, GitSyncState::LocalOnly, "{}", report.message);
+
+        // Created and deleted again before any sync committed it.
+        let scratch = repo.join("scratch.db");
+        create_collection(&scratch, &track("two")).await;
+        crate::utils::remove_collection_file(&scratch).unwrap();
+        let report = sync_repository(repo.clone(), Some(scratch), false, None).await;
+        assert_eq!(report.state, GitSyncState::LocalOnly, "{}", report.message);
+        assert!(read_dirty(&repo).is_empty());
+
+        // Later changes still sync.
+        let pool = db::open_pool(&keep).await.unwrap();
+        db::insert_track(&pool, &track("three"), false)
+            .await
+            .unwrap();
+        pool.close().await;
+        let report = sync_repository(repo.clone(), Some(keep), false, None).await;
+        assert_eq!(report.state, GitSyncState::LocalOnly, "{}", report.message);
+        assert!(discover_dirty_databases(&repo).await.unwrap().is_empty());
     }
 
     #[tokio::test]

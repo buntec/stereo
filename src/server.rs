@@ -1944,6 +1944,54 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             schedule_collection_sync(state, tx).await;
         }
 
+        MsgClient::DeleteCollection { path } => {
+            let _repo_guard = lock_current_repo(state).await;
+            let Some(repo) = state.repo.clone() else {
+                notify(tx, "No repo selected", "error").await;
+                return Ok(());
+            };
+            let path = std::path::PathBuf::from(&path);
+            // Only collections listed for the current repo, never an arbitrary file.
+            if !utils::list_repo_collections(&repo)
+                .iter()
+                .any(|c| c.path == path)
+            {
+                notify(tx, "Cannot delete: not a collection of this repo", "error").await;
+                return Ok(());
+            }
+            let was_open = state.collection.as_ref().is_some_and(|c| c.path == path);
+            if was_open {
+                if let Some(pool) = state.pool.take() {
+                    pool.close().await;
+                }
+                state.collection = None;
+            }
+            let label = path
+                .file_stem()
+                .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+            if let Err(e) = utils::remove_collection_file(&path) {
+                notify(tx, &format!("Could not delete {label}: {e}"), "error").await;
+                return Ok(());
+            }
+            let _ = tx
+                .send(MsgServer::Collections {
+                    collections: utils::list_repo_collections(&repo),
+                })
+                .await;
+            if was_open {
+                let _ = tx
+                    .send(MsgServer::CollectionInfo {
+                        id: None,
+                        collection: None,
+                        error_message: None,
+                        path_completions: None,
+                    })
+                    .await;
+            }
+            notify(tx, &format!("Deleted collection {label}"), "info").await;
+            schedule_git_sync(tx, repo, path).await;
+        }
+
         MsgClient::SetCollection { id, path } => {
             let p = std::path::PathBuf::from(&path);
             // Don't open a database while an update sync may still be replacing it.

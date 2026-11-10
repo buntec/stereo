@@ -96,6 +96,7 @@ export type ClientMsg =
   | { type: "validate-track"; track: unknown; id?: number }
   | { type: "check-spotify-id"; sp_id: string; id?: number }
   | { type: "create-collection"; name: string }
+  | { type: "delete-collection"; path: string }
   | { type: "collection-contains-ids"; yt_ids: string[] }
   | { type: "get-track-info"; yt_id: string }
   | { type: "import-from"; path: string; keep_user_data: boolean }
@@ -381,7 +382,6 @@ export type Action =
   | { type: "grid-refreshed" }
   | { type: "grid-purged" }
   | { type: "search-box-input"; input: string }
-  | { type: "selection-changed"; selected: string[] }
   | { type: "search-results-selection-changed"; selected: ITrack[] }
   | { type: "set-track-rating"; yt_id: string; rating: number | null }
   | { type: "clear-search-results" }

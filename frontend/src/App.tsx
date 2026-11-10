@@ -101,6 +101,7 @@ import NewReleasesDialog, {
   type NewReleasesOverrides,
 } from "./NewReleasesDialog.tsx";
 import GitSyncStatus from "./GitSyncStatus.tsx";
+import { useTrackSelection } from "./TrackSelection.tsx";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
@@ -222,7 +223,6 @@ type State = {
   search_sources: TrackSource[];
   new_releases_days: number;
 
-  track_selection: string[];
   track_info?: ITrack;
 
   notification_queue: AppNotification[];
@@ -420,9 +420,6 @@ const reducer = (state: State, action: Action): State => {
 
     case "search-box-input":
       return { ...state, search_box_input: action.input, search_busy: false };
-
-    case "selection-changed":
-      return { ...state, track_selection: action.selected };
 
     case "search-results-selection-changed":
       return { ...state, search_results_selection: action.selected };
@@ -781,7 +778,6 @@ const reducer = (state: State, action: Action): State => {
 function App() {
   const [state, dispatch] = useReducer(reducer, {
     playlist: [],
-    track_selection: [],
     show_player2: false,
     player_state: YTPlayerState.UNSTARTED,
     should_refresh_grid: false,
@@ -898,6 +894,16 @@ function App() {
 
   const gridRef = useRef<AgGridReact<ITrack>>(null);
   const [gridReady, setGridReady] = useState(false);
+  const trackSelection = useTrackSelection(gridRef, requestReply);
+  const { getSelectedTracks } = trackSelection;
+
+  // A selection only applies to the collection it was made in.
+  const deselectTracks = trackSelection.deselectAll;
+  const openCollectionPath = state.collection?.path;
+  useEffect(() => {
+    deselectTracks();
+    setFilteredRowCount(undefined);
+  }, [openCollectionPath, deselectTracks]);
 
   const updatePlaylist = useCallback(
     (shuffle: boolean) => {
@@ -1153,9 +1159,14 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.collection, state.collection_is_valid]);
 
-  // Only send set-collection after a repo has been selected (state.collections defined)
+  // Only send set-collection after a repo has been selected (state.collections defined), and
+  // only for a collection it has: the list changes before the selection does, e.g. when the
+  // selected collection was deleted.
   useEffect(() => {
-    if (settings.collectionPath && state.collections !== undefined) {
+    if (
+      settings.collectionPath &&
+      state.collections?.some((c) => c.path === settings.collectionPath)
+    ) {
       requestReply(
         { type: "set-collection", path: settings.collectionPath },
         (msg) => {
@@ -1464,10 +1475,6 @@ function App() {
     gridRef.current?.api?.setFilterModel(null);
   }, []);
 
-  const deselectAll = useCallback(() => {
-    gridRef.current?.api?.deselectAll();
-  }, []);
-
   // Deletes wait for confirmation in an AlertDialog.
   const [pendingDelete, setPendingDelete] = useState<{
     ids: string[];
@@ -1477,52 +1484,53 @@ function App() {
   } | null>(null);
 
   const deleteSelectedTracks = useCallback(() => {
-    const selectedRows = gridRef.current?.api?.getSelectedRows();
-    if (selectedRows && selectedRows.length > 0) {
-      const what =
-        selectedRows.length === 1
-          ? `“${selectedRows[0].title}”`
-          : `${selectedRows.length} tracks`;
-      setPendingDelete({
-        ids: selectedRows.map((t) => t.yt_id),
-        description: `This removes ${what} from ${collectionLabel(settings.collectionPath)}, including ratings and play counts.`,
-        isNowPlaying: false,
-      });
-    }
-  }, [settings.collectionPath]);
+    getSelectedTracks((selectedRows) => {
+      if (selectedRows.length > 0) {
+        const what =
+          selectedRows.length === 1
+            ? `“${selectedRows[0].title}”`
+            : `${selectedRows.length} tracks`;
+        setPendingDelete({
+          ids: selectedRows.map((t) => t.yt_id),
+          description: `This removes ${what} from ${collectionLabel(settings.collectionPath)}, including ratings and play counts.`,
+          isNowPlaying: false,
+        });
+      }
+    });
+  }, [settings.collectionPath, getSelectedTracks]);
 
   const confirmDelete = useCallback(() => {
     if (!pendingDelete) return;
     if (pendingDelete.isNowPlaying) {
       dispatch({ type: "play-next-track" });
     } else {
-      gridRef.current?.api?.deselectAll();
+      deselectTracks();
     }
     sendMsg({ type: "delete-tracks", ids: pendingDelete.ids });
     setPendingDelete(null);
-  }, [pendingDelete, sendMsg]);
+  }, [pendingDelete, sendMsg, deselectTracks]);
 
   const exportSelectedTracksToCollection = useCallback(
     (collection: string) => {
-      const tracks = gridRef.current?.api?.getSelectedRows();
-      if (tracks) {
-        sendMsg({ type: "export-tracks-to-collection", tracks, collection });
-      }
+      getSelectedTracks((tracks) => {
+        if (tracks.length > 0) {
+          sendMsg({ type: "export-tracks-to-collection", tracks, collection });
+        }
+      });
     },
-    [sendMsg],
+    [sendMsg, getSelectedTracks],
   );
 
   const openSelectedTracksAsYTMPlaylist = useCallback(() => {
-    const selectedRows = gridRef.current?.api?.getSelectedRows();
-    if (selectedRows) {
+    getSelectedTracks((selectedRows) => {
       const yt_ids = selectedRows.map((t) => t.yt_id);
       requestReply({ type: "create-yt-anon-playlist", yt_ids }, (r) => {
         if ("url" in r) {
           window.open(r.url ?? undefined, "_blank");
         }
       });
-    }
-  }, [requestReply]);
+    });
+  }, [requestReply, getSelectedTracks]);
 
   const openTopTracksAsYTMPlaylist = useCallback(() => {
     if (gridRef.current) {
@@ -1560,18 +1568,19 @@ function App() {
   const addTracksPendingId = useRef(0);
 
   const exportSelectionToSpotifyPlaylist = useCallback(() => {
-    const selectedRows = gridRef.current?.api?.getSelectedRows();
-    if (selectedRows && selectedRows.length > 0) {
-      setSpotifyPlaylistTracks(
-        selectedRows.map((t: ITrack) => ({
-          artist: t.artists.join(", "),
-          title: t.title,
-          sp_id: t.sp_id,
-        })),
-      );
-      setSpotifyPlaylistOpen(true);
-    }
-  }, []);
+    getSelectedTracks((selectedRows) => {
+      if (selectedRows.length > 0) {
+        setSpotifyPlaylistTracks(
+          selectedRows.map((t: ITrack) => ({
+            artist: t.artists.join(", "),
+            title: t.title,
+            sp_id: t.sp_id,
+          })),
+        );
+        setSpotifyPlaylistOpen(true);
+      }
+    });
+  }, [getSelectedTracks]);
 
   const spotifyPlaylistReqId = useRef<number>(0);
   const createSpotifyPlaylist = useCallback(
@@ -1648,12 +1657,13 @@ function App() {
   ]);
 
   const openSelectedTracksAsYTSavedPlaylist = useCallback(() => {
-    const selectedRows = gridRef.current?.api?.getSelectedRows();
-    if (selectedRows && selectedRows.length > 0) {
-      setYtPlaylistYtIds(selectedRows.map((t) => t.yt_id));
-      setYtPlaylistOpen(true);
-    }
-  }, []);
+    getSelectedTracks((selectedRows) => {
+      if (selectedRows.length > 0) {
+        setYtPlaylistYtIds(selectedRows.map((t) => t.yt_id));
+        setYtPlaylistOpen(true);
+      }
+    });
+  }, [getSelectedTracks]);
 
   const openAllTracksAsYTSavedPlaylist = useCallback(() => {
     if (gridRef.current) {
@@ -2192,6 +2202,12 @@ function App() {
     />
   );
 
+  const visibleTrackCount = filteredRowCount ?? state.collection?.size ?? 0;
+  const canSelectAllTracks =
+    !!state.collection &&
+    visibleTrackCount > 0 &&
+    trackSelection.selectionCount < visibleTrackCount;
+
   const collectionBody = isSearchGridActive ? (
     <SearchResultsGrid
       // Chart results get different columns and default sort; remounting applies them.
@@ -2256,12 +2272,15 @@ function App() {
       playId={playIdForGrid}
       updateRating={updateRating}
       requestReply={requestReply}
-      dispatch={dispatch}
       sendMsg={sendMsg}
       setGridReady={setGridReady}
       initialState={gridState}
       onStateUpdate={onTrackGridStateUpdate}
       onRowCountChange={setFilteredRowCount}
+      onSelectionChanged={trackSelection.onSelectionChanged}
+      onRowsLoaded={trackSelection.selectLoadedRows}
+      onFilterChanged={trackSelection.onFilterChanged}
+      onSelectAll={trackSelection.selectAll}
       onArtistClick={handleArtistClick}
       onLabelClick={handleLabelClick}
       onShazamSimilar={handleShazamSimilar}
@@ -2370,6 +2389,9 @@ function App() {
                   }
                   onCreate={(name) =>
                     sendMsg({ type: "create-collection", name })
+                  }
+                  onDelete={(path) =>
+                    sendMsg({ type: "delete-collection", path })
                   }
                   repos={state.repos ?? []}
                   repoPath={settings.repoPath}
@@ -2492,7 +2514,7 @@ function App() {
                   (
                     isSearchGridActive
                       ? state.search_results_selection?.length
-                      : state.track_selection.length
+                      : trackSelection.selectionCount
                   )
                     ? "muted"
                     : "transparent"
@@ -2525,7 +2547,7 @@ function App() {
                     ) : (
                       <>
                         <Text type="supporting">
-                          {filteredRowCount ?? state.collection?.size ?? 0}
+                          {visibleTrackCount}
                           {filteredRowCount !== undefined &&
                           state.collection &&
                           filteredRowCount !== state.collection.size
@@ -2533,15 +2555,31 @@ function App() {
                             : ""}{" "}
                           tracks
                         </Text>
-                        {state.track_selection.length > 0 && (
+                        {canSelectAllTracks && (
+                          <Tooltip
+                            content={
+                              <>
+                                Select all tracks matching the column filters{" "}
+                                <Kbd keys="mod+a" />
+                              </>
+                            }
+                          >
+                            <Button
+                              label="Select all"
+                              variant="ghost"
+                              onClick={trackSelection.selectAll}
+                            />
+                          </Tooltip>
+                        )}
+                        {trackSelection.selectionCount > 0 && (
                           <>
                             <Text type="supporting" weight="bold">
-                              {state.track_selection.length} selected
+                              {trackSelection.selectionCount} selected
                             </Text>
                             <Button
                               label="Deselect all"
                               variant="ghost"
-                              onClick={deselectAll}
+                              onClick={trackSelection.deselectAll}
                             />
                             <Button
                               label="Delete selected"
@@ -2552,7 +2590,7 @@ function App() {
                           </>
                         )}
                         <ExportDropDown
-                          selectionCount={state.track_selection.length}
+                          selectionCount={trackSelection.selectionCount}
                           collections={state.collections ?? []}
                           exportToCollection={exportSelectedTracksToCollection}
                           exportSelectionToYTM={openSelectedTracksAsYTMPlaylist}

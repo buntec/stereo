@@ -334,6 +334,10 @@ pub enum MsgClient {
     CreateCollection {
         name: String,
     },
+    /// Deletes a collection of the current repo; the deletion is committed by the next sync.
+    DeleteCollection {
+        path: String,
+    },
     GetPathCompletions {
         id: i64,
         path_prefix: String,
