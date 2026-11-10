@@ -90,7 +90,7 @@ import SpotifyPlaylistDialog, {
   type SpotifyPlaylistTarget,
 } from "./SpotifyPlaylistDialog.tsx";
 import AddTracksDialog from "./AddTracksDialog.tsx";
-import AppMenu from "./AppMenu.tsx";
+import NavBarControls from "./NavBarControls.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
@@ -2476,12 +2476,13 @@ function App() {
                 />
               </StackItem>
               <HStack vAlign="center" hAlign="end">
-                <AppMenu
+                <NavBarControls
                   version={state.backend_version}
                   appearance={settings.appearance}
                   setAppearance={(appearance) =>
                     setSettings({ ...settings, appearance })
                   }
+                  isConnected={backendReady}
                   requestReply={requestReply}
                   collectionOpen={!!state.collection}
                   spotifyBackfillRunning={state.spotify_backfill_running}

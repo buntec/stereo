@@ -49,7 +49,7 @@ Everything is driven over a **single WebSocket connection** (`/ws`, handled in `
 - **`WebSocket.tsx`** — thin reconnecting-WebSocket hook. Supports fire-and-forget `sendMsg` and a request/reply pattern (`requestReply`) that tags outgoing messages with an auto-incrementing `id` and resolves a callback when a reply with the same `id` comes back; also sends a heartbeat every 10s.
 - **`Grid.tsx`** — ag-Grid wrappers (`TracksGrid`, `SearchResultsGrid`) using the server-side row model, calling back into the WS `get-rows`/`get-row-index` protocol for pagination/sort/filter. The search grid checks which results are already in the collection with one batched `collection-contains-ids` request.
 - **`YT.tsx`** — wraps the YouTube IFrame Player API.
-- Other components are single-purpose dialogs/widgets (`ImportDialog`, `ExportDropDown`, `GitRemoteDialog`, `YouTubePlaylistDialog`, `CollectionSelector` (collection + repo menu), `AppMenu` (settings: accounts, appearance), `EditDialog`, `Rating`, `SearchBox`, `NowPlayingMenu`, `CollectionSummary`, `Keyboard` for shortcuts, etc.) — UI is Astryx (`@astryxdesign/core`, see the Astryx notes below); icons come from `@radix-ui/react-icons`.
+- Other components are single-purpose dialogs/widgets (`ImportDialog`, `ExportDropDown`, `GitRemoteDialog`, `YouTubePlaylistDialog`, `CollectionSelector` (collection + repo menu), `NavBarControls` (nav-bar version, account status buttons, appearance toggle), `EditDialog`, `Rating`, `SearchBox`, `NowPlayingMenu`, `CollectionSummary`, `Keyboard` for shortcuts, etc.) — UI is Astryx (`@astryxdesign/core`, see the Astryx notes below); icons come from `@radix-ui/react-icons`.
 
 ### Protocol sync
 

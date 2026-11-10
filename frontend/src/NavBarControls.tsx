@@ -1,23 +1,15 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { IconButton } from "@astryxdesign/core/IconButton";
 import {
-  DropdownMenu,
-  DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-} from "@astryxdesign/core/DropdownMenu";
-import { Divider } from "@astryxdesign/core/Divider";
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@astryxdesign/core/SegmentedControl";
 import { HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import {
-  DesktopIcon,
-  DiscIcon,
-  GearIcon,
-  MoonIcon,
-  SunIcon,
-} from "@radix-ui/react-icons";
-import { MenuCheck, MenuHeading } from "./Menu.tsx";
+import { DesktopIcon, MoonIcon, SunIcon } from "@radix-ui/react-icons";
 import SpotifyIcon from "./SpotifyIcon.tsx";
 import YouTubeIcon from "./YouTubeIcon.tsx";
+import BeatportIcon from "./BeatportIcon.tsx";
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
 import BeatportSessionDialog from "./BeatportSessionDialog.tsx";
 import YouTubeSessionDialog from "./YouTubeSessionDialog.tsx";
@@ -28,10 +20,11 @@ import {
   type YouTubeConnection,
 } from "./Types.tsx";
 
-type AppMenuProps = {
+type NavBarControlsProps = {
   version?: string;
   appearance: AppearanceType;
   setAppearance: (appearance: AppearanceType) => void;
+  isConnected: boolean;
   requestReply: RequestReply;
   collectionOpen: boolean;
   spotifyBackfillRunning: boolean;
@@ -51,14 +44,42 @@ const appearanceOptions: {
   { value: "dark", label: "Dark", icon: <MoonIcon /> },
 ];
 
-function connectionLabel(connected: boolean) {
-  return connected ? "Connected" : "Not connected";
+type AccountButtonProps = {
+  service: "youtube" | "spotify" | "beatport";
+  label: string;
+  icon: ReactNode;
+  connected: boolean;
+  onClick: () => void;
+};
+
+// The icon shows the service's brand color when connected and is muted otherwise
+// (see .account-button in App.css).
+function AccountButton({
+  service,
+  label,
+  icon,
+  connected,
+  onClick,
+}: AccountButtonProps) {
+  const status = connected ? "Connected" : "Not connected";
+  return (
+    <IconButton
+      className={`account-button account-${service}`}
+      data-connected={connected}
+      label={`${label}: ${status}`}
+      tooltip={`${label}: ${status}`}
+      icon={icon}
+      variant="ghost"
+      onClick={onClick}
+    />
+  );
 }
 
-function AppMenu({
+function NavBarControls({
   version,
   appearance,
   setAppearance,
+  isConnected,
   requestReply,
   collectionOpen,
   spotifyBackfillRunning,
@@ -66,8 +87,7 @@ function AppMenu({
   spotifyBackfillMatched,
   spotifyBackfillTotal,
   onSpotifyBackfill,
-}: AppMenuProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
+}: NavBarControlsProps) {
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
   const [youtubeConnection, setYoutubeConnection] =
@@ -96,81 +116,70 @@ function AppMenu({
         setYoutubeConnection(youTubeConnection(r));
     });
 
-  const openDialog = (open: (v: boolean) => void) => {
+  // The account buttons show connection status at all times, so fetch it as soon
+  // as the socket is (re)connected.
+  useEffect(() => {
+    if (!isConnected) return;
+    refreshSpotifySession();
+    refreshBeatportSession();
+    refreshYouTubeSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, requestReply]);
+
+  const openDialog = (open: (v: boolean) => void, refresh: () => void) => {
+    refresh();
     setDialogKey((k) => k + 1);
     open(true);
   };
 
   return (
     <>
-      {/* DropdownMenu only fires onOpenChange when controlled. */}
-      <DropdownMenu
-        hasChevron={false}
-        isMenuOpen={menuOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            refreshSpotifySession();
-            refreshBeatportSession();
-            refreshYouTubeSession();
-          }
-          setMenuOpen(open);
-        }}
-        menuWidth={240}
-        button={{
-          label: "Settings",
-          icon: <GearIcon />,
-          isIconOnly: true,
-          variant: "ghost",
-          tooltip: "Settings",
-        }}
-      >
-        <MenuHeading>Accounts</MenuHeading>
-        <DropdownMenuItem
-          icon={<SpotifyIcon />}
-          label="Spotify"
-          description={connectionLabel(spotifyConnected)}
-          onClick={() => openDialog(setSpotifyOpen)}
-        />
-        <DropdownMenuItem
-          icon={<YouTubeIcon />}
-          label="YouTube"
-          description={connectionLabel(youtubeConnection !== null)}
-          onClick={() => openDialog(setYoutubeOpen)}
-        />
-        <DropdownMenuItem
-          icon={<DiscIcon />}
-          label="Beatport"
-          description={connectionLabel(beatportBrowser !== null)}
-          onClick={() => openDialog(setBeatportOpen)}
-        />
-
-        <Divider />
-
-        <MenuHeading>Appearance</MenuHeading>
-        <DropdownMenuRadioGroup
-          aria-label="Appearance"
+      <HStack vAlign="center" gap={2}>
+        {version && (
+          <Text type="supporting" color="secondary">
+            v{version}
+          </Text>
+        )}
+        <HStack vAlign="center">
+          <AccountButton
+            service="youtube"
+            label="YouTube"
+            icon={<YouTubeIcon size={16} />}
+            connected={youtubeConnection !== null}
+            onClick={() => openDialog(setYoutubeOpen, refreshYouTubeSession)}
+          />
+          <AccountButton
+            service="spotify"
+            label="Spotify"
+            icon={<SpotifyIcon size={16} />}
+            connected={spotifyConnected}
+            onClick={() => openDialog(setSpotifyOpen, refreshSpotifySession)}
+          />
+          <AccountButton
+            service="beatport"
+            label="Beatport"
+            icon={<BeatportIcon size={16} />}
+            connected={beatportBrowser !== null}
+            onClick={() => openDialog(setBeatportOpen, refreshBeatportSession)}
+          />
+        </HStack>
+        <SegmentedControl
+          label="Appearance"
+          size="sm"
           value={appearance}
           onChange={(v) => setAppearance(v as AppearanceType)}
         >
           {appearanceOptions.map(({ value, label, icon }) => (
-            <DropdownMenuRadioItem
+            <SegmentedControlItem
               key={value}
               value={value}
               label={label}
               icon={icon}
-              endContent={<MenuCheck isChecked={appearance === value} />}
+              isLabelHidden
             />
           ))}
-        </DropdownMenuRadioGroup>
-
-        <Divider />
-
-        <HStack paddingInline={2} paddingBlock={1}>
-          <Text type="supporting" color="secondary">
-            Stereo {version}
-          </Text>
-        </HStack>
-      </DropdownMenu>
+        </SegmentedControl>
+      </HStack>
 
       <SpotifySessionDialog
         key={`spotify-${dialogKey}`}
@@ -206,4 +215,4 @@ function AppMenu({
   );
 }
 
-export default AppMenu;
+export default NavBarControls;

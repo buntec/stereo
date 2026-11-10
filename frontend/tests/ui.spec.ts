@@ -196,8 +196,7 @@ test("focused controls retain Space; global shortcuts work on the page", async (
   await page.locator("body").click({ position: { x: 1, y: 1 } });
   await page.keyboard.press("s");
   await expect(shuffle).toHaveAttribute("aria-pressed", "false");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("menuitem", { name: /Spotify/ }).click();
+  await page.getByRole("button", { name: /^Spotify:/ }).click();
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Cancel", exact: true })
@@ -251,18 +250,17 @@ for (const width of [390, 768, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     await openApp(page);
     await expect(page.getByRole("main")).toHaveCount(1);
-    for (const label of [
-      "collection",
-      "Settings",
-      "Search",
-      "Toggle shuffle play",
+    for (const control of [
+      page.locator(".collection-controls").getByRole("button").first(),
+      page.getByRole("button", { name: /^YouTube:/ }),
+      page.getByRole("button", { name: /^Spotify:/ }),
+      page.getByRole("button", { name: /^Beatport:/ }),
+      page.getByRole("radiogroup", { name: "Appearance" }),
+      page.getByRole("button", { name: "Search", exact: true }),
+      page.getByRole("button", { name: "Toggle shuffle play", exact: true }),
     ]) {
-      const button =
-        label === "collection"
-          ? page.locator(".collection-controls").getByRole("button").first()
-          : page.getByRole("button", { name: label, exact: true });
-      await expect(button).toBeInViewport();
-      const box = await button.boundingBox();
+      await expect(control).toBeInViewport();
+      const box = await control.boundingBox();
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(width);
     }
@@ -525,8 +523,7 @@ test("connecting YouTube asks which login to use when several are logged in", as
   page,
 }) => {
   const { messages } = await openApp(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("menuitem", { name: /YouTube/ }).click();
+  await page.getByRole("button", { name: /^YouTube:/ }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "Connect", exact: true }).click();
   await dialog.getByRole("radio", { name: /Work Channel/ }).check();
