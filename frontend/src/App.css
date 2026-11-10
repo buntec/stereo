@@ -11,8 +11,12 @@
   min-width: 0;
 }
 
+/* The search grows up to a comfortable query width; the auto margins then take
+   the leftover space, centering it between the collection and nav-bar controls. */
 .header-search {
   min-width: 0;
+  max-width: 36rem;
+  margin-inline: auto;
 }
 
 /* Account buttons in the nav bar: brand color when connected, muted otherwise.
