@@ -308,6 +308,50 @@
   backdrop-filter: blur(var(--spacing-6));
 }
 
+/* Pop-up menus (DropdownMenu) and Selector lists: a translucent, blurred surface, and as
+   tall as the space on the side they open allows, so they only scroll when they must.
+   Astryx caps the list at 300px and doesn't expose the popover layer or the surface
+   around the list to theming, so these target them by structure: the layer is a
+   [popover], its only child the surface, and that the list. */
+[popover] > :has(> .astryx-dropdown-menu, > [role="listbox"]) {
+  background-color: rgb(from var(--color-background-popover) r g b / 0.7);
+  -webkit-backdrop-filter: blur(var(--spacing-4)) saturate(150%);
+  backdrop-filter: blur(var(--spacing-4)) saturate(150%);
+  /* Keeps the edge visible where the backdrop is about as dark or light as the surface. */
+  box-shadow:
+    var(--shadow-low),
+    inset 0 0 0 var(--border-width) var(--color-border);
+}
+/* Without position-try-order there's no picking the roomier side, and a list sized to fit
+   below the trigger would never flip above it; half the viewport fits one of the two. */
+[popover] > * > :is(.astryx-dropdown-menu, [role="listbox"]) {
+  max-height: calc(50dvh - var(--spacing-8));
+}
+@supports (position-try-order: most-height) {
+  /* Open on whichever side has more room and take all of it: the layer's percentages
+     resolve against its position-area, less its two --spacing-1 margins (the gap to the
+     trigger and to the viewport edge). The surface and list shrink to fit, and scroll.
+     Only while open: the display would otherwise unhide closed popovers. */
+  [popover]:popover-open:has(
+      > * > .astryx-dropdown-menu,
+      > * > [role="listbox"]
+    ) {
+    position-try-order: most-height;
+    max-height: calc(100% - 2 * var(--spacing-1));
+    display: flex;
+    flex-direction: column;
+  }
+  [popover] > :has(> .astryx-dropdown-menu, > [role="listbox"]) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  [popover] > * > :is(.astryx-dropdown-menu, [role="listbox"]) {
+    max-height: none;
+    min-height: 0;
+  }
+}
+
 /* AG Grid's no-rows overlay defaults to letting pointer events pass through. */
 .grid .ag-overlay-no-rows-wrapper {
   pointer-events: auto;

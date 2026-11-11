@@ -2504,6 +2504,7 @@ function App() {
                 <HStack
                   width="100%"
                   gap={4}
+                  paddingInline={2}
                   vAlign="center"
                   wrap="wrap"
                   className="playback-bar"
