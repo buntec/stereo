@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
-import type { RequestReply, ServerMsg } from "./Types.tsx";
+import type { Beat, RequestReply, ServerMsg } from "./Types.tsx";
 
-const waveforms = new Map<string, number[] | null>();
+/** What the backend analyzed a track's audio into. */
+export type TrackWaveform = {
+  /** Loudness values (0–255) evenly spread over the track. */
+  peaks: number[];
+  /** In order of time. */
+  beats: Beat[];
+};
+
+const waveforms = new Map<string, TrackWaveform | null>();
 /** Waveforms kept in memory, for going back and forth between tracks. */
 const MAX_WAVEFORMS = 50;
 
@@ -20,18 +28,18 @@ export const forgetMissingWaveforms = (msg: ServerMsg) => {
 };
 
 /**
- * The waveform of track `id` once its audio is downloaded: `undefined` while
- * it is unknown or loading, `null` if the backend has none (it can't decode
- * the audio, or didn't have it).
+ * The waveform and beats of track `id` once its audio is downloaded:
+ * `undefined` while unknown or loading, `null` if the backend has none (it
+ * can't decode the audio, or didn't have it).
  */
 export const useWaveform = (
   id: string | undefined,
   cached: boolean,
   requestReply: RequestReply,
-): number[] | null | undefined => {
+): TrackWaveform | null | undefined => {
   const [loaded, setLoaded] = useState<{
     id: string;
-    peaks: number[] | null;
+    waveform: TrackWaveform | null;
   }>();
 
   useEffect(() => {
@@ -42,16 +50,18 @@ export const useWaveform = (
       (msg) => {
         if (msg.type !== "waveform" || !("peaks" in msg)) {
           // Timed out or failed: try again next time.
-          if (!cancelled) setLoaded({ id, peaks: null });
+          if (!cancelled) setLoaded({ id, waveform: null });
           return;
         }
-        const peaks = msg.peaks?.length ? msg.peaks : null;
+        const waveform = msg.peaks?.length
+          ? { peaks: msg.peaks, beats: msg.beats ?? [] }
+          : null;
         waveforms.delete(id);
-        waveforms.set(id, peaks);
+        waveforms.set(id, waveform);
         if (waveforms.size > MAX_WAVEFORMS) {
           waveforms.delete(waveforms.keys().next().value!);
         }
-        if (!cancelled) setLoaded({ id, peaks });
+        if (!cancelled) setLoaded({ id, waveform });
       },
       30000,
     );
@@ -62,5 +72,5 @@ export const useWaveform = (
 
   if (!id) return undefined;
   if (waveforms.has(id)) return waveforms.get(id);
-  return loaded?.id === id ? loaded.peaks : undefined;
+  return loaded?.id === id ? loaded.waveform : undefined;
 };

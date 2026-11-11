@@ -1634,8 +1634,18 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         MsgClient::GetWaveform { id, yt_id } => {
             let tx = tx.clone();
             tokio::spawn(async move {
-                let peaks = audio::waveform(&yt_id).await;
-                let _ = tx.send(MsgServer::Waveform { id, yt_id, peaks }).await;
+                let (peaks, beats) = audio::waveform(&yt_id)
+                    .await
+                    .map(|analysis| (analysis.peaks, analysis.beats))
+                    .unzip();
+                let _ = tx
+                    .send(MsgServer::Waveform {
+                        id,
+                        yt_id,
+                        peaks,
+                        beats,
+                    })
+                    .await;
             });
         }
 

@@ -63,6 +63,7 @@ import {
 } from "./AudioCache.ts";
 import { Waveform } from "./Waveform.tsx";
 import { forgetMissingWaveforms, useWaveform } from "./useWaveform.ts";
+import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
 import { useAudioPlayback } from "./AudioPlayback.ts";
 import {
@@ -1793,6 +1794,14 @@ function App() {
     currentAudio.cached,
     requestReply,
   );
+  const logoRef = useRef<SVGSVGElement>(null);
+  useBeatPulse(
+    logoRef,
+    playback,
+    state.current_id,
+    currentWaveform?.beats,
+    state.player_state === "playing",
+  );
 
   const hasSearchInput =
     isQuerylessSearchKind(state.search_kind) || !!state.search_box_input;
@@ -2216,7 +2225,7 @@ function App() {
               className="app-header"
             >
               <HStack vAlign="center" gap={2} className="collection-controls">
-                <StereoLogo size={28} />
+                <StereoLogo size={28} ref={logoRef} className="stereo-logo" />
                 <CollectionSelector
                   isValid={state.collection_is_valid ?? true}
                   collections={state.collections ?? []}
@@ -2521,7 +2530,7 @@ function App() {
                       {/* The transport buttons float over the middle of the waveform. */}
                       <StackItem size="fill" className="transport-stage">
                         <Waveform
-                          peaks={currentWaveform ?? undefined}
+                          peaks={currentWaveform?.peaks}
                           currentTime={
                             currentDownload ? 0 : (state.current_time ?? 0)
                           }

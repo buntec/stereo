@@ -73,12 +73,14 @@ pub enum MsgServer {
     AudioEvicted {
         yt_ids: Vec<String>,
     },
-    /// Reply to `GetWaveform`: loudness values (0–255) evenly spread over the track, or `None` if
-    /// the track isn't downloaded or its audio can't be decoded.
+    /// Reply to `GetWaveform`: loudness values (0–255) evenly spread over the track, and its beats
+    /// as `[milliseconds, strength (0–255)]`; both `None` if the track isn't downloaded or its audio
+    /// can't be decoded.
     Waveform {
         id: i64,
         yt_id: String,
         peaks: Option<Vec<u8>>,
+        beats: Option<Vec<crate::beats::Beat>>,
     },
     /// Generic failure reply to a request/reply message (see `MsgClient::request_id`).
     ErrorReply {
@@ -624,5 +626,30 @@ impl MsgClient {
             | Self::DisconnectYouTubeSession { id } => Some(*id),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn waveform_beats_are_time_and_strength_pairs() {
+        let msg = MsgServer::Waveform {
+            id: 7,
+            yt_id: "dQw4w9WgXcQ".into(),
+            peaks: Some(vec![0, 255]),
+            beats: Some(vec![(250, 200), (719, 255)]),
+        };
+        assert_eq!(
+            serde_json::to_value(&msg).unwrap(),
+            serde_json::json!({
+                "type": "waveform",
+                "id": 7,
+                "yt_id": "dQw4w9WgXcQ",
+                "peaks": [0, 255],
+                "beats": [[250, 200], [719, 255]],
+            })
+        );
     }
 }

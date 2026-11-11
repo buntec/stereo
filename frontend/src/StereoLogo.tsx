@@ -1,12 +1,18 @@
+import type { Ref } from "react";
+
 type StereoLogoProps = {
   size?: number;
+  className?: string;
+  ref?: Ref<SVGSVGElement>;
 };
 
 // Stereo's mark: a tapered horn-loaded PA cabinet (horn panel over a bass horn mouth)
 // in three-quarter view. Same paths as frontend/public/favicon.svg.
-function StereoLogo({ size = 24 }: StereoLogoProps) {
+function StereoLogo({ size = 24, className, ref }: StereoLogoProps) {
   return (
     <svg
+      ref={ref}
+      className={className}
       width={size}
       height={size}
       viewBox="0 0 64 64"

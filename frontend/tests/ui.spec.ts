@@ -720,6 +720,59 @@ test("an evicted track stays shown as not downloaded when its buffered audio pla
     .toEqual([{ type: "download-audio", yt_id: "audit0" }]);
 });
 
+test("the logo pulses with the playing track's beats", async ({ page }) => {
+  const { send, messages } = await openApp(page, {
+    audio: "ok",
+    audioSeconds: 240,
+  });
+  const button = page.locator(".play-pause-button");
+  await expect(button).toHaveAccessibleName("Pause");
+  send({ type: "audio-download", yt_id: "audit0", status: "done" });
+  await expect
+    .poll(() => messages.some((m) => m.type === "get-waveform"))
+    .toBe(true);
+  const request = messages.find((m) => m.type === "get-waveform")!;
+  send({
+    type: "waveform",
+    id: request.id,
+    yt_id: "audit0",
+    peaks: new Array(1000).fill(128),
+    // Every half second, at full strength.
+    beats: Array.from({ length: 480 }, (_, i) => [i * 500, 255]),
+  });
+  const logo = page.locator(".stereo-logo");
+  /** The pulses over a beat and a half, as the logo shows them. */
+  const pulses = () =>
+    logo.evaluate(
+      (element: SVGElement) =>
+        new Promise<number[]>((resolve) => {
+          const values: number[] = [];
+          const started = performance.now();
+          requestAnimationFrame(function sample() {
+            values.push(Number(element.style.getPropertyValue("--beat") || 0));
+            if (performance.now() - started < 750)
+              requestAnimationFrame(sample);
+            else resolve(values);
+          });
+        }),
+    );
+  await expect
+    .poll(async () => {
+      const values = await pulses();
+      return Math.max(...values) > 0.5 && Math.min(...values) < 0.2;
+    })
+    .toBe(true);
+
+  await button.click();
+  await expect(button).toHaveAccessibleName("Play");
+  expect(Math.max(...(await pulses()))).toBe(0);
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await button.click();
+  await expect(button).toHaveAccessibleName("Pause");
+  expect(Math.max(...(await pulses()))).toBe(0);
+});
+
 test("a track without a waveform gets one once its audio is downloaded again", async ({
   page,
 }) => {
