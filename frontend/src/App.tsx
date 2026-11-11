@@ -27,6 +27,7 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Divider } from "@astryxdesign/core/Divider";
+import { useMediaQuery } from "@astryxdesign/core/hooks";
 import { LayerProvider } from "@astryxdesign/core/Layer";
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
@@ -787,6 +788,9 @@ function App() {
     undefined,
   );
 
+  // Phones and tablets: footer buttons sized for fingers rather than a mouse.
+  const touch = useMediaQuery("(pointer: coarse)");
+  const footerButtonSize = touch ? "lg" : "sm";
   const consumeNotifications = useCallback(
     (ids: number[]) => dispatch({ type: "consume-notifications", ids }),
     [],
@@ -2486,7 +2490,11 @@ function App() {
               </LayoutContent>
             }
             footer={
-              <LayoutFooter padding={2} hasDivider className="playback-footer">
+              <LayoutFooter
+                padding={2}
+                hasDivider
+                className={`playback-footer ${touch ? "touch" : ""}`}
+              >
                 <HStack
                   width="100%"
                   gap={4}
@@ -2499,7 +2507,11 @@ function App() {
                   </StackItem>
                   <StackItem className="playback-transport">
                     <VStack width="100%" hAlign="center" gap={1}>
-                      <HStack vAlign="center" hAlign="center" gap={1}>
+                      <HStack
+                        vAlign="center"
+                        hAlign="center"
+                        gap={touch ? 3 : 1}
+                      >
                         <Tooltip
                           content={
                             <>
@@ -2509,7 +2521,7 @@ function App() {
                         >
                           <IconButton
                             variant="secondary"
-                            size="sm"
+                            size={footerButtonSize}
                             label="Skip to previous track"
                             icon={<TrackPreviousIcon />}
                             onClick={prevTrack}
@@ -2526,7 +2538,7 @@ function App() {
                         >
                           <IconButton
                             variant="primary"
-                            size="md"
+                            size={touch ? "lg" : "md"}
                             className="play-pause-button"
                             label={
                               state.player_state === "playing" ||
@@ -2557,7 +2569,7 @@ function App() {
                         >
                           <IconButton
                             variant="secondary"
-                            size="sm"
+                            size={footerButtonSize}
                             label="Skip to next track"
                             icon={<TrackNextIcon />}
                             onClick={nextTrack}
@@ -2597,7 +2609,13 @@ function App() {
                     </VStack>
                   </StackItem>
                   <StackItem className="playback-options">
-                    <HStack vAlign="center" hAlign="end" gap={1} wrap="wrap">
+                    {/* On a phone the rating and the toggles get a row each. */}
+                    <HStack
+                      vAlign="center"
+                      hAlign={touch ? "center" : "end"}
+                      gap={1}
+                      wrap="wrap"
+                    >
                       <Rating
                         label="Rating for the playing track"
                         enabled={Boolean(
@@ -2610,45 +2628,48 @@ function App() {
                             : undefined
                         }
                         updateRating={updateCurrentRating}
+                        size={footerButtonSize}
                       />
 
-                      <Divider orientation="vertical" />
+                      {touch ? null : <Divider orientation="vertical" />}
 
-                      <Tooltip
-                        content={
-                          <>
-                            Toggle shuffle play <Kbd keys="s" />
-                          </>
-                        }
-                      >
-                        <IconButton
-                          variant={settings.shufflePlay ? "primary" : "ghost"}
-                          size="sm"
-                          label="Toggle shuffle play"
-                          aria-pressed={settings.shufflePlay}
-                          icon={<ShuffleIcon />}
-                          onClick={toggleShuffle}
-                        />
-                      </Tooltip>
-
-                      <Tooltip
-                        content={
-                          <>
-                            Toggle background artwork <Kbd keys="b" />
-                          </>
-                        }
-                      >
-                        <IconButton
-                          variant={
-                            settings.backgroundVideo ? "primary" : "ghost"
+                      <HStack vAlign="center" gap={1}>
+                        <Tooltip
+                          content={
+                            <>
+                              Toggle shuffle play <Kbd keys="s" />
+                            </>
                           }
-                          size="sm"
-                          label="Toggle background artwork"
-                          aria-pressed={settings.backgroundVideo}
-                          icon={<MagicWandIcon />}
-                          onClick={toggleBackgroundVideo}
-                        />
-                      </Tooltip>
+                        >
+                          <IconButton
+                            variant={settings.shufflePlay ? "primary" : "ghost"}
+                            size={footerButtonSize}
+                            label="Toggle shuffle play"
+                            aria-pressed={settings.shufflePlay}
+                            icon={<ShuffleIcon />}
+                            onClick={toggleShuffle}
+                          />
+                        </Tooltip>
+
+                        <Tooltip
+                          content={
+                            <>
+                              Toggle background artwork <Kbd keys="b" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            variant={
+                              settings.backgroundVideo ? "primary" : "ghost"
+                            }
+                            size={footerButtonSize}
+                            label="Toggle background artwork"
+                            aria-pressed={settings.backgroundVideo}
+                            icon={<MagicWandIcon />}
+                            onClick={toggleBackgroundVideo}
+                          />
+                        </Tooltip>
+                      </HStack>
                     </HStack>
                   </StackItem>
                 </HStack>

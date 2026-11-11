@@ -20,6 +20,7 @@ interface RatingProps {
   currentRating?: number;
   updateRating: (rating: number | null) => void;
   label?: string;
+  size?: "sm" | "md" | "lg";
 }
 
 export default function Rating({
@@ -27,6 +28,7 @@ export default function Rating({
   currentRating,
   updateRating,
   label = "Track rating",
+  size = "sm",
 }: RatingProps) {
   return (
     <HStack
@@ -43,7 +45,7 @@ export default function Rating({
             label={`${value} of 5 stars`}
             tooltip={`${value} of 5 stars`}
             variant="ghost"
-            size="sm"
+            size={size}
             isDisabled={!enabled}
             style={{
               color:
@@ -64,7 +66,7 @@ export default function Rating({
         label="Clear rating"
         tooltip="Clear rating"
         variant="ghost"
-        size="sm"
+        size={size}
         icon={<Cross2Icon />}
         isDisabled={!enabled || !currentRating}
         {...pointerOnly}
