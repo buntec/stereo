@@ -1,13 +1,6 @@
 import "./App.css";
 
-import {
-  useState,
-  useReducer,
-  useEffect,
-  useRef,
-  useCallback,
-  useMemo,
-} from "react";
+import { useState, useReducer, useEffect, useRef, useCallback } from "react";
 
 import { AgGridReact } from "ag-grid-react";
 import { type GridState, type StateUpdatedEvent } from "ag-grid-community";
@@ -16,10 +9,7 @@ import logger from "./logger.tsx";
 import {
   PlusIcon,
   Cross2Icon,
-  VideoIcon,
   MagicWandIcon,
-  EnterFullScreenIcon,
-  ExitFullScreenIcon,
   TrashIcon,
   ShuffleIcon,
   PlayIcon,
@@ -61,12 +51,15 @@ import type {
   ServerMsg,
   Settings,
   AppNotification,
+  AudioDownload,
 } from "./Types.tsx";
+import { AudioDownloadProgress } from "./AudioDownloadProgress.tsx";
 import { isChartSearchKind, isQuerylessSearchKind } from "./Types.tsx";
 import { DEFAULT_BEATPORT_GENRE_ID } from "./BeatportGenres.tsx";
 
 import { useWebSocket } from "./WebSocket.tsx";
-import { useYTPlayer, type YTPlayerOptions } from "./YT.tsx";
+import type { PlaybackStatus } from "./Playback.ts";
+import { useAudioPlayback } from "./AudioPlayback.ts";
 import {
   formatDuration,
   useLocalStorage,
@@ -126,70 +119,30 @@ const wsProtocols = wsToken
     ]
   : undefined;
 
-const YTPlayerState = {
-  UNSTARTED: -1,
-  ENDED: 0,
-  PLAYING: 1,
-  PAUSED: 2,
-  BUFFERING: 3,
-  CUED: 5,
-};
-
-const createSilentAudioSource = (): string => {
-  const sampleRate = 8000;
-  const durationSeconds = 10;
-  const bytesPerSample = 2;
-  const dataSize = sampleRate * durationSeconds * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-
-  const writeAscii = (offset: number, value: string) => {
-    for (let i = 0; i < value.length; i++) {
-      view.setUint8(offset + i, value.charCodeAt(i));
-    }
-  };
-
-  writeAscii(0, "RIFF");
-  view.setUint32(4, 36 + dataSize, true);
-  writeAscii(8, "WAVE");
-  writeAscii(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * bytesPerSample, true);
-  view.setUint16(32, bytesPerSample, true);
-  view.setUint16(34, bytesPerSample * 8, true);
-  writeAscii(36, "data");
-  view.setUint32(40, dataSize, true);
-
-  return URL.createObjectURL(
-    new Blob([buffer], {
-      type: "audio/wav",
-    }),
-  );
-};
-
-const getVideoData = (player: YT.Player): YT.VideoData | undefined => {
-  try {
-    return player.getVideoData();
-  } catch {
-    return undefined;
-  }
+/** The track after `current` in the playlist, wrapping around. */
+const nextTrackId = (
+  playlist: string[],
+  current: string | undefined,
+): string | undefined => {
+  if (playlist.length === 0) return undefined;
+  const i = playlist.indexOf(current ?? playlist[0]);
+  return i >= 0 ? playlist[(i + 1) % playlist.length] : playlist[0];
 };
 
 const defaultSettings: Settings = {
   appearance: "system",
   repoPath: "",
   collectionPath: "",
-  video: false,
   backgroundVideo: true,
   shufflePlay: false,
-  fullScreen: false,
 };
 
 type State = {
   backend_version?: string;
+  /** Key for the backend's `/audio` route; unset when it doesn't download audio. */
+  audio_key?: string;
+  /** Unfinished audio downloads by YouTube id. */
+  audio_downloads: Record<string, AudioDownload>;
   home_dir?: string;
   repos?: IRepo[];
   collections?: ICollection[];
@@ -202,11 +155,11 @@ type State = {
   player_id?: string;
   duration?: number;
   current_time?: number;
-  title?: string;
   playlist: string[];
-  player_state: number;
+  player_state: PlaybackStatus;
+  /** Playback was asked for but can't start or continue yet (buffering, downloading). */
+  player_loading: boolean;
   playback_progress_pct?: number;
-  show_player2: boolean;
 
   should_refresh_grid: boolean;
   should_purge_grid: boolean;
@@ -306,16 +259,10 @@ const reducer = (state: State, action: Action): State => {
 
     case "play-next-track": {
       if (state.playlist.length > 0) {
-        const id = state.current_id ?? state.playlist[0];
-        const i = state.playlist.indexOf(id);
-        console.log("play-next-track", id, i);
-        if (i >= 0) {
-          return {
-            ...state,
-            current_id: state.playlist[(i + 1) % state.playlist.length],
-          };
-        }
-        return { ...state, current_id: state.playlist[0] };
+        return {
+          ...state,
+          current_id: nextTrackId(state.playlist, state.current_id),
+        };
       }
       return { ...state };
     }
@@ -339,21 +286,47 @@ const reducer = (state: State, action: Action): State => {
       return { ...state };
     }
 
-    case "player-state-change":
-      return { ...state, player_state: action.state, player_id: action.id };
+    case "player-state-change": {
+      let audio_downloads = state.audio_downloads;
+      // A track that plays is downloaded, even if its final update got lost.
+      if (action.state === "playing" && action.id in audio_downloads) {
+        audio_downloads = { ...audio_downloads };
+        delete audio_downloads[action.id];
+      }
+      return {
+        ...state,
+        player_state: action.state,
+        player_id: action.id,
+        player_loading: false,
+        audio_downloads,
+      };
+    }
 
-    case "set-player2-visible":
-      return { ...state, show_player2: action.visible };
+    case "set-player-loading":
+      return { ...state, player_loading: action.loading };
+
+    case "audio-download": {
+      const audio_downloads = { ...state.audio_downloads };
+      if (action.status === "done" || action.status === "failed") {
+        delete audio_downloads[action.yt_id];
+      } else {
+        audio_downloads[action.yt_id] = {
+          status: action.status,
+          progress: action.progress ?? undefined,
+        };
+      }
+      return { ...state, audio_downloads };
+    }
 
     case "backend-info":
       return {
         ...state,
         backend_version: action.version,
         home_dir: action.home_dir,
+        audio_key: action.audio_key ?? undefined,
+        // A new connection; the backend sends the downloads it is working on next.
+        audio_downloads: {},
       };
-
-    case "set-title":
-      return { ...state, title: action.title };
 
     case "set-import-from":
       // Drop the previous source's validity; a fresh check-import-from follows.
@@ -368,9 +341,6 @@ const reducer = (state: State, action: Action): State => {
 
     case "set-import-keep-user-data":
       return { ...state, import_from_keep_user_data: action.keep };
-
-    case "clear-title":
-      return { ...state, title: undefined };
 
     case "collection-is-valid":
       return { ...state, collection_is_valid: true };
@@ -522,9 +492,6 @@ const reducer = (state: State, action: Action): State => {
         duration: action.duration,
         current_time: action.current_time,
       };
-
-    case "toggle-show-player2":
-      return { ...state, show_player2: !state.show_player2 };
 
     case "track-info":
       return { ...state, track_info: action.track };
@@ -793,8 +760,9 @@ const legacyGridState = (): GridState | undefined => {
 function App() {
   const [state, dispatch] = useReducer(reducer, {
     playlist: [],
-    show_player2: false,
-    player_state: YTPlayerState.UNSTARTED,
+    audio_downloads: {},
+    player_state: "unstarted",
+    player_loading: false,
     should_refresh_grid: false,
     should_purge_grid: false,
     search_busy: false,
@@ -820,7 +788,9 @@ function App() {
     undefined,
   );
 
-  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  // Phones and tablets: footer buttons sized for fingers rather than a mouse.
+  const touch = useMediaQuery("(pointer: coarse)");
+  const footerButtonSize = touch ? "lg" : "sm";
   const consumeNotifications = useCallback(
     (ids: number[]) => dispatch({ type: "consume-notifications", ids }),
     [],
@@ -996,134 +966,46 @@ function App() {
     }
   }, [state.should_purge_grid]);
 
-  const playerOptions: YTPlayerOptions = useMemo(() => {
-    return {
-      playerVars: {
-        autoplay: 1,
-        modestbranding: 1,
-        color: "white",
-        controls: 0,
-        disablekb: 1,
-        rel: 0,
-        playsinline: 1,
-        enablejsapi: 1,
-      },
-      onError: (event) => {
-        dispatch({
-          type: "notification",
-          message: `YouTube playback error: ${event.data}`,
-          kind: "error",
-        });
-      },
-      onStateChange: (event: YT.OnStateChangeEvent) => {
-        const videoData = getVideoData(event.target);
-        if (!videoData?.video_id) return;
-
-        if (event.data === window.YT.PlayerState.PLAYING) {
-          dispatch({
-            type: "player-state-change",
-            state: YTPlayerState.PLAYING,
-            id: videoData.video_id,
-          });
-        }
-        if (event.data === window.YT.PlayerState.PAUSED) {
-          dispatch({
-            type: "player-state-change",
-            state: YTPlayerState.PAUSED,
-            id: videoData.video_id,
-          });
-        }
-        if (event.data === window.YT.PlayerState.ENDED) {
-          dispatch({
-            type: "player-state-change",
-            state: YTPlayerState.ENDED,
-            id: videoData.video_id,
-          });
-          dispatch({ type: "play-next-track" });
-        }
-      },
-    };
-  }, []);
-
-  const {
-    containerRef: playerRef,
-    player,
-    isReady: playerIsReady,
-  } = useYTPlayer(playerOptions);
-
-  const player2Options: YTPlayerOptions = useMemo(() => {
-    return {
-      playerVars: {
-        autoplay: 1,
-        color: "white",
-        disablekb: 1,
-        controls: 0,
-        mute: 1,
-        modestbranding: 1,
-        rel: 0,
-      },
-      onStateChange: (event: YT.OnStateChangeEvent) => {
-        if (
-          event.data === window.YT.PlayerState.PLAYING ||
-          event.data === window.YT.PlayerState.CUED
-        ) {
-          dispatch({ type: "set-player2-visible", visible: true });
-        }
-      },
-    };
-  }, []);
-
-  const {
-    containerRef: player2Ref,
-    player: player2,
-    isReady: player2IsReady,
-  } = useYTPlayer(player2Options);
-
-  const mediaSessionAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  const setMediaSessionAudioPlaying = useCallback((playing: boolean) => {
-    const audio = mediaSessionAudioRef.current;
-    if (!audio) return;
-
-    if (!playing) {
-      audio.pause();
-      audio.muted = true;
-      return;
-    }
-
-    // Start muted so autoplay policy cannot block the media-session anchor.
-    // The WAV source contains only silence, so unmuting it produces no sound.
-    audio.muted = true;
-    void audio.play().then(
-      () => {
-        audio.muted = false;
-      },
-      () => {
-        // The YouTube player remains usable if the browser rejects the anchor.
-      },
-    );
-  }, []);
-
+  const queueRef = useRef({
+    playlist: state.playlist,
+    current_id: state.current_id,
+  });
   useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
-
-    const audio = document.createElement("audio");
-    const source = createSilentAudioSource();
-    audio.src = source;
-    audio.loop = true;
-    audio.preload = "auto";
-    document.body.append(audio);
-    mediaSessionAudioRef.current = audio;
-
-    return () => {
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.load();
-      audio.remove();
-      URL.revokeObjectURL(source);
-      mediaSessionAudioRef.current = null;
+    queueRef.current = {
+      playlist: state.playlist,
+      current_id: state.current_id,
     };
-  }, []);
+  }, [state.playlist, state.current_id]);
+
+  /** Registers the lock-screen / media-key handlers again (see the effect below). */
+  const registerMediaSessionRef = useRef<() => void>(() => {});
+
+  const playback = useAudioPlayback(state.audio_key, {
+    onStatusChange: (status, id) => {
+      // Right in the audio element's event, so it also happens for tracks that start
+      // while the screen is locked.
+      if (status === "playing") registerMediaSessionRef.current();
+      // The UI only distinguishes these; transient states (buffering, cued) keep the last
+      // one, and just show whether playback is loading.
+      if (status === "playing" || status === "paused" || status === "ended") {
+        dispatch({ type: "player-state-change", state: status, id });
+      } else {
+        dispatch({
+          type: "set-player-loading",
+          loading: status === "buffering",
+        });
+      }
+      if (status === "ended") {
+        dispatch({ type: "play-next-track" });
+      }
+    },
+    onError: (message) => {
+      dispatch({ type: "notification", message, kind: "error" });
+    },
+    // Must match what `play-next-track` picks, which the app dispatches on "ended".
+    nextId: () =>
+      nextTrackId(queueRef.current.playlist, queueRef.current.current_id),
+  });
 
   useEffect(() => {
     logger.debug("state:", state);
@@ -1209,20 +1091,11 @@ function App() {
     let t = null;
     const yt_id = state.player_id;
 
-    if (yt_id && state.player_state === YTPlayerState.PLAYING) {
-      if (player && playerIsReady) {
-        const title = getVideoData(player)?.title;
-        if (title) {
-          dispatch({ type: "set-title", title });
-        }
-
+    if (yt_id && state.player_state === "playing") {
+      if (playback) {
         // 1 minute of continuous playback triggers play count increase
         t = setTimeout(() => sendMsg({ type: "inc-play-count", yt_id }), 60000);
       }
-    }
-
-    if (state.player_state === YTPlayerState.ENDED) {
-      dispatch({ type: "clear-title" });
     }
 
     return () => {
@@ -1230,7 +1103,7 @@ function App() {
         clearTimeout(t);
       }
     };
-  }, [sendMsg, state.player_state, state.player_id, player, playerIsReady]);
+  }, [sendMsg, state.player_state, state.player_id, playback]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
@@ -1239,11 +1112,9 @@ function App() {
       state.track_info?.yt_id === state.current_id
         ? state.track_info
         : undefined;
-    const videoTitle =
-      player && playerIsReady ? getVideoData(player)?.title : undefined;
 
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: state.title ?? currentTrack?.title ?? videoTitle ?? "Stereo",
+      title: currentTrack?.title ?? "Stereo",
       artist: currentTrack?.artists.join(", ") ?? "Stereo",
       album: "Stereo",
       artwork: state.current_id
@@ -1256,36 +1127,42 @@ function App() {
           ]
         : [],
     });
-  }, [player, playerIsReady, state.current_id, state.title, state.track_info]);
+  }, [state.current_id, state.track_info]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
 
-    if (state.player_state === YTPlayerState.PLAYING) {
+    if (state.player_state === "playing") {
       navigator.mediaSession.playbackState = "playing";
-      setMediaSessionAudioPlaying(true);
-    } else if (state.player_state === YTPlayerState.PAUSED) {
+    } else if (state.player_state === "paused") {
       navigator.mediaSession.playbackState = "paused";
-      setMediaSessionAudioPlaying(false);
-    } else if (state.player_state === YTPlayerState.ENDED) {
+    } else if (state.player_state === "ended") {
       navigator.mediaSession.playbackState = "none";
-      setMediaSessionAudioPlaying(false);
     }
-  }, [setMediaSessionAudioPlaying, state.player_state]);
+  }, [state.player_state]);
 
   useEffect(() => {
-    if (state.current_id && player && playerIsReady) {
-      const id = getVideoData(player)?.video_id;
-      if (id !== state.current_id) {
-        try {
-          player.loadVideoById(state.current_id);
-          player2?.loadVideoById(state.current_id);
-        } catch {
-          // YouTube can reject commands while replacing the iframe's video.
-        }
-      }
+    if (
+      state.current_id &&
+      playback &&
+      playback.currentId() !== state.current_id
+    ) {
+      playback.load(state.current_id);
     }
-  }, [state.current_id, player, playerIsReady, player2]);
+  }, [state.current_id, playback]);
+
+  // Have the next tracks ready by the time they're played.
+  useEffect(() => {
+    if (!playback || state.player_state !== "playing") return;
+    const upcoming: string[] = [];
+    let id = state.current_id;
+    for (let n = 0; n < 2; n++) {
+      id = nextTrackId(state.playlist, id);
+      if (!id || id === state.current_id || upcoming.includes(id)) break;
+      upcoming.push(id);
+    }
+    playback.prefetch(upcoming);
+  }, [playback, state.player_state, state.current_id, state.playlist]);
 
   useEffect(() => {
     searchGridRef.current?.api.refreshCells({
@@ -1296,9 +1173,11 @@ function App() {
 
   useEffect(() => {
     const i = setInterval(() => {
-      if (player && playerIsReady) {
-        const t = Math.max(0.0, player.getCurrentTime());
-        const d = Math.max(1.0, player.getDuration());
+      if (playback) {
+        const t = Math.max(0.0, playback.currentTime());
+        // 0 while the track is loading, which shows "--:--" and disables the slider.
+        const duration = playback.duration();
+        const d = Math.max(1.0, duration);
         document.documentElement.style.setProperty(
           "--stereo-playback-progress",
           `${t / d}`,
@@ -1306,33 +1185,25 @@ function App() {
         dispatch({
           type: "set-playback-progress",
           percent: (100.0 * t) / d,
-          duration: d,
+          duration,
           current_time: t,
         });
 
         if (
           "mediaSession" in navigator &&
           Number.isFinite(t) &&
-          Number.isFinite(d) &&
-          d > 0
+          Number.isFinite(duration) &&
+          duration > 0
         ) {
           try {
             navigator.mediaSession.setPositionState({
-              duration: d,
+              duration,
               playbackRate: 1,
-              position: Math.min(Math.max(t, 0), d),
+              position: Math.min(Math.max(t, 0), duration),
             });
           } catch {
-            // Ignore invalid position updates while YouTube is loading a video.
+            // Ignore invalid position updates while a track is loading.
           }
-        }
-      }
-
-      if (player && playerIsReady && player2 && player2IsReady) {
-        const t = player.getCurrentTime();
-        const t2 = player2.getCurrentTime();
-        if (t > 0 && t2 > 0 && Math.abs(t - t2) > 0.1) {
-          player2.seekTo(t, true);
         }
       }
     }, 1000);
@@ -1340,7 +1211,7 @@ function App() {
     return () => {
       clearInterval(i);
     };
-  }, [player, playerIsReady, player2, player2IsReady, dispatch]);
+  }, [playback, dispatch]);
 
   useEffect(() => {
     const query = state.search_box_input?.trim() ?? "";
@@ -1466,12 +1337,11 @@ function App() {
 
   const onSliderValueChange = useCallback(
     (value: number[]) => {
-      if (player && playerIsReady && player2 && player2IsReady) {
-        const d = player.getDuration();
-        const t = player.getCurrentTime();
+      if (playback) {
+        const d = playback.duration();
+        const t = playback.currentTime();
         if (d) {
-          player.seekTo((d * value[0]) / 100.0, true);
-          player2.seekTo((d * value[0]) / 100.0, true);
+          playback.seek((d * value[0]) / 100.0);
         }
         dispatch({
           type: "set-playback-progress",
@@ -1481,7 +1351,7 @@ function App() {
         });
       }
     },
-    [player, player2, playerIsReady, player2IsReady],
+    [playback],
   );
 
   const resetColumnState = useCallback(() => {
@@ -1883,57 +1753,35 @@ function App() {
 
   const fastForward = useCallback(
     (seconds: number) => {
-      if (player && playerIsReady) {
-        const t = player.getCurrentTime();
-        const d = player.getDuration();
+      if (playback) {
+        const t = playback.currentTime();
+        const d = playback.duration();
         const target = Math.max(
           0,
           Math.min(Number.isFinite(d) && d > 0 ? d : Infinity, t + seconds),
         );
-        player.seekTo(target, true);
-        if (player2 && player2IsReady) {
-          player2.seekTo(target, true);
-        }
+        playback.seek(target);
       }
     },
-    [player, playerIsReady, player2, player2IsReady],
+    [playback],
   );
 
-  const pausePlayback = useCallback(() => {
-    if (player && playerIsReady && player2 && player2IsReady) {
-      player.pauseVideo();
-      player2.pauseVideo();
-    }
-  }, [player, player2, playerIsReady, player2IsReady]);
+  const pausePlayback = useCallback(() => playback?.pause(), [playback]);
 
-  const startPlayback = useCallback(() => {
-    if (player && playerIsReady && player2 && player2IsReady) {
-      player.playVideo();
-      player2.playVideo();
-    }
-  }, [player, player2, playerIsReady, player2IsReady]);
+  const startPlayback = useCallback(() => playback?.play(), [playback]);
 
-  const stopPlayback = useCallback(() => {
-    if (player && playerIsReady && player2 && player2IsReady) {
-      player.stopVideo();
-      player2.stopVideo();
-    }
-  }, [player, player2, playerIsReady, player2IsReady]);
+  const stopPlayback = useCallback(() => playback?.stop(), [playback]);
 
   const togglePlayback = useCallback(() => {
-    if (player && playerIsReady) {
-      const state = player.getPlayerState();
-      if (state === window.YT.PlayerState.PLAYING) {
-        pausePlayback();
-      }
-      if (
-        state === window.YT.PlayerState.PAUSED ||
-        state === window.YT.PlayerState.CUED
-      ) {
-        startPlayback();
-      }
+    const status = playback?.status();
+    // Buffering includes waiting for the backend to download the track.
+    if (status === "playing" || status === "buffering") {
+      pausePlayback();
     }
-  }, [player, playerIsReady, pausePlayback, startPlayback]);
+    if (status === "paused" || status === "ended") {
+      startPlayback();
+    }
+  }, [playback, pausePlayback, startPlayback]);
 
   const toggleShuffle = useCallback(() => {
     const shufflePlay = !settings.shufflePlay;
@@ -1941,16 +1789,15 @@ function App() {
     updatePlaylist(shufflePlay);
   }, [settings, setSettings, updatePlaylist]);
 
-  const toggleVideo = useCallback(
-    () => setSettings({ ...settings, video: !settings.video }),
-    [settings, setSettings],
-  );
-
   const toggleBackgroundVideo = useCallback(
     () =>
       setSettings({ ...settings, backgroundVideo: !settings.backgroundVideo }),
     [settings, setSettings],
   );
+
+  const currentDownload: AudioDownload | undefined = state.current_id
+    ? state.audio_downloads[state.current_id]
+    : undefined;
 
   const hasSearchInput =
     isQuerylessSearchKind(state.search_kind) || !!state.search_box_input;
@@ -2018,22 +1865,12 @@ function App() {
     const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
       ["play", startPlayback],
       ["pause", pausePlayback],
-      ["seekbackward", (details) => fastForward(-(details.seekOffset ?? 10))],
-      ["seekforward", (details) => fastForward(details.seekOffset ?? 10)],
       [
         "seekto",
         (details) => {
           const seekTime = details.seekTime;
-          if (
-            player &&
-            playerIsReady &&
-            seekTime !== undefined &&
-            Number.isFinite(seekTime)
-          ) {
-            player.seekTo(seekTime, true);
-            if (player2 && player2IsReady) {
-              player2.seekTo(seekTime, true);
-            }
+          if (playback && seekTime !== undefined && Number.isFinite(seekTime)) {
+            playback.seek(seekTime);
           }
         },
       ],
@@ -2052,26 +1889,37 @@ function App() {
       }
     };
 
-    for (const [action, handler] of handlers) {
-      setHandler(action, handler);
-    }
+    // iOS Safari shows either ±10s seek buttons or previous/next track buttons on the
+    // lock screen. It ignores handlers registered before the audio element is its
+    // "Now Playing" item, and then falls back to its default commands, seeking
+    // included. So register again whenever a track starts playing or the page comes
+    // back, and explicitly say there is no seeking by ±n seconds (the scrubber,
+    // seekto, still works, and so do the arrow keys in the app).
+    const register = () => {
+      for (const [action, handler] of handlers) {
+        setHandler(action, handler);
+      }
+      setHandler("seekbackward", null);
+      setHandler("seekforward", null);
+    };
+    register();
+    registerMediaSessionRef.current = register;
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") register();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", register);
 
     return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", register);
+      registerMediaSessionRef.current = () => {};
       for (const [action] of handlers) {
         setHandler(action, null);
       }
     };
-  }, [
-    fastForward,
-    nextTrack,
-    pausePlayback,
-    player,
-    player2,
-    player2IsReady,
-    playerIsReady,
-    prevTrack,
-    startPlayback,
-  ]);
+  }, [nextTrack, pausePlayback, playback, prevTrack, startPlayback]);
 
   const onTrackGridStateUpdate = useCallback(
     (ev: StateUpdatedEvent<ITrack>) => {
@@ -2082,30 +1930,6 @@ function App() {
     },
     [setGridState, updatePlaylist, settings.shufflePlay],
   );
-
-  const appShellRef = useRef<HTMLDivElement>(null);
-
-  const toggleFullscreen = useCallback(() => {
-    const entering = !settings.fullScreen;
-    setSettings({ ...settings, fullScreen: entering });
-    if (entering) {
-      appShellRef.current?.requestFullscreen?.().catch(() => {});
-    } else if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    }
-  }, [settings, setSettings]);
-
-  // Keep settings in sync when the user exits fullscreen via Esc or browser UI
-  useEffect(() => {
-    const onFullscreenChange = () => {
-      if (!document.fullscreenElement) {
-        setSettings((s) => ({ ...s, fullScreen: false }));
-      }
-    };
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () =>
-      document.removeEventListener("fullscreenchange", onFullscreenChange);
-  }, [setSettings]);
 
   const handleArtistClick = useCallback(
     (name: string) => {
@@ -2187,10 +2011,8 @@ function App() {
     "4": () => updateCurrentRating(4),
     "5": () => updateCurrentRating(5),
     s: () => toggleShuffle(),
-    v: () => toggleVideo(),
     b: () => toggleBackgroundVideo(),
     c: () => centerGridAroundCurrentTrack(),
-    f: () => toggleFullscreen(),
     p: () => togglePlayback(),
     Space: () => togglePlayback(),
     Backspace: () => stopPlayback(),
@@ -2353,45 +2175,35 @@ function App() {
     />
   );
 
-  // Title and track menu: compact in the footer, large and centered above the video in
-  // fullscreen.
-  const nowPlaying = (expanded: boolean) =>
-    state.title || state.track_info ? (
-      <HStack
-        width="100%"
-        vAlign={expanded ? "start" : "center"}
-        hAlign={expanded ? "center" : "start"}
-        gap={2}
-      >
-        <StackItem className="now-playing-text">
-          <Title
-            title={state.title ?? state.track_info?.title ?? "Nothing playing"}
-            expanded={expanded}
-            artists={state.track_info?.artists}
-            trackName={state.track_info?.title}
-            label={state.track_info?.label}
-            releaseDate={state.track_info?.release_date}
-            onArtistClick={handleArtistClick}
-            onLabelClick={handleLabelClick}
-          />
-        </StackItem>
-        {nowPlayingMenu}
-      </HStack>
-    ) : (
-      <Text type="supporting" color="secondary">
-        Choose a track to start listening.
-      </Text>
-    );
+  // Title and track menu of the playing track, for the footer.
+  const nowPlaying = state.track_info ? (
+    <HStack width="100%" vAlign="center" hAlign="start" gap={2}>
+      <StackItem className="now-playing-text">
+        <Title
+          title={state.track_info.title}
+          artists={state.track_info?.artists}
+          trackName={state.track_info?.title}
+          label={state.track_info?.label}
+          releaseDate={state.track_info?.release_date}
+          onArtistClick={handleArtistClick}
+          onLabelClick={handleLabelClick}
+        />
+      </StackItem>
+      {nowPlayingMenu}
+    </HStack>
+  ) : (
+    <Text type="supporting" color="secondary">
+      Choose a track to start listening.
+    </Text>
+  );
 
-  // Layout: header | toolbar | optional video stage (16:9, at most 35dvh tall) | grid
-  // fills the rest | one-row transport footer (wraps on narrow screens). Fullscreen hides
-  // the header, toolbar and grid and lets the video fill the stage under a large title.
+  // Layout: header | toolbar | grid fills the rest | one-row transport footer (wraps on
+  // narrow screens), over the playing track's blurred thumbnail.
   return (
     <Theme theme={stereoTheme} mode={settings.appearance}>
       <LayerProvider toast={{ position: "topEnd" }}>
         <AppShell
-          ref={appShellRef}
-          className={`stereo-app ${settings.fullScreen ? "fullscreen" : ""}`}
+          className="stereo-app"
           variant="surface"
           height="fill"
           contentPadding={0}
@@ -2518,6 +2330,13 @@ function App() {
                 status="warning"
                 title="Connecting to Stereo"
                 description="Your collection will be available when the connection is restored."
+              />
+            ) : state.backend_version && !state.audio_key ? (
+              <Banner
+                container="section"
+                status="error"
+                title="Playback needs yt-dlp"
+                description="Install yt-dlp and Deno (e.g. brew install yt-dlp deno), then restart Stereo. If yt-dlp isn't on the PATH, pass --yt-dlp <path>."
               />
             ) : state.collection_is_valid === false ? (
               <Banner
@@ -2658,31 +2477,6 @@ function App() {
                 isScrollable={false}
               >
                 <VStack width="100%" height="100%">
-                  {settings.fullScreen ? (
-                    <HStack
-                      key="fullscreen-now-playing"
-                      width="100%"
-                      padding={4}
-                      hAlign="center"
-                      className="fullscreen-now-playing"
-                    >
-                      {nowPlaying(true)}
-                    </HStack>
-                  ) : null}
-                  {/* Rendered unconditionally and always at this position: YouTube swaps the
-                      mount node for its iframe, and re-parenting an iframe reloads it. */}
-                  <HStack
-                    key="player-stage"
-                    width="100%"
-                    padding={2}
-                    hAlign="center"
-                    vAlign="center"
-                    className={`player-stage ${settings.video || settings.fullScreen ? "" : "hidden"}`}
-                  >
-                    <VStack className="player">
-                      <div ref={playerRef} />
-                    </VStack>
-                  </HStack>
                   <StackItem
                     key="collection-body"
                     size="fill"
@@ -2696,7 +2490,11 @@ function App() {
               </LayoutContent>
             }
             footer={
-              <LayoutFooter padding={2} hasDivider className="playback-footer">
+              <LayoutFooter
+                padding={2}
+                hasDivider
+                className={`playback-footer ${touch ? "touch" : ""}`}
+              >
                 <HStack
                   width="100%"
                   gap={4}
@@ -2705,11 +2503,15 @@ function App() {
                   className="playback-bar"
                 >
                   <StackItem className="playback-now-playing">
-                    {settings.fullScreen ? null : nowPlaying(false)}
+                    {nowPlaying}
                   </StackItem>
                   <StackItem className="playback-transport">
                     <VStack width="100%" hAlign="center" gap={1}>
-                      <HStack vAlign="center" hAlign="center" gap={1}>
+                      <HStack
+                        vAlign="center"
+                        hAlign="center"
+                        gap={touch ? 3 : 1}
+                      >
                         <Tooltip
                           content={
                             <>
@@ -2719,7 +2521,7 @@ function App() {
                         >
                           <IconButton
                             variant="secondary"
-                            size="sm"
+                            size={footerButtonSize}
                             label="Skip to previous track"
                             icon={<TrackPreviousIcon />}
                             onClick={prevTrack}
@@ -2736,20 +2538,24 @@ function App() {
                         >
                           <IconButton
                             variant="primary"
-                            size="md"
+                            size={touch ? "lg" : "md"}
                             className="play-pause-button"
                             label={
-                              state.player_state === YTPlayerState.PLAYING
+                              state.player_state === "playing" ||
+                              state.player_loading
                                 ? "Pause"
                                 : "Play"
                             }
                             icon={
-                              state.player_state === YTPlayerState.PLAYING ? (
+                              state.player_state === "playing" ? (
                                 <PauseIcon />
                               ) : (
                                 <PlayIcon />
                               )
                             }
+                            // Stays clickable while loading, to cancel playback.
+                            isLoading={state.player_loading}
+                            isInterruptible
                             onClick={togglePlayback}
                           />
                         </Tooltip>
@@ -2763,43 +2569,53 @@ function App() {
                         >
                           <IconButton
                             variant="secondary"
-                            size="sm"
+                            size={footerButtonSize}
                             label="Skip to next track"
                             icon={<TrackNextIcon />}
                             onClick={nextTrack}
                           />
                         </Tooltip>
                       </HStack>
-                      <HStack
-                        className="progress-slider"
-                        width="100%"
-                        vAlign="center"
-                        gap={2}
-                      >
-                        <Text type="supporting" hasTabularNumbers>
-                          {formatDuration(state.current_time ?? 0)}
-                        </Text>
-                        <StackItem size="fill">
-                          <Slider
-                            label="Playback progress"
-                            isLabelHidden
-                            valueDisplay="none"
-                            value={state.playback_progress_pct ?? 0}
-                            onChange={(v: number) => onSliderValueChange([v])}
-                            isDisabled={!state.duration}
-                            style={{ paddingInline: "var(--spacing-3)" }}
-                          />
-                        </StackItem>
-                        <Text type="supporting" hasTabularNumbers>
-                          {state.duration
-                            ? formatDuration(state.duration)
-                            : "--:--"}
-                        </Text>
-                      </HStack>
+                      {currentDownload ? (
+                        <AudioDownloadProgress download={currentDownload} />
+                      ) : (
+                        <HStack
+                          className="progress-slider"
+                          width="100%"
+                          vAlign="center"
+                          gap={2}
+                        >
+                          <Text type="supporting" hasTabularNumbers>
+                            {formatDuration(state.current_time ?? 0)}
+                          </Text>
+                          <StackItem size="fill">
+                            <Slider
+                              label="Playback progress"
+                              isLabelHidden
+                              valueDisplay="none"
+                              value={state.playback_progress_pct ?? 0}
+                              onChange={(v: number) => onSliderValueChange([v])}
+                              isDisabled={!state.duration}
+                              style={{ paddingInline: "var(--spacing-3)" }}
+                            />
+                          </StackItem>
+                          <Text type="supporting" hasTabularNumbers>
+                            {state.duration
+                              ? formatDuration(state.duration)
+                              : "--:--"}
+                          </Text>
+                        </HStack>
+                      )}
                     </VStack>
                   </StackItem>
                   <StackItem className="playback-options">
-                    <HStack vAlign="center" hAlign="end" gap={1} wrap="wrap">
+                    {/* On a phone the rating and the toggles get a row each. */}
+                    <HStack
+                      vAlign="center"
+                      hAlign={touch ? "center" : "end"}
+                      gap={1}
+                      wrap="wrap"
+                    >
                       <Rating
                         label="Rating for the playing track"
                         enabled={Boolean(
@@ -2812,107 +2628,63 @@ function App() {
                             : undefined
                         }
                         updateRating={updateCurrentRating}
+                        size={footerButtonSize}
                       />
 
-                      <Divider orientation="vertical" />
+                      {touch ? null : <Divider orientation="vertical" />}
 
-                      <Tooltip
-                        content={
-                          <>
-                            Toggle shuffle play <Kbd keys="s" />
-                          </>
-                        }
-                      >
-                        <IconButton
-                          variant={settings.shufflePlay ? "primary" : "ghost"}
-                          size="sm"
-                          label="Toggle shuffle play"
-                          aria-pressed={settings.shufflePlay}
-                          icon={<ShuffleIcon />}
-                          onClick={toggleShuffle}
-                        />
-                      </Tooltip>
-
-                      <Tooltip
-                        content={
-                          reducedMotion ? (
-                            "Background video is disabled by your reduced motion preference"
-                          ) : (
+                      <HStack vAlign="center" gap={1}>
+                        <Tooltip
+                          content={
                             <>
-                              Toggle background video <Kbd keys="b" />
+                              Toggle shuffle play <Kbd keys="s" />
                             </>
-                          )
-                        }
-                      >
-                        <IconButton
-                          variant={
-                            settings.backgroundVideo && !reducedMotion
-                              ? "primary"
-                              : "ghost"
                           }
-                          size="sm"
-                          label="Toggle background video"
-                          aria-pressed={
-                            settings.backgroundVideo && !reducedMotion
-                          }
-                          isDisabled={reducedMotion}
-                          icon={<MagicWandIcon />}
-                          onClick={toggleBackgroundVideo}
-                        />
-                      </Tooltip>
+                        >
+                          <IconButton
+                            variant={settings.shufflePlay ? "primary" : "ghost"}
+                            size={footerButtonSize}
+                            label="Toggle shuffle play"
+                            aria-pressed={settings.shufflePlay}
+                            icon={<ShuffleIcon />}
+                            onClick={toggleShuffle}
+                          />
+                        </Tooltip>
 
-                      <Tooltip
-                        content={
-                          <>
-                            Toggle video <Kbd keys="v" />
-                          </>
-                        }
-                      >
-                        <IconButton
-                          className="toggle-video-button"
-                          variant={settings.video ? "primary" : "ghost"}
-                          size="sm"
-                          label="Toggle video"
-                          aria-pressed={settings.video}
-                          icon={<VideoIcon />}
-                          onClick={toggleVideo}
-                        />
-                      </Tooltip>
-
-                      <Tooltip
-                        content={
-                          <>
-                            Toggle fullscreen mode <Kbd keys="f" />
-                          </>
-                        }
-                      >
-                        <IconButton
-                          variant={settings.fullScreen ? "primary" : "ghost"}
-                          size="sm"
-                          label="Toggle fullscreen mode"
-                          aria-pressed={settings.fullScreen}
-                          icon={
-                            settings.fullScreen ? (
-                              <ExitFullScreenIcon />
-                            ) : (
-                              <EnterFullScreenIcon />
-                            )
+                        <Tooltip
+                          content={
+                            <>
+                              Toggle background artwork <Kbd keys="b" />
+                            </>
                           }
-                          onClick={toggleFullscreen}
-                        />
-                      </Tooltip>
+                        >
+                          <IconButton
+                            variant={
+                              settings.backgroundVideo ? "primary" : "ghost"
+                            }
+                            size={footerButtonSize}
+                            label="Toggle background artwork"
+                            aria-pressed={settings.backgroundVideo}
+                            icon={<MagicWandIcon />}
+                            onClick={toggleBackgroundVideo}
+                          />
+                        </Tooltip>
+                      </HStack>
                     </HStack>
                   </StackItem>
                 </HStack>
               </LayoutFooter>
             }
           />
-          <VStack
-            className={`background-player ${state.show_player2 && settings.backgroundVideo && !reducedMotion ? "" : "hidden"}`}
-          >
-            {/* YouTube replaces this DOM mount node. */}
-            <div ref={player2Ref} />
-          </VStack>
+          {state.current_id && settings.backgroundVideo ? (
+            <VStack
+              className="background-player"
+              style={{
+                // 16:9 without the letterboxing of the larger thumbnails; blurred anyway.
+                backgroundImage: `url(https://i.ytimg.com/vi/${encodeURIComponent(state.current_id)}/mqdefault.jpg)`,
+              }}
+            />
+          ) : null}
           <Notification
             notifications={state.notification_queue}
             onConsumed={consumeNotifications}

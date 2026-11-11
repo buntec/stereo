@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod beatport;
 pub mod browser_cookies;
 pub mod db;

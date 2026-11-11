@@ -21,7 +21,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{
-    beatport, db, git,
+    audio, beatport, db, git,
     message::{MsgClient, MsgServer, SearchKind},
     models::{Collection, Track},
     scraper,
@@ -75,6 +75,39 @@ async fn forward_collection_moves(session: uuid::Uuid, events: mpsc::Sender<Sess
             }
             Err(broadcast::error::RecvError::Lagged(missed)) => {
                 tracing::warn!("Missed {missed} collection move announcements");
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+/// Sends the session the state of unfinished audio downloads, then every update.
+async fn forward_audio_downloads(
+    active: Vec<audio::DownloadUpdate>,
+    mut updates: broadcast::Receiver<audio::DownloadUpdate>,
+    server_tx: mpsc::Sender<MsgServer>,
+) {
+    let message = |update: audio::DownloadUpdate| MsgServer::AudioDownload {
+        yt_id: update.yt_id,
+        status: update.status,
+        progress: update.progress,
+    };
+    for update in active {
+        if server_tx.send(message(update)).await.is_err() {
+            return;
+        }
+    }
+    loop {
+        match updates.recv().await {
+            Ok(update) => {
+                if server_tx.send(message(update)).await.is_err() {
+                    break;
+                }
+            }
+            // Unlikely with the channel's capacity; a client also forgets a download once its track
+            // starts playing, in case it missed the final update.
+            Err(broadcast::error::RecvError::Lagged(missed)) => {
+                tracing::warn!("Missed {missed} audio download updates");
             }
             Err(broadcast::error::RecvError::Closed) => break,
         }
@@ -298,8 +331,13 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
         .send(MsgServer::BackendInfo {
             version: env!("CARGO_PKG_VERSION").to_string(),
             home_dir: home.to_string_lossy().to_string(),
+            audio_key: audio::key(),
         })
         .await;
+    // After BackendInfo, which makes the client forget downloads it knew from a previous connection.
+    let downloads_task = audio::subscribe().map(|(active, updates)| {
+        tokio::spawn(forward_audio_downloads(active, updates, server_tx.clone()))
+    });
     let _ = server_tx
         .send(MsgServer::Repos {
             repos: utils::list_repos(&repos_dir).await,
@@ -361,6 +399,9 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
     }
     recv_task.abort();
     moves_task.abort();
+    if let Some(task) = downloads_task {
+        task.abort();
+    }
     send_task.abort();
     tracing::info!("WS disconnected: {uid}");
 }
@@ -2325,6 +2366,9 @@ mod websocket_security_tests {
             port,
             allowed_origins: Vec::new(),
             ws_token: None,
+            cache_dir: None,
+            audio_cache_limit_gb: crate::settings::DEFAULT_AUDIO_CACHE_LIMIT_GB,
+            yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
             verbosity: 0,
             dev: false,
         }
@@ -2438,6 +2482,9 @@ mod tests {
             port,
             allowed_origins: vec![],
             ws_token: None,
+            cache_dir: None,
+            audio_cache_limit_gb: crate::settings::DEFAULT_AUDIO_CACHE_LIMIT_GB,
+            yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
             verbosity: 0,
             dev: false,
         };

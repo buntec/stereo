@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use clap::Args;
 
+pub const DEFAULT_AUDIO_CACHE_LIMIT_GB: u64 = 10;
+pub const DEFAULT_YT_DLP: &str = "yt-dlp";
+
 #[derive(Debug, Clone, Args)]
 pub struct Settings {
     /// Directory for app data (default: ~/.local/share/stereo)
@@ -35,6 +38,24 @@ pub struct Settings {
     #[arg(long, env = "STEREO_WS_TOKEN", global = true)]
     pub ws_token: Option<String>,
 
+    /// Directory for cached data such as audio downloads (default: ~/Library/Caches/stereo on
+    /// macOS, $XDG_CACHE_HOME/stereo or ~/.cache/stereo elsewhere)
+    #[arg(long, env = "STEREO_CACHE_DIR", global = true)]
+    pub cache_dir: Option<PathBuf>,
+
+    /// Size limit of the audio download cache in GB; least recently played tracks are evicted
+    #[arg(
+        long,
+        default_value_t = DEFAULT_AUDIO_CACHE_LIMIT_GB,
+        env = "STEREO_AUDIO_CACHE_LIMIT_GB",
+        global = true
+    )]
+    pub audio_cache_limit_gb: u64,
+
+    /// yt-dlp executable used to download audio for playback
+    #[arg(long, default_value = DEFAULT_YT_DLP, env = "STEREO_YT_DLP", global = true)]
+    pub yt_dlp: String,
+
     /// Increase verbosity (repeat for more detail)
     #[arg(long = "verbose", short = 'v', action = clap::ArgAction::Count)]
     pub verbosity: u8,
@@ -55,6 +76,28 @@ impl Settings {
             base.join(".local").join("share").join("stereo")
         });
         std::path::absolute(&home).unwrap_or(home)
+    }
+
+    /// Where downloaded audio is cached, always absolute. Not under the data directory: it is
+    /// disposable, large and per-machine, while the data directory holds the synced git repos.
+    pub fn audio_cache_dir(&self) -> PathBuf {
+        let cache = self.cache_dir.clone().unwrap_or_else(|| {
+            let home = std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("."));
+            let base = if cfg!(target_os = "macos") {
+                home.join("Library").join("Caches")
+            } else {
+                std::env::var("XDG_CACHE_HOME")
+                    .ok()
+                    .filter(|dir| !dir.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join(".cache"))
+            };
+            base.join("stereo")
+        });
+        let cache = std::path::absolute(&cache).unwrap_or(cache);
+        cache.join("audio")
     }
 
     pub fn is_loopback_bind(&self) -> bool {
@@ -123,6 +166,9 @@ mod tests {
             port: 8005,
             allowed_origins: Vec::new(),
             ws_token: None,
+            cache_dir: None,
+            audio_cache_limit_gb: crate::settings::DEFAULT_AUDIO_CACHE_LIMIT_GB,
+            yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
             verbosity: 0,
             dev: false,
         }

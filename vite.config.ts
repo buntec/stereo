@@ -16,6 +16,7 @@ export default defineConfig({
         target: `ws://localhost:${process.env.STEREO_PORT ?? "8005"}`,
         ws: true,
       },
+      "/audio": `http://localhost:${process.env.STEREO_PORT ?? "8005"}`,
     },
   },
   plugins: [react()],

@@ -1,3 +1,18 @@
+import type { PlaybackStatus } from "./Playback.ts";
+
+export type AudioDownloadStatus =
+  | "queued"
+  | "preparing"
+  | "downloading"
+  | "done"
+  | "failed";
+
+/** An audio download that hasn't finished yet. */
+export type AudioDownload = {
+  status: AudioDownloadStatus;
+  progress?: number;
+};
+
 export type TrackSource =
   | "beatport"
   | "soundcloud"
@@ -232,7 +247,19 @@ export type ServerMsg =
       type: "row-index";
       index: number;
     }
-  | { type: "backend-info"; version: string; home_dir: string }
+  | {
+      type: "backend-info";
+      version: string;
+      home_dir: string;
+      audio_key?: string | null;
+    }
+  | {
+      type: "audio-download";
+      yt_id: string;
+      status: AudioDownloadStatus;
+      /** Fraction downloaded, while downloading and if the size is known. */
+      progress?: number | null;
+    }
   | { type: "yt-anon-playlist"; id: number; url: string }
   | { type: "track-info"; track: ITrack }
   | {
@@ -373,14 +400,12 @@ export type ServerMsg =
 
 export type Action =
   | ServerMsg
-  | { type: "player-state-change"; id: string; state: number }
-  | { type: "set-player2-visible"; visible: boolean }
-  | { type: "set-title"; title?: string }
+  | { type: "player-state-change"; id: string; state: PlaybackStatus }
+  | { type: "set-player-loading"; loading: boolean }
   | { type: "set-import-from"; path: string }
   | { type: "set-import-keep-user-data"; keep: boolean }
   | { type: "consume-notifications"; ids: number[] }
   | { type: "dismiss-connection-closed-notification" }
-  | { type: "clear-title" }
   | { type: "collection-is-valid" }
   | { type: "grid-refreshed" }
   | { type: "grid-purged" }
@@ -403,7 +428,6 @@ export type Action =
     }
   | { type: "rows" }
   | { type: "toggle-shuffle" }
-  | { type: "toggle-show-player2" }
   | { type: "start-spotify-backfill"; id: number }
   | { type: "start-spotify-playlist-export"; id: number; total: number }
   | { type: "clear-spotify-playlist-open-url" }
@@ -451,8 +475,7 @@ export type Settings = {
   appearance: AppearanceType;
   repoPath: string;
   collectionPath: string;
-  video: boolean;
+  /** Show the playing track's thumbnail, blurred, behind the app (historical name). */
   backgroundVideo: boolean;
   shufflePlay: boolean;
-  fullScreen: boolean;
 };
