@@ -497,5 +497,7 @@ export type Settings = {
   collectionPath: string;
   /** Show the playing track's thumbnail, blurred, behind the app (historical name). */
   backgroundVideo: boolean;
+  /** How strongly the background pulses with the beats, 0–100 (%); unset in older stored settings. */
+  backgroundPulse?: number;
   shufflePlay: boolean;
 };
