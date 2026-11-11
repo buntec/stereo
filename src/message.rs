@@ -61,6 +61,24 @@ pub enum MsgServer {
         status: AudioDownloadStatus,
         /// Fraction downloaded, while downloading and if the size is known.
         progress: Option<f64>,
+        /// Why the download failed, for `Failed`.
+        error: Option<String>,
+    },
+    /// The tracks whose audio is downloaded, sent on connect; `AudioDownload`s that are `Done` and
+    /// `AudioEvicted` follow as it changes.
+    AudioCached {
+        yt_ids: Vec<String>,
+    },
+    /// These tracks' audio was evicted from the cache.
+    AudioEvicted {
+        yt_ids: Vec<String>,
+    },
+    /// Reply to `GetWaveform`: loudness values (0–255) evenly spread over the track, or `None` if
+    /// the track isn't downloaded or its audio can't be decoded.
+    Waveform {
+        id: i64,
+        yt_id: String,
+        peaks: Option<Vec<u8>>,
     },
     /// Generic failure reply to a request/reply message (see `MsgClient::request_id`).
     ErrorReply {
@@ -427,6 +445,15 @@ pub enum MsgClient {
         limit: i64,
     },
     SearchCancelAll {},
+    /// Downloads a track's audio in the background, even if its download failed recently.
+    DownloadAudio {
+        yt_id: String,
+    },
+    /// Asks for the waveform of a downloaded track (`MsgServer::Waveform`).
+    GetWaveform {
+        id: i64,
+        yt_id: String,
+    },
     CollectionContainsIds {
         id: i64,
         yt_ids: Vec<String>,
@@ -577,6 +604,7 @@ impl MsgClient {
             Self::SetCollection { id, .. }
             | Self::GetPathCompletions { id, .. }
             | Self::CollectionContainsIds { id, .. }
+            | Self::GetWaveform { id, .. }
             | Self::GetNewReleasesCandidates { id }
             | Self::CreateYtAnonPlaylist { id, .. }
             | Self::GetSpotifySession { id }

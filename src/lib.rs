@@ -10,4 +10,5 @@ pub mod server;
 pub mod settings;
 pub mod spotify;
 pub mod utils;
+pub mod waveform;
 pub mod youtube;

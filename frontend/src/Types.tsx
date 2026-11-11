@@ -7,10 +7,12 @@ export type AudioDownloadStatus =
   | "done"
   | "failed";
 
-/** An audio download that hasn't finished yet. */
+/** An audio download that hasn't finished yet, or that failed. */
 export type AudioDownload = {
   status: AudioDownloadStatus;
   progress?: number;
+  /** Why the download failed, for "failed". */
+  error?: string;
 };
 
 export type TrackSource =
@@ -114,6 +116,8 @@ export type ClientMsg =
   | { type: "delete-collection"; path: string }
   | { type: "rename-collection"; path: string; name: string }
   | { type: "collection-contains-ids"; yt_ids: string[] }
+  | { type: "download-audio"; yt_id: string }
+  | { type: "get-waveform"; yt_id: string }
   | { type: "get-track-info"; yt_id: string }
   | { type: "import-from"; path: string; keep_user_data: boolean }
   | { type: "check-import-from"; path: string }
@@ -259,6 +263,18 @@ export type ServerMsg =
       status: AudioDownloadStatus;
       /** Fraction downloaded, while downloading and if the size is known. */
       progress?: number | null;
+      /** Why the download failed, for "failed". */
+      error?: string | null;
+    }
+  /** The tracks whose audio is downloaded, sent on connect. */
+  | { type: "audio-cached"; yt_ids: string[] }
+  | { type: "audio-evicted"; yt_ids: string[] }
+  | {
+      type: "waveform";
+      id: number;
+      yt_id: string;
+      /** Loudness values (0–255) evenly spread over the track. */
+      peaks?: number[] | null;
     }
   | { type: "yt-anon-playlist"; id: number; url: string }
   | { type: "track-info"; track: ITrack }
@@ -422,7 +438,6 @@ export type Action =
   | { type: "set-new-releases-days"; days: number }
   | {
       type: "set-playback-progress";
-      percent: number;
       duration: number;
       current_time: number;
     }

@@ -62,6 +62,17 @@ sha1 = "0.10"
 # Applies a browser cookie database's write-ahead log to a copy before rookie reads it (rookie opens
 # databases as immutable, which skips the WAL). The version rookie already uses.
 rusqlite = "0.31"
+# Decodes downloaded audio (YouTube's AAC in MP4) for the player's waveform, in pure Rust.
+symphonia = { version = "0.6", default-features = false, features = ["aac", "isomp4"] }
+
+# Decoding a track for its waveform takes many seconds unoptimized; optimize the decoder in debug
+# builds too.
+[profile.dev.package.symphonia-core]
+opt-level = 3
+[profile.dev.package.symphonia-codec-aac]
+opt-level = 3
+[profile.dev.package.symphonia-format-isomp4]
+opt-level = 3
 
 [dev-dependencies]
 # WebSocket client for end-to-end session tests (the version axum already uses).

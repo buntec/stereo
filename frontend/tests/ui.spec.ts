@@ -468,12 +468,12 @@ test("single-key shortcuts still work after clicking a button or a grid row", as
   await expect(shuffle).toHaveAttribute("aria-pressed", "true");
 });
 
-test("slider arrow keys seek one slider step instead of triggering global shortcuts", async ({
+test("waveform arrow keys seek five seconds instead of triggering global shortcuts", async ({
   page,
 }) => {
   await openApp(page, { audio: "ok", audioSeconds: 240 });
   const slider = page.getByRole("slider", {
-    name: "Playback progress",
+    name: "Playback position",
     exact: true,
   });
   await expect(slider).toBeEnabled();
@@ -482,11 +482,11 @@ test("slider arrow keys seek one slider step instead of triggering global shortc
   const before = Number(await slider.getAttribute("aria-valuenow"));
   await slider.focus();
   await page.keyboard.press("ArrowRight");
-  // One step is 1% of the 4 minutes, and the arrow key doesn't also skip tracks.
+  // One step is 5 seconds, and the arrow key doesn't also skip tracks.
   await expect
     .poll(async () => Number(await slider.getAttribute("aria-valuenow")))
-    .toBeCloseTo(before + 1, 0);
-  await expect(page.getByText("00:02", { exact: true })).toBeVisible();
+    .toBeCloseTo(before + 5, 0);
+  await expect(page.getByText("00:05", { exact: true })).toBeVisible();
 });
 
 test("connecting YouTube asks which login to use when several are logged in", async ({
@@ -631,36 +631,43 @@ test("explains that playback needs yt-dlp when the backend can't download audio"
   ).toBeVisible();
 });
 
-test("shows the playing track's download progress in place of the playback slider", async ({
+test("shows the playing track's download progress in its waveform, and each track's in its row", async ({
   page,
 }) => {
   const { send, audioRequests } = await openApp(page);
   await expect
     .poll(() => audioRequests)
     .toContain("GET /audio/audit0?key=test-key");
-  const slider = page.getByRole("slider", { name: "Playback progress" });
-  const download = page.getByRole("progressbar", {
-    name: "Audio download progress",
-  });
-  await expect(slider).toBeVisible();
+  const waveform = page.getByRole("slider", { name: "Playback position" });
+  const rowButton = (index: number) =>
+    page.locator(`.ag-row[row-index="${index}"] .audio-cache-button`);
+  await expect(waveform).toBeVisible();
+  await expect(rowButton(0)).toHaveAccessibleName(
+    "Not downloaded. Click to download",
+  );
 
-  // Downloads of other tracks (prefetching) aren't shown.
+  // Downloads of other tracks (prefetching) only show in their rows.
   send({
     type: "audio-download",
     yt_id: "audit1",
     status: "downloading",
     progress: 0.9,
   });
+  await expect(rowButton(1)).toHaveAccessibleName("Downloading (90%)");
+  await expect(page.getByText("90%", { exact: true })).toHaveCount(0);
+
   send({
     type: "audio-download",
     yt_id: "audit0",
     status: "preparing",
     progress: null,
   });
-  await expect(
-    page.getByText("Preparing download", { exact: true }),
-  ).toBeVisible();
-  await expect(slider).toBeHidden();
+  await expect(page.getByText("Preparing", { exact: true })).toBeVisible();
+  await expect(page.getByText("--%", { exact: true })).toBeVisible();
+  // Pulsing until the size is known, and nothing to seek in yet.
+  await expect(waveform).toHaveAttribute("data-pending", "true");
+  await expect(waveform).toBeDisabled();
+  await expect(rowButton(0)).toHaveAccessibleName("Preparing download…");
 
   send({
     type: "audio-download",
@@ -668,8 +675,9 @@ test("shows the playing track's download progress in place of the playback slide
     status: "downloading",
     progress: 0.43,
   });
-  await expect(download).toHaveAttribute("aria-valuenow", "43");
   await expect(page.getByText("43%", { exact: true })).toBeVisible();
+  await expect(waveform).toHaveAttribute("data-pending", "false");
+  await expect(rowButton(0)).toHaveAccessibleName("Downloading (43%)");
 
   send({
     type: "audio-download",
@@ -677,8 +685,62 @@ test("shows the playing track's download progress in place of the playback slide
     status: "done",
     progress: null,
   });
-  await expect(download).toBeHidden();
-  await expect(slider).toBeVisible();
+  await expect(page.getByText("43%", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("--:--", { exact: true })).toBeVisible();
+  await expect(rowButton(0)).toHaveAccessibleName("Downloaded");
+});
+
+test("an evicted track stays shown as not downloaded when its buffered audio plays on", async ({
+  page,
+}) => {
+  const { send, messages } = await openApp(page, {
+    audio: "ok",
+    audioSeconds: 240,
+  });
+  const button = page.locator(".play-pause-button");
+  const rowButton = page.locator('.ag-row[row-index="0"] .audio-cache-button');
+  await expect(button).toHaveAccessibleName("Pause");
+  send({ type: "audio-download", yt_id: "audit0", status: "done" });
+  await expect(rowButton).toHaveAccessibleName("Downloaded");
+  await button.click();
+  await expect(button).toHaveAccessibleName("Play");
+  send({ type: "audio-evicted", yt_ids: ["audit0"] });
+  await expect(rowButton).toHaveAccessibleName(
+    "Not downloaded. Click to download",
+  );
+  await button.click();
+  await expect(button).toHaveAccessibleName("Pause");
+  await expect(button).not.toHaveAttribute("aria-busy", "true");
+  await expect(rowButton).toHaveAccessibleName(
+    "Not downloaded. Click to download",
+  );
+  await rowButton.click();
+  await expect
+    .poll(() => messages.filter((m) => m.type === "download-audio"))
+    .toEqual([{ type: "download-audio", yt_id: "audit0" }]);
+});
+
+test("a track without a waveform gets one once its audio is downloaded again", async ({
+  page,
+}) => {
+  const { send, messages } = await openApp(page);
+  const requests = () => messages.filter((m) => m.type === "get-waveform");
+  const reply = (peaks: number[] | null) => {
+    const request = requests().at(-1)!;
+    send({ type: "waveform", id: request.id, yt_id: "audit0", peaks });
+  };
+  // Bars of the whole waveform, which start at the top only at full loudness.
+  const bars = page.locator(".waveform .waveform-unplayed");
+
+  // E.g. evicted between the client learning it's downloaded and asking.
+  send({ type: "audio-cached", yt_ids: ["audit0"] });
+  await expect.poll(() => requests().length).toBe(1);
+  reply(null);
+  send({ type: "audio-evicted", yt_ids: ["audit0"] });
+  send({ type: "audio-download", yt_id: "audit0", status: "done" });
+  await expect.poll(() => requests().length).toBe(2);
+  reply(new Array(1000).fill(255));
+  await expect(bars).toHaveAttribute("d", /^M0 0\.0h/);
 });
 
 test("the play button shows that playback is loading and can cancel it", async ({
@@ -693,7 +755,7 @@ test("the play button shows that playback is loading and can cancel it", async (
   await expect(button).toHaveAccessibleName("Pause");
   // Nothing to seek in before the duration is known.
   await expect(
-    page.getByRole("slider", { name: "Playback progress", exact: true }),
+    page.getByRole("slider", { name: "Playback position", exact: true }),
   ).toBeDisabled();
   await expect(page.getByText("--:--", { exact: true })).toBeVisible();
   await button.click();
