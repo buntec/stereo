@@ -22,7 +22,12 @@ async function openApp(
     empty?: boolean;
     noCollection?: boolean;
     holdRows?: boolean;
-    playback?: boolean;
+    /**
+     * Downloaded audio, which the backend never sends (the default), serves as
+     * `audioSeconds` of silence, fails to download, or doesn't offer at all.
+     */
+    audio?: "hold" | "ok" | "fail" | "off";
+    audioSeconds?: number;
   } = {},
 ) {
   let socket: WebSocketRoute;
@@ -31,38 +36,41 @@ async function openApp(
   const messages: Record<string, unknown>[] = [];
   await page.route("https://www.youtube.com/**", (route) => route.abort());
   await page.route("https://i.ytimg.com/**", (route) => route.abort());
-  if (options.playback)
-    await page.route("https://www.youtube.com/iframe_api", (route) =>
-      route.fulfill({
-        contentType: "text/javascript",
-        body: `
-      window.__playerMounts = 0;
-      window.__playerDestroys = 0;
-      class Player {
-        constructor(node, options) {
-          this.events = options.events; this.id = ''; this.time = 0; this.state = -1;
-          this.iframe = document.createElement('iframe');
-          this.iframe.title = 'YouTube player'; this.iframe.width = '640'; this.iframe.height = '360';
-          node.replaceWith(this.iframe); window.__playerMounts++;
-          setTimeout(() => this.events.onReady({target: this}), 0);
-        }
-        getVideoData() { return {video_id: this.id, title: 'Example track 1'}; }
-        getCurrentTime() { return this.time; }
-        getDuration() { return 240; }
-        getPlayerState() { return this.state; }
-        emit(state) { this.state = state; this.events.onStateChange({target: this, data: state}); }
-        loadVideoById(id) { this.id = id; this.emit(1); }
-        playVideo() { this.emit(1); }
-        pauseVideo() { this.emit(2); }
-        stopVideo() { this.emit(-1); }
-        seekTo(time) { this.time = time; window.__lastSeek = time; }
-        destroy() { window.__playerDestroys++; this.iframe.remove(); }
-      }
-      window.YT = {Player, PlayerState: {UNSTARTED:-1, ENDED:0, PLAYING:1, PAUSED:2, BUFFERING:3, CUED:5}};
-      window.onYouTubeIframeAPIReady();
-    `,
-      }),
-    );
+  const audioRequests: string[] = [];
+  const audio = options.audio ?? "hold";
+  if (audio !== "off")
+    await page.route("**/audio/**", (route) => {
+      const url = new URL(route.request().url());
+      audioRequests.push(
+        `${route.request().method()} ${url.pathname}?${url.searchParams}`,
+      );
+      if (audio === "hold") return;
+      if (audio === "fail")
+        return route.fulfill({ status: 502, body: "yt-dlp failed" });
+      // Range requests as the backend serves them; Chromium only seeks with those.
+      const wav = silentWav(options.audioSeconds ?? 1);
+      const range = /bytes=(\d+)-(\d*)/.exec(
+        route.request().headers()["range"] ?? "",
+      );
+      if (!range)
+        return route.fulfill({
+          status: 200,
+          contentType: "audio/wav",
+          headers: { "accept-ranges": "bytes" },
+          body: wav,
+        });
+      const start = Number(range[1]);
+      const end = range[2] ? Number(range[2]) : wav.length - 1;
+      return route.fulfill({
+        status: 206,
+        contentType: "audio/wav",
+        headers: {
+          "accept-ranges": "bytes",
+          "content-range": `bytes ${start}-${end}/${wav.length}`,
+        },
+        body: wav.subarray(start, end + 1),
+      });
+    });
   await page.routeWebSocket("**/ws", (ws) => {
     socket = ws;
     const send = (message: unknown) => ws.send(JSON.stringify(message));
@@ -163,7 +171,12 @@ async function openApp(
     setTimeout(
       () =>
         send([
-          { type: "backend-info", version: "test", home_dir: "/audit" },
+          {
+            type: "backend-info",
+            version: "test",
+            home_dir: "/audit",
+            audio_key: audio === "off" ? null : "test-key",
+          },
           { type: "repos", repos: [{ path: "/audit", remote: null }] },
         ]),
       20,
@@ -178,8 +191,29 @@ async function openApp(
   ).toHaveCount(0);
   return {
     messages,
+    audioRequests,
     send: (message: unknown) => socket.send(JSON.stringify(message)),
   };
+}
+
+/** A mono 8 kHz WAV file of silence. */
+function silentWav(seconds: number): Buffer {
+  const rate = 8000;
+  const dataSize = rate * seconds * 2;
+  const wav = Buffer.alloc(44 + dataSize);
+  wav.write("RIFF", 0);
+  wav.writeUInt32LE(36 + dataSize, 4);
+  wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(rate, 24);
+  wav.writeUInt32LE(rate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36);
+  wav.writeUInt32LE(dataSize, 40);
+  return wav;
 }
 
 test("focused controls retain Space; global shortcuts work on the page", async ({
@@ -401,103 +435,21 @@ test("grid arrow keys move between rows without skipping playback", async ({
   ).toHaveLength(before);
 });
 
-async function enableVideo(page: Page) {
-  await page.addInitScript(() =>
-    localStorage.setItem(
-      "stereo_app_settings",
-      JSON.stringify({
-        appearance: "dark",
-        repoPath: "/audit",
-        collectionPath: "/audit/collection.db",
-        video: true,
-        backgroundVideo: true,
-        shufflePlay: false,
-        fullScreen: false,
-      }),
-    ),
-  );
-}
-
-async function expectUnclippedVideo(page: Page) {
-  const player = (await page.locator(".player").boundingBox())!;
-  const iframe = (await page
-    .locator(".player iframe[title='YouTube player']")
-    .boundingBox())!;
-  const footer = (await page.locator(".playback-footer").boundingBox())!;
-  // The iframe fills a 16:9 frame that ends above the transport footer.
-  expect(Math.abs(player.width / player.height - 16 / 9)).toBeLessThan(0.02);
-  expect(iframe).toEqual(player);
-  expect(player.y).toBeGreaterThanOrEqual(0);
-  expect(player.y + player.height).toBeLessThanOrEqual(footer.y);
-  return player;
-}
-
-for (const [width, height] of [
-  [1280, 720],
-  [390, 844],
-]) {
-  test(`video is sized to fit and leaves room for the grid at ${width}x${height}`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height });
-    await enableVideo(page);
-    await openApp(page, { playback: true });
-    await expect(
-      page.getByRole("slider", { name: "Playback progress", exact: true }),
-    ).toBeEnabled();
-    const player = await expectUnclippedVideo(page);
-    expect(player.x + player.width).toBeLessThanOrEqual(width);
-    const grid = (await page.locator(".grid").boundingBox())!;
-    expect(grid.height).toBeGreaterThan(200);
-  });
-}
-
-test("fullscreen enlarges the video and preserves player instances and grid selection", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await enableVideo(page);
-  await openApp(page, { playback: true });
-  await expect(
-    page.getByRole("slider", { name: "Playback progress", exact: true }),
-  ).toBeEnabled();
-  await page.locator('.ag-row[row-index="0"]').getByRole("checkbox").check();
-  await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
-  const windowed = await expectUnclippedVideo(page);
-  await page
-    .getByRole("button", { name: "Toggle fullscreen mode", exact: true })
-    .click();
-  await expect(page.locator(".grid")).toBeHidden();
-  await expect(
-    page.getByRole("heading", { name: "Example track 1", exact: true }),
-  ).toBeVisible();
-  const fullscreen = await expectUnclippedVideo(page);
-  expect(fullscreen.width).toBeGreaterThan(windowed.width);
-  await page
-    .getByRole("button", { name: "Toggle fullscreen mode", exact: true })
-    .click();
-  await expect(page.locator(".grid")).toBeVisible();
-  await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => Reflect.get(window, "__playerMounts"))).toBe(
-    2,
-  );
-  expect(
-    await page.evaluate(() => Reflect.get(window, "__playerDestroys")),
-  ).toBe(0);
-});
-
 test("single-key shortcuts still work after clicking a button or a grid row", async ({
   page,
 }) => {
-  await openApp(page, { playback: true });
-  const video = page.getByRole("button", { name: "Toggle video", exact: true });
+  await openApp(page);
+  const background = page.getByRole("button", {
+    name: "Toggle background artwork",
+    exact: true,
+  });
   const shuffle = page.getByRole("button", {
     name: "Toggle shuffle play",
     exact: true,
   });
   await page.locator(".play-pause-button").click();
-  await page.keyboard.press("v");
-  await expect(video).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("b");
+  await expect(background).toHaveAttribute("aria-pressed", "false");
   await page.locator('.ag-row[row-index="2"] [col-id="title"]').click();
   await page.keyboard.press("s");
   await expect(shuffle).toHaveAttribute("aria-pressed", "true");
@@ -506,17 +458,22 @@ test("single-key shortcuts still work after clicking a button or a grid row", as
 test("slider arrow keys seek one slider step instead of triggering global shortcuts", async ({
   page,
 }) => {
-  await openApp(page, { playback: true });
+  await openApp(page, { audio: "ok", audioSeconds: 240 });
   const slider = page.getByRole("slider", {
     name: "Playback progress",
     exact: true,
   });
   await expect(slider).toBeEnabled();
+  await page.locator(".play-pause-button").click();
+  await expect(page.locator(".play-pause-button")).toHaveAccessibleName("Play");
+  const before = Number(await slider.getAttribute("aria-valuenow"));
   await slider.focus();
   await page.keyboard.press("ArrowRight");
+  // One step is 1% of the 4 minutes, and the arrow key doesn't also skip tracks.
   await expect
-    .poll(() => page.evaluate(() => Reflect.get(window, "__lastSeek")))
-    .toBe(2.4);
+    .poll(async () => Number(await slider.getAttribute("aria-valuenow")))
+    .toBeCloseTo(before + 1, 0);
+  await expect(page.getByText("00:02", { exact: true })).toBeVisible();
 });
 
 test("connecting YouTube asks which login to use when several are logged in", async ({
@@ -538,4 +495,138 @@ test("connecting YouTube asks which login to use when several are logged in", as
     undefined,
     "/p/work/cookies.sqlite",
   ]);
+});
+
+test("plays downloaded audio, prefetching and advancing on its own", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, { audio: "ok" });
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/audit0?key=test-key");
+  await expect(page.locator(".play-pause-button")).toHaveAccessibleName(
+    "Pause",
+  );
+  await expect
+    .poll(() => audioRequests)
+    .toEqual(
+      expect.arrayContaining([
+        "HEAD /audio/audit1?key=test-key",
+        "HEAD /audio/audit2?key=test-key",
+      ]),
+    );
+  // The 1s track ends and the engine starts the next one itself.
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/audit1?key=test-key");
+});
+
+test("skips tracks whose audio can't be downloaded, and stops after three in a row", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, { audio: "fail" });
+  await expect(
+    page
+      .getByText(
+        "Couldn't download this track's audio, skipping it: yt-dlp failed",
+        { exact: true },
+      )
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Couldn't download the audio of 3 tracks in a row, stopping: yt-dlp failed",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.locator(".play-pause-button")).toHaveAccessibleName("Play");
+  const played = new Set(
+    audioRequests
+      .filter((r) => r.startsWith("GET "))
+      .map((r) => r.split("?")[0]),
+  );
+  expect([...played].sort()).toEqual([
+    "GET /audio/audit0",
+    "GET /audio/audit1",
+    "GET /audio/audit2",
+  ]);
+});
+
+test("shows the playing track's thumbnail, blurred, behind the app", async ({
+  page,
+}) => {
+  await openApp(page);
+  const background = page.locator(".background-player");
+  await expect(background).toHaveCSS(
+    "background-image",
+    'url("https://i.ytimg.com/vi/audit0/mqdefault.jpg")',
+  );
+  await page
+    .getByRole("button", { name: "Toggle background artwork", exact: true })
+    .click();
+  await expect(background).toHaveCount(0);
+});
+
+test("explains that playback needs yt-dlp when the backend can't download audio", async ({
+  page,
+}) => {
+  await openApp(page, { audio: "off" });
+  await expect(
+    page.getByText("Playback needs yt-dlp", { exact: true }),
+  ).toBeVisible();
+});
+
+test("media session offers track skipping rather than ±10s seeking", async ({
+  page,
+}) => {
+  // iOS shows either seek or track buttons on the lock screen. It ignores
+  // handlers registered before the audio is its "Now Playing" item and then
+  // falls back to seek buttons, so they're registered again once a track plays.
+  await page.addInitScript(() => {
+    const handlers = new Map<string, unknown>();
+    const calls: string[] = [];
+    Reflect.set(window, "__mediaSessionHandlers", handlers);
+    Reflect.set(window, "__mediaSessionCalls", calls);
+    const set = navigator.mediaSession.setActionHandler.bind(
+      navigator.mediaSession,
+    );
+    navigator.mediaSession.setActionHandler = (action, handler) => {
+      calls.push(`${action} ${handler ? "set" : "cleared"}`);
+      if (handler) handlers.set(action, handler);
+      else handlers.delete(action);
+      set(action, handler);
+    };
+    // Marks when the app's audio element starts playing (listening before the app does).
+    const NativeAudio = window.Audio;
+    window.Audio = function (src?: string) {
+      const audio = new NativeAudio(src);
+      audio.addEventListener("playing", () => calls.push("playing"));
+      return audio;
+    } as unknown as typeof Audio;
+  });
+  await openApp(page, { audio: "ok", audioSeconds: 240 });
+  const calls = () =>
+    page.evaluate((): string[] => Reflect.get(window, "__mediaSessionCalls"));
+  await expect.poll(calls).toContain("playing");
+  const actions = () =>
+    page.evaluate(() =>
+      [...Reflect.get(window, "__mediaSessionHandlers").keys()].sort(),
+    );
+  expect(await actions()).toEqual([
+    "nexttrack",
+    "pause",
+    "play",
+    "previoustrack",
+    "seekto",
+  ]);
+  const all = await calls();
+  const sincePlaying = all.slice(all.lastIndexOf("playing") + 1);
+  expect(sincePlaying).toEqual(
+    expect.arrayContaining([
+      "nexttrack set",
+      "previoustrack set",
+      "seekbackward cleared",
+      "seekforward cleared",
+    ]),
+  );
 });

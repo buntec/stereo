@@ -34,9 +34,21 @@ Begin by searching for and adding music to a new collection.
 Or by importing from another collection.
 You can create as many collections as you want.
 A collection is just a file on your local hard disk.
-More precisely, it's a SQLite database containing track meta data only - no actual audio data is stored or downloaded!
+More precisely, it's a SQLite database containing track meta data only - no audio.
 
-For the best possible playback experience, a YouTube Premium subscription or a good ad-blocker is highly recommended.
+## Playback
+
+Playback needs [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [Deno](https://deno.com), which
+yt-dlp needs for YouTube (e.g. `brew install yt-dlp deno`). Stereo downloads each track's audio
+from YouTube when it is first played and plays it in the browser, which keeps going in the
+background and with a phone's screen locked. Upcoming tracks are downloaded ahead of time; a
+track that can't be downloaded is skipped.
+
+Downloads are cached in `~/Library/Caches/stereo/audio` on macOS (`~/.cache/stereo/audio`
+elsewhere, or `--cache-dir`), up to 10 GB by default (`--audio-cache-limit-gb`); the least
+recently played tracks are evicted first. Pass `--yt-dlp <path>` if yt-dlp isn't on the `PATH`.
+Keep yt-dlp up to date (`brew upgrade yt-dlp`): YouTube changes often, and older versions stop
+working.
 
 Work in progress! 🚧
 

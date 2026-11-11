@@ -4,7 +4,7 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ## What this is
 
-Stereo is a browser-based music curation app. There's no account/login/subscription — a "collection" is just a SQLite database file (track metadata only, no audio). The Rust backend serves a React SPA and a WebSocket API; playback happens client-side via the YouTube IFrame API. Tracks are found by searching Beatport/SoundCloud for metadata and matching against YouTube search results.
+Stereo is a browser-based music curation app. There's no account/login/subscription — a "collection" is just a SQLite database file (track metadata only, no audio). The Rust backend serves a React SPA and a WebSocket API; playback happens client-side, from audio the backend downloads from YouTube with yt-dlp (`/audio/{yt_id}`). Tracks are found by searching Beatport/SoundCloud for metadata and matching against YouTube search results.
 
 ## Commands
 
@@ -26,7 +26,7 @@ Frontend-only commands (from `package.json`): `bun run dev`, `bun run build` (`t
 
 `tests/scraper.rs` hits real external APIs (Beatport, YouTube, MusicBrainz) and is `#[ignore]`d by default — run explicitly with `cargo test -- --ignored`.
 
-The backend binary embeds the built frontend (`dist/`) via `rust-embed`/`axum-embed` for release builds; in `--dev` mode (`just run-backend-dev`) it does not serve static assets and expects Vite to be running separately (the Vite dev server proxies `/ws` to the backend, see `vite.config.ts`).
+The backend binary embeds the built frontend (`dist/`) via `rust-embed`/`axum-embed` for release builds; in `--dev` mode (`just run-backend-dev`) it does not serve static assets and expects Vite to be running separately (the Vite dev server proxies `/ws` and `/audio` to the backend, see `vite.config.ts`).
 
 ## Architecture
 
@@ -46,10 +46,10 @@ Everything is driven over a **single WebSocket connection** (`/ws`, handled in `
 
 ### Frontend (`frontend/src/`, React 19 + TypeScript + Vite)
 
-- **`App.tsx`** is the root component and largest file — holds most app state via a single `useReducer` (`Action` type in `Types.tsx` covers both server messages and local UI actions), owns the WebSocket connection (`WebSocket.tsx`'s `useWebSocket` hook) and the YouTube player (`YT.tsx`).
+- **`App.tsx`** is the root component and largest file — holds most app state via a single `useReducer` (`Action` type in `Types.tsx` covers both server messages and local UI actions), owns the WebSocket connection (`WebSocket.tsx`'s `useWebSocket` hook) and playback (`useAudioPlayback`). Behind the app it shows the playing track's YouTube thumbnail, blurred and slowly animated (`.background-player`).
+- **Playback** — the app drives playback only through the `PlaybackEngine` interface (`Playback.ts`), implemented by `AudioPlayback.ts` (`useAudioPlayback`): `/audio/{id}` played in a single reused `<audio>` element, which keeps playing in the background / with the screen locked. It starts the next track itself in the `ended` handler (via `PlaybackEvents.nextId`, which must agree with the reducer's `play-next-track`), skips a track whose download fails (stopping after 3 in a row, with yt-dlp's error from the backend's response) and prefetches upcoming tracks with `HEAD` requests. Lock-screen controls (`App.tsx`'s Media Session effect): iOS Safari ignores handlers registered before the audio is its "Now Playing" item and then shows ±10s seek buttons instead of previous/next track, so the handlers are registered again on every `playing` event and when the page becomes visible, each time clearing `seekbackward`/`seekforward`. There is also deliberately no YouTube player: its iframe registers Media Session handlers of its own, and WebKit keeps one set of commands per page, shared by all frames.
 - **`WebSocket.tsx`** — thin reconnecting-WebSocket hook. Supports fire-and-forget `sendMsg` and a request/reply pattern (`requestReply`) that tags outgoing messages with an auto-incrementing `id` and resolves a callback when a reply with the same `id` comes back; also sends a heartbeat every 10s.
 - **`Grid.tsx`** — ag-Grid wrappers (`TracksGrid`, `SearchResultsGrid`) using the server-side row model, calling back into the WS `get-rows`/`get-row-index` protocol for pagination/sort/filter. The search grid checks which results are already in the collection with one batched `collection-contains-ids` request.
-- **`YT.tsx`** — wraps the YouTube IFrame Player API.
 - Other components are single-purpose dialogs/widgets (`ImportDialog`, `ExportDropDown`, `GitRemoteDialog`, `YouTubePlaylistDialog`, `CollectionSelector` (collection + repo menu), `NavBarControls` (nav-bar version, account status buttons, appearance toggle), `EditDialog`, `Rating`, `SearchBox`, `NowPlayingMenu`, `CollectionSummary`, `Keyboard` for shortcuts, etc.) — UI is Astryx (`@astryxdesign/core`, see the Astryx notes below); icons come from `@radix-ui/react-icons`.
 
 ### Protocol sync

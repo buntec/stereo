@@ -11,7 +11,6 @@ export default function Title({
   releaseDate,
   onArtistClick,
   onLabelClick,
-  expanded = false,
 }: {
   title: string;
   artists?: string[];
@@ -20,16 +19,14 @@ export default function Title({
   releaseDate?: string;
   onArtistClick?: (name: string) => void;
   onLabelClick?: (name: string) => void;
-  // Large, centered presentation (fullscreen) instead of the compact footer one.
-  expanded?: boolean;
 }) {
-  const textType = expanded ? "body" : "supporting";
+  const textType = "supporting";
   const searchable = (name: string, onClick?: (name: string) => void) =>
     onClick ? (
       <Button
         label={name}
         variant="ghost"
-        size={expanded ? "md" : "sm"}
+        size="sm"
         tooltip={`Search for ${name}`}
         onClick={() => onClick(name)}
       />
@@ -52,19 +49,8 @@ export default function Title({
   if (releaseDate) groups.push(<Text type={textType}>{releaseDate}</Text>);
 
   return (
-    <VStack
-      gap={0}
-      width="100%"
-      hAlign={expanded ? "center" : "start"}
-      className="now-playing-title"
-    >
-      <Text
-        as="h2"
-        type={expanded ? "display-2" : "body"}
-        weight={expanded ? "normal" : "bold"}
-        justify={expanded ? "center" : "start"}
-        maxLines={expanded ? 2 : 1}
-      >
+    <VStack gap={0} width="100%" hAlign="start" className="now-playing-title">
+      <Text as="h2" type="body" weight="bold" maxLines={1}>
         {trackName ?? title}
       </Text>
       {groups.length > 0 && (
@@ -72,7 +58,7 @@ export default function Title({
           gap={0}
           wrap="wrap"
           vAlign="center"
-          hAlign={expanded ? "center" : "start"}
+          hAlign="start"
           className="now-playing-meta"
         >
           {groups.map((group, index) => (
