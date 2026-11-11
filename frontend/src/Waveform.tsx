@@ -12,6 +12,8 @@ const BAR_WIDTH = 2;
 const BAR_GAP = 1;
 /** Bars of silence still show as a line. */
 const MIN_BAR_HEIGHT = 1;
+/** Height of the bars while there's no waveform (yet), as a fraction. */
+const PLACEHOLDER_LEVEL = 0.08;
 /** Seek step of the arrow keys, and of Page Up / Page Down, in seconds. */
 const KEY_STEP = 5;
 const PAGE_STEP = 30;
@@ -50,13 +52,20 @@ const barsPath = (
 };
 
 type WaveformProps = {
-  /** Loudness values (0–255); undefined while loading, which shows a flat line. */
+  /**
+   * Loudness values (0–255); undefined while loading or when there is no
+   * waveform, which shows a flat bar.
+   */
   peaks: number[] | undefined;
   /** Playback position in seconds. */
   currentTime: number;
   /** Duration in seconds; 0 while unknown, which disables seeking. */
   duration: number;
   onSeek: (seconds: number) => void;
+  /** Fraction of the audio downloaded, while it downloads. */
+  buffered?: number;
+  /** Waiting for the audio (e.g. a download that hasn't started): pulses. */
+  isPending?: boolean;
 };
 
 /**
@@ -70,6 +79,8 @@ export function Waveform({
   currentTime,
   duration,
   onSeek,
+  buffered,
+  isPending = false,
 }: WaveformProps) {
   const ref = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -97,7 +108,10 @@ export function Waveform({
     Math.floor((size.width + BAR_GAP) / (BAR_WIDTH + BAR_GAP)),
   );
   const levels = useMemo(
-    () => (peaks ? resample(peaks, count) : new Array<number>(count).fill(0)),
+    () =>
+      peaks
+        ? resample(peaks, count)
+        : new Array<number>(count).fill(PLACEHOLDER_LEVEL),
     [peaks, count],
   );
 
@@ -106,6 +120,8 @@ export function Waveform({
   const shown = scrub ?? progress;
   const played = Math.round(shown * count);
   const hovered = hover === undefined ? played : Math.round(hover * count);
+  const ahead = Math.max(played, hovered);
+  const downloaded = Math.max(ahead, Math.round((buffered ?? 0) * count));
   const { height } = size;
 
   const fractionAt = (event: PointerEvent) => {
@@ -168,6 +184,7 @@ export function Waveform({
       ref={ref}
       className="waveform"
       data-enabled={enabled}
+      data-pending={isPending}
       viewBox={`0 0 ${size.width || 1} ${height || 1}`}
       role="slider"
       tabIndex={enabled ? 0 : -1}
@@ -205,8 +222,12 @@ export function Waveform({
         )}
       />
       <path
+        className="waveform-buffered"
+        d={barsPath(levels, ahead, downloaded, height)}
+      />
+      <path
         className="waveform-unplayed"
-        d={barsPath(levels, Math.max(played, hovered), count, height)}
+        d={barsPath(levels, downloaded, count, height)}
       />
       {label && height > 0 ? (
         <g className="waveform-label" aria-hidden>

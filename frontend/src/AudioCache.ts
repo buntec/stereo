@@ -92,6 +92,15 @@ export const audioCache = new AudioCacheStore();
 export const useTrackAudio = (id: string | undefined): TrackAudio =>
   useSyncExternalStore(audioCache.subscribe, () => audioCache.get(id));
 
+/** Short labels of a download's state, e.g. next to the playing track's waveform. */
+export const downloadStatusLabels: Record<AudioDownload["status"], string> = {
+  queued: "Queued",
+  preparing: "Preparing",
+  downloading: "Downloading",
+  done: "Downloaded",
+  failed: "Failed",
+};
+
 /** Whether the download is still running (not failed). */
 export const isDownloading = (download: AudioDownload | undefined) =>
   download !== undefined &&

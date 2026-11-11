@@ -438,7 +438,6 @@ export type Action =
   | { type: "set-new-releases-days"; days: number }
   | {
       type: "set-playback-progress";
-      percent: number;
       duration: number;
       current_time: number;
     }

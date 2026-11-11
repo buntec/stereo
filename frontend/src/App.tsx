@@ -20,7 +20,6 @@ import {
 
 import { Theme } from "@astryxdesign/core/theme";
 import { stereoTheme } from "./theme";
-import { Slider } from "@astryxdesign/core/Slider";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { IconButton } from "@astryxdesign/core/IconButton";
@@ -52,12 +51,16 @@ import type {
   Settings,
   AppNotification,
 } from "./Types.tsx";
-import { AudioDownloadProgress } from "./AudioDownloadProgress.tsx";
 import { isChartSearchKind, isQuerylessSearchKind } from "./Types.tsx";
 import { DEFAULT_BEATPORT_GENRE_ID } from "./BeatportGenres.tsx";
 
 import { useWebSocket } from "./WebSocket.tsx";
-import { audioCache, isDownloading, useTrackAudio } from "./AudioCache.ts";
+import {
+  audioCache,
+  downloadStatusLabels,
+  isDownloading,
+  useTrackAudio,
+} from "./AudioCache.ts";
 import { Waveform } from "./Waveform.tsx";
 import { useWaveform } from "./useWaveform.ts";
 import type { PlaybackStatus } from "./Playback.ts";
@@ -159,7 +162,6 @@ type State = {
   player_state: PlaybackStatus;
   /** Playback was asked for but can't start or continue yet (buffering, downloading). */
   player_loading: boolean;
-  playback_progress_pct?: number;
 
   should_refresh_grid: boolean;
   should_purge_grid: boolean;
@@ -465,7 +467,6 @@ const reducer = (state: State, action: Action): State => {
     case "set-playback-progress":
       return {
         ...state,
-        playback_progress_pct: action.percent,
         duration: action.duration,
         current_time: action.current_time,
       };
@@ -1173,7 +1174,6 @@ function App() {
         );
         dispatch({
           type: "set-playback-progress",
-          percent: (100.0 * t) / d,
           duration,
           current_time: t,
         });
@@ -1324,25 +1324,6 @@ function App() {
     [sendMsg],
   );
 
-  const onSliderValueChange = useCallback(
-    (value: number[]) => {
-      if (playback) {
-        const d = playback.duration();
-        const t = playback.currentTime();
-        if (d) {
-          playback.seek((d * value[0]) / 100.0);
-        }
-        dispatch({
-          type: "set-playback-progress",
-          percent: value[0],
-          duration: d,
-          current_time: t,
-        });
-      }
-    },
-    [playback],
-  );
-
   // Shows the new position right away, not after the next progress update.
   const onWaveformSeek = useCallback(
     (seconds: number) => {
@@ -1355,7 +1336,6 @@ function App() {
       );
       dispatch({
         type: "set-playback-progress",
-        percent: (100.0 * seconds) / d,
         duration: d,
         current_time: seconds,
       });
@@ -2523,131 +2503,117 @@ function App() {
                     {nowPlaying}
                   </StackItem>
                   <StackItem className="playback-transport">
-                    <VStack width="100%" hAlign="center" gap={1}>
-                      <HStack
-                        vAlign="center"
-                        hAlign="center"
-                        gap={touch ? 3 : 1}
+                    <HStack
+                      className="progress-slider"
+                      width="100%"
+                      vAlign="center"
+                      gap={2}
+                    >
+                      <Text
+                        type="supporting"
+                        hasTabularNumbers
+                        aria-live={currentDownload ? "polite" : undefined}
                       >
-                        <Tooltip
-                          content={
-                            <>
-                              Skip to previous track <Kbd keys="up" />
-                            </>
+                        {currentDownload
+                          ? downloadStatusLabels[currentDownload.status]
+                          : formatDuration(state.current_time ?? 0)}
+                      </Text>
+                      {/* The transport buttons float over the middle of the waveform. */}
+                      <StackItem size="fill" className="transport-stage">
+                        <Waveform
+                          peaks={currentWaveform ?? undefined}
+                          currentTime={
+                            currentDownload ? 0 : (state.current_time ?? 0)
                           }
-                        >
-                          <IconButton
-                            variant="secondary"
-                            size={footerButtonSize}
-                            label="Skip to previous track"
-                            icon={<TrackPreviousIcon />}
-                            onClick={prevTrack}
-                          />
-                        </Tooltip>
-
-                        <Tooltip
-                          content={
-                            <>
-                              Play / pause <Kbd keys="Space" /> /{" "}
-                              <Kbd keys="p" />
-                            </>
+                          duration={currentDownload ? 0 : (state.duration ?? 0)}
+                          onSeek={onWaveformSeek}
+                          buffered={currentDownload?.progress}
+                          isPending={
+                            !!currentDownload &&
+                            currentDownload.progress === undefined
                           }
-                        >
-                          <IconButton
-                            variant="primary"
-                            size={touch ? "lg" : "md"}
-                            className="play-pause-button"
-                            label={
-                              state.player_state === "playing" ||
-                              state.player_loading
-                                ? "Pause"
-                                : "Play"
-                            }
-                            icon={
-                              state.player_state === "playing" ? (
-                                <PauseIcon />
-                              ) : (
-                                <PlayIcon />
-                              )
-                            }
-                            // Stays clickable while loading, to cancel playback.
-                            isLoading={state.player_loading}
-                            isInterruptible
-                            onClick={togglePlayback}
-                          />
-                        </Tooltip>
-
-                        <Tooltip
-                          content={
-                            <>
-                              Skip to next track <Kbd keys="down" />
-                            </>
-                          }
-                        >
-                          <IconButton
-                            variant="secondary"
-                            size={footerButtonSize}
-                            label="Skip to next track"
-                            icon={<TrackNextIcon />}
-                            onClick={nextTrack}
-                          />
-                        </Tooltip>
-                      </HStack>
-                      {currentDownload ? (
-                        <AudioDownloadProgress download={currentDownload} />
-                      ) : state.current_id && currentWaveform !== null ? (
+                        />
                         <HStack
-                          className="progress-slider"
-                          width="100%"
+                          className="transport-buttons"
                           vAlign="center"
-                          gap={2}
+                          hAlign="center"
+                          gap={touch ? 3 : 2}
                         >
-                          <Text type="supporting" hasTabularNumbers>
-                            {formatDuration(state.current_time ?? 0)}
-                          </Text>
-                          <StackItem size="fill">
-                            <Waveform
-                              peaks={currentWaveform}
-                              currentTime={state.current_time ?? 0}
-                              duration={state.duration ?? 0}
-                              onSeek={onWaveformSeek}
+                          <Tooltip
+                            content={
+                              <>
+                                Skip to previous track <Kbd keys="up" />
+                              </>
+                            }
+                          >
+                            <IconButton
+                              variant="secondary"
+                              size="lg"
+                              label="Skip to previous track"
+                              icon={<TrackPreviousIcon />}
+                              onClick={prevTrack}
                             />
-                          </StackItem>
-                          <Text type="supporting" hasTabularNumbers>
-                            {state.duration
-                              ? formatDuration(state.duration)
-                              : "--:--"}
-                          </Text>
-                        </HStack>
-                      ) : (
-                        <HStack
-                          className="progress-slider"
-                          width="100%"
-                          vAlign="center"
-                          gap={2}
-                        >
-                          <Text type="supporting" hasTabularNumbers>
-                            {formatDuration(state.current_time ?? 0)}
-                          </Text>
-                          <StackItem size="fill">
-                            <Slider
-                              label="Playback progress"
-                              isLabelHidden
-                              valueDisplay="none"
-                              value={state.playback_progress_pct ?? 0}
-                              onChange={(v: number) => onSliderValueChange([v])}
-                              isDisabled={!state.duration}
-                              style={{ paddingInline: "var(--spacing-3)" }}
+                          </Tooltip>
+
+                          <Tooltip
+                            content={
+                              <>
+                                Play / pause <Kbd keys="Space" /> /{" "}
+                                <Kbd keys="p" />
+                              </>
+                            }
+                          >
+                            <IconButton
+                              variant="primary"
+                              size="lg"
+                              className="play-pause-button"
+                              label={
+                                state.player_state === "playing" ||
+                                state.player_loading
+                                  ? "Pause"
+                                  : "Play"
+                              }
+                              icon={
+                                state.player_state === "playing" ? (
+                                  <PauseIcon />
+                                ) : (
+                                  <PlayIcon />
+                                )
+                              }
+                              // Stays clickable while loading, to cancel playback.
+                              isLoading={state.player_loading}
+                              isInterruptible
+                              onClick={togglePlayback}
                             />
-                          </StackItem>
-                          <Text type="supporting" hasTabularNumbers>
-                            {state.duration
-                              ? formatDuration(state.duration)
-                              : "--:--"}
-                          </Text>
+                          </Tooltip>
+
+                          <Tooltip
+                            content={
+                              <>
+                                Skip to next track <Kbd keys="down" />
+                              </>
+                            }
+                          >
+                            <IconButton
+                              variant="secondary"
+                              size="lg"
+                              label="Skip to next track"
+                              icon={<TrackNextIcon />}
+                              onClick={nextTrack}
+                            />
+                          </Tooltip>
                         </HStack>
-                      )}
-                    </VStack>
+                      </StackItem>
+                      <Text type="supporting" hasTabularNumbers>
+                        {currentDownload
+                          ? currentDownload.progress === undefined
+                            ? "--%"
+                            : `${Math.round(currentDownload.progress * 100)}%`
+                          : state.duration
+                            ? formatDuration(state.duration)
+                            : "--:--"}
+                      </Text>
+                    </HStack>
                   </StackItem>
                   <StackItem className="playback-options">
                     {/* On a phone the rating and the toggles get a row each. */}
