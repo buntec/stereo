@@ -576,6 +576,76 @@ test("explains that playback needs yt-dlp when the backend can't download audio"
   ).toBeVisible();
 });
 
+test("shows the playing track's download progress in place of the playback slider", async ({
+  page,
+}) => {
+  const { send, audioRequests } = await openApp(page);
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/audit0?key=test-key");
+  const slider = page.getByRole("slider", { name: "Playback progress" });
+  const download = page.getByRole("progressbar", {
+    name: "Audio download progress",
+  });
+  await expect(slider).toBeVisible();
+
+  // Downloads of other tracks (prefetching) aren't shown.
+  send({
+    type: "audio-download",
+    yt_id: "audit1",
+    status: "downloading",
+    progress: 0.9,
+  });
+  send({
+    type: "audio-download",
+    yt_id: "audit0",
+    status: "preparing",
+    progress: null,
+  });
+  await expect(
+    page.getByText("Preparing download", { exact: true }),
+  ).toBeVisible();
+  await expect(slider).toBeHidden();
+
+  send({
+    type: "audio-download",
+    yt_id: "audit0",
+    status: "downloading",
+    progress: 0.43,
+  });
+  await expect(download).toHaveAttribute("aria-valuenow", "43");
+  await expect(page.getByText("43%", { exact: true })).toBeVisible();
+
+  send({
+    type: "audio-download",
+    yt_id: "audit0",
+    status: "done",
+    progress: null,
+  });
+  await expect(download).toBeHidden();
+  await expect(slider).toBeVisible();
+});
+
+test("the play button shows that playback is loading and can cancel it", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page);
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/audit0?key=test-key");
+  const button = page.locator(".play-pause-button");
+  await expect(button).toHaveAttribute("aria-busy", "true");
+  await expect(button).toHaveAccessibleName("Pause");
+  // Nothing to seek in before the duration is known.
+  await expect(
+    page.getByRole("slider", { name: "Playback progress", exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByText("--:--", { exact: true })).toBeVisible();
+  await button.click();
+  await expect(button).not.toHaveAttribute("aria-busy", "true");
+  await expect(button).toHaveAccessibleName("Play");
+});
+
 test("media session offers track skipping rather than ±10s seeking", async ({
   page,
 }) => {

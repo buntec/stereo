@@ -1,5 +1,18 @@
 import type { PlaybackStatus } from "./Playback.ts";
 
+export type AudioDownloadStatus =
+  | "queued"
+  | "preparing"
+  | "downloading"
+  | "done"
+  | "failed";
+
+/** An audio download that hasn't finished yet. */
+export type AudioDownload = {
+  status: AudioDownloadStatus;
+  progress?: number;
+};
+
 export type TrackSource =
   | "beatport"
   | "soundcloud"
@@ -240,6 +253,13 @@ export type ServerMsg =
       home_dir: string;
       audio_key?: string | null;
     }
+  | {
+      type: "audio-download";
+      yt_id: string;
+      status: AudioDownloadStatus;
+      /** Fraction downloaded, while downloading and if the size is known. */
+      progress?: number | null;
+    }
   | { type: "yt-anon-playlist"; id: number; url: string }
   | { type: "track-info"; track: ITrack }
   | {
@@ -381,6 +401,7 @@ export type ServerMsg =
 export type Action =
   | ServerMsg
   | { type: "player-state-change"; id: string; state: PlaybackStatus }
+  | { type: "set-player-loading"; loading: boolean }
   | { type: "set-import-from"; path: string }
   | { type: "set-import-keep-user-data"; keep: boolean }
   | { type: "consume-notifications"; ids: number[] }

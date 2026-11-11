@@ -50,7 +50,9 @@ import type {
   ServerMsg,
   Settings,
   AppNotification,
+  AudioDownload,
 } from "./Types.tsx";
+import { AudioDownloadProgress } from "./AudioDownloadProgress.tsx";
 import { isChartSearchKind, isQuerylessSearchKind } from "./Types.tsx";
 import { DEFAULT_BEATPORT_GENRE_ID } from "./BeatportGenres.tsx";
 
@@ -138,6 +140,8 @@ type State = {
   backend_version?: string;
   /** Key for the backend's `/audio` route; unset when it doesn't download audio. */
   audio_key?: string;
+  /** Unfinished audio downloads by YouTube id. */
+  audio_downloads: Record<string, AudioDownload>;
   home_dir?: string;
   repos?: IRepo[];
   collections?: ICollection[];
@@ -152,6 +156,8 @@ type State = {
   current_time?: number;
   playlist: string[];
   player_state: PlaybackStatus;
+  /** Playback was asked for but can't start or continue yet (buffering, downloading). */
+  player_loading: boolean;
   playback_progress_pct?: number;
 
   should_refresh_grid: boolean;
@@ -279,8 +285,37 @@ const reducer = (state: State, action: Action): State => {
       return { ...state };
     }
 
-    case "player-state-change":
-      return { ...state, player_state: action.state, player_id: action.id };
+    case "player-state-change": {
+      let audio_downloads = state.audio_downloads;
+      // A track that plays is downloaded, even if its final update got lost.
+      if (action.state === "playing" && action.id in audio_downloads) {
+        audio_downloads = { ...audio_downloads };
+        delete audio_downloads[action.id];
+      }
+      return {
+        ...state,
+        player_state: action.state,
+        player_id: action.id,
+        player_loading: false,
+        audio_downloads,
+      };
+    }
+
+    case "set-player-loading":
+      return { ...state, player_loading: action.loading };
+
+    case "audio-download": {
+      const audio_downloads = { ...state.audio_downloads };
+      if (action.status === "done" || action.status === "failed") {
+        delete audio_downloads[action.yt_id];
+      } else {
+        audio_downloads[action.yt_id] = {
+          status: action.status,
+          progress: action.progress ?? undefined,
+        };
+      }
+      return { ...state, audio_downloads };
+    }
 
     case "backend-info":
       return {
@@ -288,6 +323,8 @@ const reducer = (state: State, action: Action): State => {
         backend_version: action.version,
         home_dir: action.home_dir,
         audio_key: action.audio_key ?? undefined,
+        // A new connection; the backend sends the downloads it is working on next.
+        audio_downloads: {},
       };
 
     case "set-import-from":
@@ -722,7 +759,9 @@ const legacyGridState = (): GridState | undefined => {
 function App() {
   const [state, dispatch] = useReducer(reducer, {
     playlist: [],
+    audio_downloads: {},
     player_state: "unstarted",
+    player_loading: false,
     should_refresh_grid: false,
     should_purge_grid: false,
     search_busy: false,
@@ -942,9 +981,15 @@ function App() {
       // Right in the audio element's event, so it also happens for tracks that start
       // while the screen is locked.
       if (status === "playing") registerMediaSessionRef.current();
-      // The UI only distinguishes these; buffering keeps the last one.
+      // The UI only distinguishes these; transient states (buffering, cued) keep the last
+      // one, and just show whether playback is loading.
       if (status === "playing" || status === "paused" || status === "ended") {
         dispatch({ type: "player-state-change", state: status, id });
+      } else {
+        dispatch({
+          type: "set-player-loading",
+          loading: status === "buffering",
+        });
       }
       if (status === "ended") {
         dispatch({ type: "play-next-track" });
@@ -1746,6 +1791,10 @@ function App() {
     [settings, setSettings],
   );
 
+  const currentDownload: AudioDownload | undefined = state.current_id
+    ? state.audio_downloads[state.current_id]
+    : undefined;
+
   const hasSearchInput =
     isQuerylessSearchKind(state.search_kind) || !!state.search_box_input;
   const isSearchGridActive =
@@ -2480,7 +2529,8 @@ function App() {
                             size="md"
                             className="play-pause-button"
                             label={
-                              state.player_state === "playing"
+                              state.player_state === "playing" ||
+                              state.player_loading
                                 ? "Pause"
                                 : "Play"
                             }
@@ -2491,6 +2541,9 @@ function App() {
                                 <PlayIcon />
                               )
                             }
+                            // Stays clickable while loading, to cancel playback.
+                            isLoading={state.player_loading}
+                            isInterruptible
                             onClick={togglePlayback}
                           />
                         </Tooltip>
@@ -2511,32 +2564,36 @@ function App() {
                           />
                         </Tooltip>
                       </HStack>
-                      <HStack
-                        className="progress-slider"
-                        width="100%"
-                        vAlign="center"
-                        gap={2}
-                      >
-                        <Text type="supporting" hasTabularNumbers>
-                          {formatDuration(state.current_time ?? 0)}
-                        </Text>
-                        <StackItem size="fill">
-                          <Slider
-                            label="Playback progress"
-                            isLabelHidden
-                            valueDisplay="none"
-                            value={state.playback_progress_pct ?? 0}
-                            onChange={(v: number) => onSliderValueChange([v])}
-                            isDisabled={!state.duration}
-                            style={{ paddingInline: "var(--spacing-3)" }}
-                          />
-                        </StackItem>
-                        <Text type="supporting" hasTabularNumbers>
-                          {state.duration
-                            ? formatDuration(state.duration)
-                            : "--:--"}
-                        </Text>
-                      </HStack>
+                      {currentDownload ? (
+                        <AudioDownloadProgress download={currentDownload} />
+                      ) : (
+                        <HStack
+                          className="progress-slider"
+                          width="100%"
+                          vAlign="center"
+                          gap={2}
+                        >
+                          <Text type="supporting" hasTabularNumbers>
+                            {formatDuration(state.current_time ?? 0)}
+                          </Text>
+                          <StackItem size="fill">
+                            <Slider
+                              label="Playback progress"
+                              isLabelHidden
+                              valueDisplay="none"
+                              value={state.playback_progress_pct ?? 0}
+                              onChange={(v: number) => onSliderValueChange([v])}
+                              isDisabled={!state.duration}
+                              style={{ paddingInline: "var(--spacing-3)" }}
+                            />
+                          </StackItem>
+                          <Text type="supporting" hasTabularNumbers>
+                            {state.duration
+                              ? formatDuration(state.duration)
+                              : "--:--"}
+                          </Text>
+                        </HStack>
+                      )}
                     </VStack>
                   </StackItem>
                   <StackItem className="playback-options">
