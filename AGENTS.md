@@ -13,6 +13,7 @@ Prerequisites: [Rust](https://rustup.rs), [Bun](https://bun.sh), [just](https://
 ```
 bun install              # install frontend deps (also: just init)
 just dev                 # run backend (port 8055) + frontend dev server concurrently, hot reload both
+just dev-tailscale       # build the frontend, serve the app from the backend over HTTPS on your tailnet (test on a phone)
 just build               # build frontend then backend release binary
 just install             # build + cargo install --path .
 just test                # cargo test
