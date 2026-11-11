@@ -10,6 +10,9 @@
 //!
 //! The cache is size-limited; least recently played files are evicted first (a file's mtime is
 //! bumped whenever it is served).
+//!
+//! Download progress is broadcast to every WebSocket session (`subscribe`), since the request
+//! that triggered a download has no way to report it.
 
 use std::{
     collections::HashMap,
@@ -31,11 +34,14 @@ use futures::{
     FutureExt,
 };
 use serde::Deserialize;
-use tokio::sync::Semaphore;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
+    sync::{broadcast, Semaphore},
+};
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
-use crate::settings::Settings;
+use crate::{message::AudioDownloadStatus, settings::Settings};
 
 /// Extensions yt-dlp may produce for the requested formats, with their Content-Type.
 const AUDIO_TYPES: &[(&str, &str)] = &[
@@ -55,6 +61,18 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const FAILURE_TTL: Duration = Duration::from_secs(300);
 /// Serving a file bumps its mtime (its recency for eviction) at most this often.
 const TOUCH_INTERVAL: Duration = Duration::from_secs(3600);
+/// Download progress is reported at most this often per download.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+/// Prefix of the progress lines yt-dlp prints for us (`--progress-template`).
+const PROGRESS_PREFIX: &str = "stereo-progress ";
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DownloadUpdate {
+    pub yt_id: String,
+    pub status: AudioDownloadStatus,
+    /// Fraction downloaded, while downloading and if the size is known.
+    pub progress: Option<f64>,
+}
 
 type Download = Shared<BoxFuture<'static, Result<PathBuf, Arc<str>>>>;
 
@@ -66,6 +84,9 @@ pub struct AudioCache {
     downloads: Semaphore,
     in_flight: Mutex<HashMap<String, Download>>,
     failures: Mutex<HashMap<String, (Instant, Arc<str>)>>,
+    /// The latest update of every download that hasn't finished, for sessions that connect later.
+    active: Mutex<HashMap<String, DownloadUpdate>>,
+    updates: broadcast::Sender<DownloadUpdate>,
 }
 
 static CACHE: OnceLock<Arc<AudioCache>> = OnceLock::new();
@@ -104,6 +125,28 @@ pub async fn init(settings: &Settings) {
 /// The key clients must pass to `/audio`, or `None` if audio downloads are disabled.
 pub fn key() -> Option<String> {
     CACHE.get().map(|cache| cache.key.clone())
+}
+
+/// The state of every unfinished download and a receiver of all further updates, or `None` if
+/// audio downloads are disabled.
+pub fn subscribe() -> Option<(Vec<DownloadUpdate>, broadcast::Receiver<DownloadUpdate>)> {
+    CACHE.get().map(|cache| cache.subscribe())
+}
+
+/// Parses a line printed by yt-dlp for `--progress-template` into the fraction downloaded,
+/// `None` if the size isn't known. Fields yt-dlp doesn't know are printed as `NA`.
+fn parse_progress(line: &str) -> Option<Option<f64>> {
+    let mut fields = line.strip_prefix(PROGRESS_PREFIX)?.split_whitespace();
+    if fields.next()? != "downloading" {
+        return None;
+    }
+    let mut number = || fields.next().and_then(|f| f.parse::<f64>().ok());
+    let (downloaded, total, estimate) = (number(), number(), number());
+    let fraction = match (downloaded, total.or(estimate)) {
+        (Some(done), Some(total)) if total > 0.0 => Some((done / total).clamp(0.0, 1.0)),
+        _ => None,
+    };
+    Some(fraction)
 }
 
 async fn yt_dlp_version(yt_dlp: &str) -> anyhow::Result<String> {
@@ -168,7 +211,33 @@ impl AudioCache {
             downloads: Semaphore::new(MAX_CONCURRENT_DOWNLOADS),
             in_flight: Mutex::new(HashMap::new()),
             failures: Mutex::new(HashMap::new()),
+            active: Mutex::new(HashMap::new()),
+            updates: broadcast::channel(1024).0,
         })
+    }
+
+    pub fn subscribe(&self) -> (Vec<DownloadUpdate>, broadcast::Receiver<DownloadUpdate>) {
+        // Subscribe first so no update falls between the snapshot and the receiver.
+        let receiver = self.updates.subscribe();
+        let active = self.active.lock().unwrap().values().cloned().collect();
+        (active, receiver)
+    }
+
+    fn report(&self, id: &str, status: AudioDownloadStatus, progress: Option<f64>) {
+        let update = DownloadUpdate {
+            yt_id: id.to_string(),
+            status,
+            progress,
+        };
+        {
+            let mut active = self.active.lock().unwrap();
+            match status {
+                AudioDownloadStatus::Done | AudioDownloadStatus::Failed => active.remove(id),
+                _ => active.insert(id.to_string(), update.clone()),
+            };
+        }
+        // No receivers just means no session is connected.
+        let _ = self.updates.send(update);
     }
 
     async fn cached(&self, id: &str) -> Option<PathBuf> {
@@ -202,11 +271,17 @@ impl AudioCache {
             .or_insert_with(|| {
                 let this = self.clone();
                 let id = id.to_string();
+                self.report(&id, AudioDownloadStatus::Queued, None);
                 let task = tokio::spawn(async move {
                     let result = this
                         .download(&id)
                         .await
                         .map_err(|e| Arc::<str>::from(format!("{e:#}")));
+                    let status = match result {
+                        Ok(_) => AudioDownloadStatus::Done,
+                        Err(_) => AudioDownloadStatus::Failed,
+                    };
+                    this.report(&id, status, None);
                     if let Err(error) = &result {
                         tracing::warn!("Audio download of {id} failed: {error}");
                         this.failures
@@ -234,33 +309,63 @@ impl AudioCache {
         if let Some(path) = self.cached(id).await {
             return Ok(path);
         }
+        // Before the transfer starts, yt-dlp spends a few seconds extracting the stream URL.
+        self.report(id, AudioDownloadStatus::Preparing, None);
         let started = Instant::now();
         let tmp = tempfile::Builder::new()
             .prefix(".dl-")
             .tempdir_in(&self.dir)
             .context("can't create download directory")?;
-        let output = tokio::time::timeout(
-            DOWNLOAD_TIMEOUT,
-            tokio::process::Command::new(&self.yt_dlp)
-                .arg("--ignore-config")
-                .args(["--no-playlist", "--no-progress", "--no-mtime", "--quiet"])
-                .args(["--format", FORMAT])
-                .arg("--output")
-                .arg(tmp.path().join("audio.%(ext)s"))
-                .arg("--")
-                .arg(format!("https://www.youtube.com/watch?v={id}"))
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await
-        .context("yt-dlp timed out")?
-        .context("can't run yt-dlp")?;
+        let mut child = tokio::process::Command::new(&self.yt_dlp)
+            .arg("--ignore-config")
+            .args(["--no-playlist", "--no-mtime", "--quiet"])
+            // `--progress` overrides `--quiet` for progress, which then goes to stdout.
+            .args(["--progress", "--newline", "--progress-template"])
+            .arg(format!(
+                "download:{PROGRESS_PREFIX}%(progress.status)s %(progress.downloaded_bytes)s \
+                 %(progress.total_bytes)s %(progress.total_bytes_estimate)s"
+            ))
+            .args(["--format", FORMAT])
+            .arg("--output")
+            .arg(tmp.path().join("audio.%(ext)s"))
+            .arg("--")
+            .arg(format!("https://www.youtube.com/watch?v={id}"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .context("can't run yt-dlp")?;
+        let stdout = child.stdout.take().context("no yt-dlp stdout")?;
+        let mut stderr_pipe = child.stderr.take().context("no yt-dlp stderr")?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        let progress = async {
+            let mut lines = BufReader::new(stdout).lines();
+            let mut last_report: Option<Instant> = None;
+            while let Ok(Some(line)) = lines.next_line().await {
+                let Some(fraction) = parse_progress(&line) else {
+                    continue;
+                };
+                if last_report.is_none_or(|at| at.elapsed() >= PROGRESS_INTERVAL) {
+                    last_report = Some(Instant::now());
+                    self.report(id, AudioDownloadStatus::Downloading, fraction);
+                }
+            }
+        };
+        let stderr = async {
+            let mut buf = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut buf).await;
+            buf
+        };
+        let (_, stderr, status) = tokio::time::timeout(DOWNLOAD_TIMEOUT, async {
+            tokio::join!(progress, stderr, child.wait())
+        })
+        .await
+        .context("yt-dlp timed out")?;
+        let status = status.context("can't run yt-dlp")?;
+
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr);
             let mut lines = stderr.lines().map(str::trim).filter(|l| !l.is_empty());
             let message = lines
                 .clone()
@@ -402,6 +507,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_progress_lines() {
+        assert_eq!(
+            parse_progress("stereo-progress downloading 25 100 NA"),
+            Some(Some(0.25))
+        );
+        assert_eq!(
+            parse_progress("stereo-progress downloading 25 NA 50.0"),
+            Some(Some(0.5))
+        );
+        assert_eq!(
+            parse_progress("stereo-progress downloading 25 NA NA"),
+            Some(None)
+        );
+        assert_eq!(parse_progress("stereo-progress finished 100 100 NA"), None);
+        assert_eq!(parse_progress("[download] 25%"), None);
+    }
+
+    #[test]
     fn compares_keys() {
         assert!(keys_match("abc", "abc"));
         assert!(!keys_match("abc", "abd"));
@@ -425,6 +548,8 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 sleep 0.2
+echo "stereo-progress downloading 5 10 NA"
+echo "stereo-progress finished 10 10 NA"
 printf '0123456789' > "$(echo "$out" | sed 's/%(ext)s/m4a/')"
 "#;
 
@@ -451,6 +576,8 @@ printf '0123456789' > "$(echo "$out" | sed 's/%(ext)s/m4a/')"
             .unwrap(),
         );
         let key = cache.key.clone();
+        let (active, mut updates) = cache.subscribe();
+        assert!(active.is_empty());
 
         let (a, b) = tokio::join!(
             serve(
@@ -474,6 +601,25 @@ printf '0123456789' > "$(echo "$out" | sed 's/%(ext)s/m4a/')"
             runs.lines().count(),
             1,
             "concurrent requests share one download"
+        );
+
+        let mut seen = Vec::new();
+        while let Ok(update) = updates.try_recv() {
+            assert_eq!(update.yt_id, "dQw4w9WgXcQ");
+            seen.push((update.status, update.progress));
+        }
+        assert_eq!(
+            seen,
+            [
+                (AudioDownloadStatus::Queued, None),
+                (AudioDownloadStatus::Preparing, None),
+                (AudioDownloadStatus::Downloading, Some(0.5)),
+                (AudioDownloadStatus::Done, None),
+            ]
+        );
+        assert!(
+            cache.subscribe().0.is_empty(),
+            "finished downloads aren't active"
         );
 
         let partial = serve(
@@ -549,6 +695,10 @@ exit 1"#,
             runs.lines().count(),
             1,
             "failures are not retried right away"
+        );
+        assert!(
+            cache.subscribe().0.is_empty(),
+            "failed downloads aren't active"
         );
         let leftovers = std::fs::read_dir(cache_dir.path()).unwrap().count();
         assert_eq!(leftovers, 0, "the download directory is cleaned up");

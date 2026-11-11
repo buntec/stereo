@@ -19,6 +19,18 @@ pub enum GitSyncState {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioDownloadStatus {
+    /// Waiting for another download to finish.
+    Queued,
+    /// yt-dlp is looking up the audio stream.
+    Preparing,
+    Downloading,
+    Done,
+    Failed,
+}
+
 // ── Server → Client ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,6 +54,13 @@ pub enum MsgServer {
     },
     Repos {
         repos: Vec<Repo>,
+    },
+    /// Progress of an audio download for `/audio` (see `audio.rs`), sent to every session.
+    AudioDownload {
+        yt_id: String,
+        status: AudioDownloadStatus,
+        /// Fraction downloaded, while downloading and if the size is known.
+        progress: Option<f64>,
     },
     /// Generic failure reply to a request/reply message (see `MsgClient::request_id`).
     ErrorReply {

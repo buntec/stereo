@@ -81,6 +81,39 @@ async fn forward_collection_moves(session: uuid::Uuid, events: mpsc::Sender<Sess
     }
 }
 
+/// Sends the session the state of unfinished audio downloads, then every update.
+async fn forward_audio_downloads(
+    active: Vec<audio::DownloadUpdate>,
+    mut updates: broadcast::Receiver<audio::DownloadUpdate>,
+    server_tx: mpsc::Sender<MsgServer>,
+) {
+    let message = |update: audio::DownloadUpdate| MsgServer::AudioDownload {
+        yt_id: update.yt_id,
+        status: update.status,
+        progress: update.progress,
+    };
+    for update in active {
+        if server_tx.send(message(update)).await.is_err() {
+            return;
+        }
+    }
+    loop {
+        match updates.recv().await {
+            Ok(update) => {
+                if server_tx.send(message(update)).await.is_err() {
+                    break;
+                }
+            }
+            // Unlikely with the channel's capacity; a client also forgets a download once its track
+            // starts playing, in case it missed the final update.
+            Err(broadcast::error::RecvError::Lagged(missed)) => {
+                tracing::warn!("Missed {missed} audio download updates");
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
 /// Work for a session's message loop: a message from the browser, or a follow-up posted by a task
 /// the session spawned. Slow work (network, git) runs in spawned tasks so the loop stays
 /// responsive, while any session-state changes it implies still happen in order on the loop.
@@ -301,6 +334,10 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
             audio_key: audio::key(),
         })
         .await;
+    // After BackendInfo, which makes the client forget downloads it knew from a previous connection.
+    let downloads_task = audio::subscribe().map(|(active, updates)| {
+        tokio::spawn(forward_audio_downloads(active, updates, server_tx.clone()))
+    });
     let _ = server_tx
         .send(MsgServer::Repos {
             repos: utils::list_repos(&repos_dir).await,
@@ -362,6 +399,9 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
     }
     recv_task.abort();
     moves_task.abort();
+    if let Some(task) = downloads_task {
+        task.abort();
+    }
     send_task.abort();
     tracing::info!("WS disconnected: {uid}");
 }
