@@ -80,6 +80,70 @@
   font-family: var(--font-family-code);
 }
 
+/* The playing track's waveform as the seek bar (Waveform.tsx). */
+.waveform {
+  display: block;
+  width: 100%;
+  height: var(--spacing-8);
+  cursor: pointer;
+  /* Dragging scrubs instead of scrolling the page. */
+  touch-action: none;
+  border-radius: var(--radius-inner);
+}
+.waveform[data-enabled="false"] {
+  cursor: default;
+}
+.waveform:focus-visible {
+  outline: calc(var(--border-width) * 2) solid var(--color-accent);
+  outline-offset: var(--spacing-1);
+}
+.waveform path {
+  transition: fill var(--duration-fast) var(--ease-standard);
+}
+.waveform-played {
+  fill: var(--color-accent);
+}
+.waveform-rewind {
+  fill: rgb(from var(--color-accent) r g b / 0.6);
+}
+.waveform-hover-preview {
+  fill: rgb(from var(--color-accent) r g b / 0.35);
+}
+.waveform-unplayed {
+  fill: rgb(from var(--color-text-primary) r g b / 0.25);
+}
+.waveform-label rect {
+  fill: var(--color-background-inverted);
+}
+.waveform-label text {
+  fill: var(--color-background-body);
+  font-family: var(--font-family-code);
+  font-size: var(--font-size-2xs);
+}
+
+/* Audio download state of a track row (AudioCacheButton in Grid.tsx). */
+.audio-cache-button svg {
+  color: var(--color-icon-secondary);
+  transition: color var(--duration-medium) var(--ease-standard);
+}
+.audio-cache-button[data-state="cached"] svg {
+  color: var(--color-icon-green);
+}
+.audio-cache-button[data-state="downloading"] svg {
+  color: var(--color-icon-accent);
+}
+.audio-cache-button[data-state="failed"] svg {
+  color: var(--color-icon-red);
+}
+.download-ring-spinning {
+  animation: download-ring-spin calc(var(--duration-slow) * 3) linear infinite;
+}
+@keyframes download-ring-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
 @property --stop {
   syntax: "<percentage>";
   inherits: false;
@@ -161,8 +225,13 @@
     animation: none;
     transform: scale(2);
   }
-  .grid .progress-bar {
+  .grid .progress-bar,
+  .waveform path,
+  .audio-cache-button svg {
     transition: none;
+  }
+  .download-ring-spinning {
+    animation: none;
   }
 }
 

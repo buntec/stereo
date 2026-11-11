@@ -68,6 +68,7 @@ import {
 } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
+import { AudioCacheButton } from "./AudioCacheButton.tsx";
 import logger from "./logger.tsx";
 import { MenuCheck } from "./Menu.tsx";
 
@@ -97,8 +98,8 @@ const flexWidth = (flex: number): ColDef => ({
 });
 
 // Width of the play/add/edit controls column, which is fixed by its renderer's content.
-const SEARCH_CONTROLS_WIDTH = 144;
-const TRACK_CONTROLS_WIDTH = 226;
+const SEARCH_CONTROLS_WIDTH = 180;
+const TRACK_CONTROLS_WIDTH = 258;
 
 const ArtistCellRenderer = (params: ICellRendererParams<ITrack, string[]>) => (
   <HStack as="span" gap={0} vAlign="center" height="100%">
@@ -239,6 +240,7 @@ const PlayControlRenderer: React.FC<
         tooltip="Play"
         icon={<PlayIcon />}
       />
+      <AudioCacheButton id={data.yt_id} onDownload={context.downloadAudio} />
       <IconButton
         variant="ghost"
         size="sm"
@@ -300,6 +302,7 @@ const SearchPlayControlRenderer: React.FC<
         tooltip="Play"
         icon={<PlayIcon />}
       />
+      <AudioCacheButton id={data.yt_id} onDownload={context.downloadAudio} />
       <IconButton
         variant="secondary"
         size="sm"
@@ -340,6 +343,7 @@ interface SearchResultsGridProps {
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
   addTrack: (track: ITrack) => void;
+  downloadAudio: (id: string) => void;
 }
 
 type SearchResultsGridContext = {
@@ -352,6 +356,7 @@ type SearchResultsGridContext = {
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
   addTrack: (track: ITrack) => void;
+  downloadAudio: (id: string) => void;
   tracks: ITrack[];
 };
 
@@ -366,6 +371,7 @@ export const SearchResultsGrid = ({
   onArtistClick,
   onLabelClick,
   addTrack,
+  downloadAudio,
   isChart = false,
   isSearching,
   onExitSearch,
@@ -540,6 +546,7 @@ export const SearchResultsGrid = ({
       onArtistClick,
       onLabelClick,
       addTrack,
+      downloadAudio,
       tracks: tracks ?? [],
     };
   }, [
@@ -549,6 +556,7 @@ export const SearchResultsGrid = ({
     onArtistClick,
     onLabelClick,
     addTrack,
+    downloadAudio,
     tracks,
   ]);
 
@@ -685,6 +693,7 @@ interface TracksGridProps {
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
   onShazamSimilar: (track: ITrack) => void;
+  downloadAudio: (id: string) => void;
 }
 
 type TracksGridContext = {
@@ -695,6 +704,7 @@ type TracksGridContext = {
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
   onShazamSimilar: (track: ITrack) => void;
+  downloadAudio: (id: string) => void;
 };
 
 export const TracksGrid = ({
@@ -715,6 +725,7 @@ export const TracksGrid = ({
   onArtistClick,
   onLabelClick,
   onShazamSimilar,
+  downloadAudio,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -911,6 +922,7 @@ export const TracksGrid = ({
       onArtistClick,
       onLabelClick,
       onShazamSimilar,
+      downloadAudio,
     };
   }, [
     updateRatingAndRefresh,
@@ -920,6 +932,7 @@ export const TracksGrid = ({
     onArtistClick,
     onLabelClick,
     onShazamSimilar,
+    downloadAudio,
   ]);
 
   const onCellKeyDown = useCallback(

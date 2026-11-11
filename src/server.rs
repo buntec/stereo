@@ -81,35 +81,44 @@ async fn forward_collection_moves(session: uuid::Uuid, events: mpsc::Sender<Sess
     }
 }
 
-/// Sends the session the state of unfinished audio downloads, then every update.
-async fn forward_audio_downloads(
-    active: Vec<audio::DownloadUpdate>,
-    mut updates: broadcast::Receiver<audio::DownloadUpdate>,
+/// Sends the session which tracks are downloaded and the state of unfinished audio downloads, then
+/// every change.
+async fn forward_audio_cache(
+    snapshot: audio::Snapshot,
+    mut updates: broadcast::Receiver<audio::CacheEvent>,
     server_tx: mpsc::Sender<MsgServer>,
 ) {
-    let message = |update: audio::DownloadUpdate| MsgServer::AudioDownload {
+    let download = |update: audio::DownloadUpdate| MsgServer::AudioDownload {
         yt_id: update.yt_id,
         status: update.status,
         progress: update.progress,
+        error: update.error.map(|e| e.to_string()),
     };
-    for update in active {
-        if server_tx.send(message(update)).await.is_err() {
+    let cached = MsgServer::AudioCached {
+        yt_ids: snapshot.cached,
+    };
+    if server_tx.send(cached).await.is_err() {
+        return;
+    }
+    for update in snapshot.downloads {
+        if server_tx.send(download(update)).await.is_err() {
             return;
         }
     }
     loop {
-        match updates.recv().await {
-            Ok(update) => {
-                if server_tx.send(message(update)).await.is_err() {
-                    break;
-                }
-            }
+        let message = match updates.recv().await {
+            Ok(audio::CacheEvent::Download(update)) => download(update),
+            Ok(audio::CacheEvent::Evicted(yt_ids)) => MsgServer::AudioEvicted { yt_ids },
             // Unlikely with the channel's capacity; a client also forgets a download once its track
             // starts playing, in case it missed the final update.
             Err(broadcast::error::RecvError::Lagged(missed)) => {
                 tracing::warn!("Missed {missed} audio download updates");
+                continue;
             }
             Err(broadcast::error::RecvError::Closed) => break,
+        };
+        if server_tx.send(message).await.is_err() {
+            break;
         }
     }
 }
@@ -335,8 +344,8 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
         })
         .await;
     // After BackendInfo, which makes the client forget downloads it knew from a previous connection.
-    let downloads_task = audio::subscribe().map(|(active, updates)| {
-        tokio::spawn(forward_audio_downloads(active, updates, server_tx.clone()))
+    let downloads_task = audio::subscribe().await.map(|(snapshot, updates)| {
+        tokio::spawn(forward_audio_cache(snapshot, updates, server_tx.clone()))
     });
     let _ = server_tx
         .send(MsgServer::Repos {
@@ -1610,6 +1619,18 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 update_collection_info(state, tx).await;
                 schedule_collection_sync(state, tx).await;
             }
+        }
+
+        MsgClient::DownloadAudio { yt_id } => {
+            audio::download_in_background(&yt_id)?;
+        }
+
+        MsgClient::GetWaveform { id, yt_id } => {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let peaks = audio::waveform(&yt_id).await;
+                let _ = tx.send(MsgServer::Waveform { id, yt_id, peaks }).await;
+            });
         }
 
         MsgClient::CollectionContainsIds { id, yt_ids } => {

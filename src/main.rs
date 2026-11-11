@@ -261,9 +261,12 @@ async fn main() -> anyhow::Result<()> {
         2 => "debug",
         _ => "trace",
     };
+    // Symphonia (waveforms) warns about harmless quirks of YouTube's files, e.g. padding before
+    // the MP4 header; a file it can't decode is logged by `audio.rs`.
+    let quiet = "symphonia_core=error,symphonia_format_isomp4=error,symphonia_codec_aac=error";
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_new(format!("stereo={level},warn"))
+            tracing_subscriber::EnvFilter::try_new(format!("stereo={level},warn,{quiet}"))
                 .unwrap_or_default(),
         )
         .init();

@@ -12,7 +12,11 @@
 //! bumped whenever it is served).
 //!
 //! Download progress is broadcast to every WebSocket session (`subscribe`), since the request
-//! that triggered a download has no way to report it.
+//! that triggered a download has no way to report it, as are evictions, so clients can show which
+//! tracks are downloaded.
+//!
+//! Waveforms of cached tracks (`waveform.rs`) are computed on first request and cached in
+//! [`WAVEFORM_DIR`], deleted along with their audio.
 
 use std::{
     collections::HashMap,
@@ -41,7 +45,7 @@ use tokio::{
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
-use crate::{message::AudioDownloadStatus, settings::Settings};
+use crate::{message::AudioDownloadStatus, settings::Settings, waveform};
 
 /// Extensions yt-dlp may produce for the requested formats, with their Content-Type.
 const AUDIO_TYPES: &[(&str, &str)] = &[
@@ -68,6 +72,10 @@ const PROGRESS_PREFIX: &str = "stereo-progress ";
 /// Locked (shared) by every process using the cache dir, which several backends may share (e.g.
 /// an installed service and a development backend).
 const LOCK_FILE: &str = ".lock";
+/// Subdirectory of the cache dir holding the waveform of a cached track as `{id}.peaks`.
+const WAVEFORM_DIR: &str = "waveforms";
+/// Waveforms computed at once; decoding a track keeps a core busy for a fraction of a second.
+const MAX_CONCURRENT_WAVEFORMS: usize = 2;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DownloadUpdate {
@@ -75,6 +83,25 @@ pub struct DownloadUpdate {
     pub status: AudioDownloadStatus,
     /// Fraction downloaded, while downloading and if the size is known.
     pub progress: Option<f64>,
+    /// Why the download failed, for `Failed`.
+    pub error: Option<Arc<str>>,
+}
+
+/// A change to the cache, broadcast to every session.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CacheEvent {
+    Download(DownloadUpdate),
+    /// These tracks are no longer cached.
+    Evicted(Vec<String>),
+}
+
+/// The cache's state when a session subscribed.
+#[derive(Debug, Default)]
+pub struct Snapshot {
+    /// Ids of the cached tracks.
+    pub cached: Vec<String>,
+    /// The latest update of every download that hasn't finished.
+    pub downloads: Vec<DownloadUpdate>,
 }
 
 type Download = Shared<BoxFuture<'static, Result<PathBuf, Arc<str>>>>;
@@ -85,11 +112,12 @@ pub struct AudioCache {
     yt_dlp: String,
     key: String,
     downloads: Semaphore,
+    waveforms: Semaphore,
     in_flight: Mutex<HashMap<String, Download>>,
     failures: Mutex<HashMap<String, (Instant, Arc<str>)>>,
     /// The latest update of every download that hasn't finished, for sessions that connect later.
     active: Mutex<HashMap<String, DownloadUpdate>>,
-    updates: broadcast::Sender<DownloadUpdate>,
+    updates: broadcast::Sender<CacheEvent>,
     /// Holds a shared lock on [`LOCK_FILE`] for as long as the cache is in use.
     _lock: Option<std::fs::File>,
 }
@@ -132,10 +160,36 @@ pub fn key() -> Option<String> {
     CACHE.get().map(|cache| cache.key.clone())
 }
 
-/// The state of every unfinished download and a receiver of all further updates, or `None` if
-/// audio downloads are disabled.
-pub fn subscribe() -> Option<(Vec<DownloadUpdate>, broadcast::Receiver<DownloadUpdate>)> {
-    CACHE.get().map(|cache| cache.subscribe())
+/// The cache's current state and a receiver of all further changes, or `None` if audio downloads
+/// are disabled.
+pub async fn subscribe() -> Option<(Snapshot, broadcast::Receiver<CacheEvent>)> {
+    Some(CACHE.get()?.subscribe().await)
+}
+
+/// Starts downloading a track in the background, even if its download failed recently.
+pub fn download_in_background(id: &str) -> anyhow::Result<()> {
+    let cache = CACHE.get().context("Audio downloads are disabled")?;
+    anyhow::ensure!(is_valid_id(id), "Invalid YouTube id");
+    cache.failures.lock().unwrap().remove(id);
+    let cache = cache.clone();
+    let id = id.to_string();
+    tokio::spawn(async move {
+        // Also for a file that was already cached, which the client didn't know about: another
+        // process sharing the cache may have downloaded it.
+        if cache.get(&id).await.is_ok() {
+            cache.report(&id, AudioDownloadStatus::Done, None, None);
+        }
+    });
+    Ok(())
+}
+
+/// The waveform of a cached track, or `None` if it isn't cached or can't be decoded.
+pub async fn waveform(id: &str) -> Option<Vec<u8>> {
+    let cache = CACHE.get()?;
+    if !is_valid_id(id) {
+        return None;
+    }
+    cache.waveform(id).await
 }
 
 /// Parses a line printed by yt-dlp for `--progress-template` into the fraction downloaded,
@@ -210,6 +264,7 @@ impl AudioCache {
             yt_dlp,
             key: uuid::Uuid::new_v4().simple().to_string(),
             downloads: Semaphore::new(MAX_CONCURRENT_DOWNLOADS),
+            waveforms: Semaphore::new(MAX_CONCURRENT_WAVEFORMS),
             in_flight: Mutex::new(HashMap::new()),
             failures: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
@@ -218,18 +273,43 @@ impl AudioCache {
         })
     }
 
-    pub fn subscribe(&self) -> (Vec<DownloadUpdate>, broadcast::Receiver<DownloadUpdate>) {
-        // Subscribe first so no update falls between the snapshot and the receiver.
+    pub async fn subscribe(&self) -> (Snapshot, broadcast::Receiver<CacheEvent>) {
+        // Subscribe first so no change falls between the snapshot and the receiver.
         let receiver = self.updates.subscribe();
-        let active = self.active.lock().unwrap().values().cloned().collect();
-        (active, receiver)
+        let downloads = self.active.lock().unwrap().values().cloned().collect();
+        let cached = self.cached_ids().await.unwrap_or_else(|e| {
+            tracing::warn!("Can't list the audio cache: {e:#}");
+            Vec::new()
+        });
+        (Snapshot { cached, downloads }, receiver)
     }
 
-    fn report(&self, id: &str, status: AudioDownloadStatus, progress: Option<f64>) {
+    async fn cached_ids(&self) -> anyhow::Result<Vec<String>> {
+        let mut ids = Vec::new();
+        let mut entries = tokio::fs::read_dir(&self.dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if is_valid_id(id) && AUDIO_TYPES.iter().any(|(e, _)| *e == ext) {
+                ids.push(id.to_string());
+            }
+        }
+        Ok(ids)
+    }
+
+    fn report(
+        &self,
+        id: &str,
+        status: AudioDownloadStatus,
+        progress: Option<f64>,
+        error: Option<Arc<str>>,
+    ) {
         let update = DownloadUpdate {
             yt_id: id.to_string(),
             status,
             progress,
+            error,
         };
         {
             let mut active = self.active.lock().unwrap();
@@ -239,7 +319,7 @@ impl AudioCache {
             };
         }
         // No receivers just means no session is connected.
-        let _ = self.updates.send(update);
+        let _ = self.updates.send(CacheEvent::Download(update));
     }
 
     async fn cached(&self, id: &str) -> Option<PathBuf> {
@@ -273,17 +353,17 @@ impl AudioCache {
             .or_insert_with(|| {
                 let this = self.clone();
                 let id = id.to_string();
-                self.report(&id, AudioDownloadStatus::Queued, None);
+                self.report(&id, AudioDownloadStatus::Queued, None, None);
                 let task = tokio::spawn(async move {
                     let result = this
                         .download(&id)
                         .await
                         .map_err(|e| Arc::<str>::from(format!("{e:#}")));
-                    let status = match result {
-                        Ok(_) => AudioDownloadStatus::Done,
-                        Err(_) => AudioDownloadStatus::Failed,
+                    let (status, error) = match &result {
+                        Ok(_) => (AudioDownloadStatus::Done, None),
+                        Err(error) => (AudioDownloadStatus::Failed, Some(error.clone())),
                     };
-                    this.report(&id, status, None);
+                    this.report(&id, status, None, error);
                     if let Err(error) = &result {
                         tracing::warn!("Audio download of {id} failed: {error}");
                         this.failures
@@ -312,7 +392,7 @@ impl AudioCache {
             return Ok(path);
         }
         // Before the transfer starts, yt-dlp spends a few seconds extracting the stream URL.
-        self.report(id, AudioDownloadStatus::Preparing, None);
+        self.report(id, AudioDownloadStatus::Preparing, None, None);
         let started = Instant::now();
         let tmp = tempfile::Builder::new()
             .prefix(".dl-")
@@ -350,7 +430,7 @@ impl AudioCache {
                 };
                 if last_report.is_none_or(|at| at.elapsed() >= PROGRESS_INTERVAL) {
                     last_report = Some(Instant::now());
-                    self.report(id, AudioDownloadStatus::Downloading, fraction);
+                    self.report(id, AudioDownloadStatus::Downloading, fraction, None);
                 }
             }
         };
@@ -397,6 +477,49 @@ impl AudioCache {
         Ok(dest)
     }
 
+    fn waveform_path(&self, id: &str) -> PathBuf {
+        self.dir.join(WAVEFORM_DIR).join(format!("{id}.peaks"))
+    }
+
+    async fn waveform(&self, id: &str) -> Option<Vec<u8>> {
+        let path = self.waveform_path(id);
+        if let Ok(peaks) = tokio::fs::read(&path).await {
+            if peaks.len() == waveform::BUCKETS {
+                return Some(peaks);
+            }
+        }
+        let audio = self.cached(id).await?;
+        let _permit = self.waveforms.acquire().await.ok()?;
+        let dir = self.dir.join(WAVEFORM_DIR);
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+            let started = Instant::now();
+            let peaks = waveform::compute(&audio)?;
+            tracing::debug!(
+                "Computed the waveform of {} in {:.1?}",
+                audio.display(),
+                started.elapsed()
+            );
+            // Written whole and renamed, so a concurrent request never reads half a file.
+            std::fs::create_dir_all(&dir)?;
+            let mut tmp = tempfile::NamedTempFile::new_in(&dir)?;
+            std::io::Write::write_all(&mut tmp, &peaks)?;
+            tmp.persist(&path)?;
+            Ok(peaks)
+        })
+        .await;
+        match result {
+            Ok(Ok(peaks)) => Some(peaks),
+            Ok(Err(e)) => {
+                tracing::debug!("No waveform for {id}: {e:#}");
+                None
+            }
+            Err(e) => {
+                tracing::warn!("Waveform task for {id} failed: {e}");
+                None
+            }
+        }
+    }
+
     /// Deletes the least recently played files until the cache fits its limit, keeping `keep`.
     async fn evict(&self, keep: &Path) -> anyhow::Result<()> {
         let mut files = Vec::new();
@@ -415,6 +538,8 @@ impl AudioCache {
             files.push((modified, meta.len(), entry.path()));
         }
         files.sort();
+        let mut evicted = Vec::new();
+        let mut result = Ok(());
         for (_, len, path) in files {
             if total <= self.limit_bytes {
                 break;
@@ -423,11 +548,21 @@ impl AudioCache {
                 continue;
             }
             // A file that is being served stays readable until it is closed.
-            tokio::fs::remove_file(&path).await?;
+            if let Err(e) = tokio::fs::remove_file(&path).await {
+                result = Err(e.into());
+                break;
+            }
             total -= len;
             tracing::debug!("Evicted {} from the audio cache", path.display());
+            if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
+                let _ = tokio::fs::remove_file(self.waveform_path(id)).await;
+                evicted.push(id.to_string());
+            }
         }
-        Ok(())
+        if !evicted.is_empty() {
+            let _ = self.updates.send(CacheEvent::Evicted(evicted));
+        }
+        result
     }
 }
 
@@ -611,8 +746,9 @@ printf '0123456789' > "$(echo "$out" | sed 's/%(ext)s/m4a/')"
             .unwrap(),
         );
         let key = cache.key.clone();
-        let (active, mut updates) = cache.subscribe();
-        assert!(active.is_empty());
+        let (snapshot, mut updates) = cache.subscribe().await;
+        assert!(snapshot.downloads.is_empty());
+        assert!(snapshot.cached.is_empty());
 
         let (a, b) = tokio::join!(
             serve(
@@ -639,7 +775,10 @@ printf '0123456789' > "$(echo "$out" | sed 's/%(ext)s/m4a/')"
         );
 
         let mut seen = Vec::new();
-        while let Ok(update) = updates.try_recv() {
+        while let Ok(event) = updates.try_recv() {
+            let CacheEvent::Download(update) = event else {
+                panic!("unexpected {event:?}");
+            };
             assert_eq!(update.yt_id, "dQw4w9WgXcQ");
             seen.push((update.status, update.progress));
         }
@@ -652,9 +791,16 @@ printf '0123456789' > "$(echo "$out" | sed 's/%(ext)s/m4a/')"
                 (AudioDownloadStatus::Done, None),
             ]
         );
+        let (snapshot, _) = cache.subscribe().await;
         assert!(
-            cache.subscribe().0.is_empty(),
+            snapshot.downloads.is_empty(),
             "finished downloads aren't active"
+        );
+        assert_eq!(snapshot.cached, ["dQw4w9WgXcQ"]);
+        assert_eq!(
+            cache.waveform("dQw4w9WgXcQ").await,
+            None,
+            "the fake audio can't be decoded"
         );
 
         let partial = serve(
@@ -718,6 +864,7 @@ exit 1"#,
                 .await
                 .unwrap(),
         );
+        let (_, mut updates) = cache.subscribe().await;
         for _ in 0..2 {
             let error = cache.get("dQw4w9WgXcQ").await.unwrap_err();
             assert_eq!(
@@ -731,8 +878,22 @@ exit 1"#,
             1,
             "failures are not retried right away"
         );
+        let mut failure = None;
+        while let Ok(event) = updates.try_recv() {
+            if let CacheEvent::Download(update) = event {
+                if update.status == AudioDownloadStatus::Failed {
+                    failure = update.error;
+                }
+            }
+        }
+        assert_eq!(
+            failure.as_deref(),
+            Some("yt-dlp failed: ERROR: [youtube] dQw4w9WgXcQ: Video unavailable"),
+            "the failure is reported with its error"
+        );
+        let (snapshot, _) = cache.subscribe().await;
         assert!(
-            cache.subscribe().0.is_empty(),
+            snapshot.downloads.is_empty(),
             "failed downloads aren't active"
         );
         let leftovers = std::fs::read_dir(cache_dir.path())
@@ -792,9 +953,16 @@ exit 1"#,
         let cache = AudioCache::new(cache_dir.path().to_path_buf(), 25, "false".into())
             .await
             .unwrap();
+        let (_, mut updates) = cache.subscribe().await;
         let now = SystemTime::now();
-        for (i, name) in ["old.m4a", "mid.m4a", "new.m4a"].iter().enumerate() {
-            let path = cache_dir.path().join(name);
+        let waveforms = cache_dir.path().join(WAVEFORM_DIR);
+        std::fs::create_dir(&waveforms).unwrap();
+        for (i, id) in ["oldoldoldol", "midmidmidmi", "newnewnewne"]
+            .iter()
+            .enumerate()
+        {
+            std::fs::write(waveforms.join(format!("{id}.peaks")), [0u8; 3]).unwrap();
+            let path = cache_dir.path().join(format!("{id}.m4a"));
             std::fs::write(&path, [0u8; 10]).unwrap();
             std::fs::File::options()
                 .append(true)
@@ -804,14 +972,27 @@ exit 1"#,
                 .unwrap();
         }
         cache
-            .evict(&cache_dir.path().join("old.m4a"))
+            .evict(&cache_dir.path().join("oldoldoldol.m4a"))
             .await
             .unwrap();
         assert!(
-            cache_dir.path().join("old.m4a").exists(),
+            cache_dir.path().join("oldoldoldol.m4a").exists(),
             "kept file survives"
         );
-        assert!(!cache_dir.path().join("mid.m4a").exists());
-        assert!(cache_dir.path().join("new.m4a").exists());
+        assert!(!cache_dir.path().join("midmidmidmi.m4a").exists());
+        assert!(cache_dir.path().join("newnewnewne.m4a").exists());
+        assert!(
+            !waveforms.join("midmidmidmi.peaks").exists(),
+            "the waveform goes with its audio"
+        );
+        assert!(waveforms.join("newnewnewne.peaks").exists());
+        assert_eq!(
+            updates.try_recv().unwrap(),
+            CacheEvent::Evicted(vec!["midmidmidmi".to_string()])
+        );
+        let (snapshot, _) = cache.subscribe().await;
+        let mut cached = snapshot.cached;
+        cached.sort();
+        assert_eq!(cached, ["newnewnewne", "oldoldoldol"]);
     }
 }

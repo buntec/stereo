@@ -51,13 +51,15 @@ import type {
   ServerMsg,
   Settings,
   AppNotification,
-  AudioDownload,
 } from "./Types.tsx";
 import { AudioDownloadProgress } from "./AudioDownloadProgress.tsx";
 import { isChartSearchKind, isQuerylessSearchKind } from "./Types.tsx";
 import { DEFAULT_BEATPORT_GENRE_ID } from "./BeatportGenres.tsx";
 
 import { useWebSocket } from "./WebSocket.tsx";
+import { audioCache, isDownloading, useTrackAudio } from "./AudioCache.ts";
+import { Waveform } from "./Waveform.tsx";
+import { useWaveform } from "./useWaveform.ts";
 import type { PlaybackStatus } from "./Playback.ts";
 import { useAudioPlayback } from "./AudioPlayback.ts";
 import {
@@ -141,8 +143,6 @@ type State = {
   backend_version?: string;
   /** Key for the backend's `/audio` route; unset when it doesn't download audio. */
   audio_key?: string;
-  /** Unfinished audio downloads by YouTube id. */
-  audio_downloads: Record<string, AudioDownload>;
   home_dir?: string;
   repos?: IRepo[];
   collections?: ICollection[];
@@ -286,37 +286,16 @@ const reducer = (state: State, action: Action): State => {
       return { ...state };
     }
 
-    case "player-state-change": {
-      let audio_downloads = state.audio_downloads;
-      // A track that plays is downloaded, even if its final update got lost.
-      if (action.state === "playing" && action.id in audio_downloads) {
-        audio_downloads = { ...audio_downloads };
-        delete audio_downloads[action.id];
-      }
+    case "player-state-change":
       return {
         ...state,
         player_state: action.state,
         player_id: action.id,
         player_loading: false,
-        audio_downloads,
       };
-    }
 
     case "set-player-loading":
       return { ...state, player_loading: action.loading };
-
-    case "audio-download": {
-      const audio_downloads = { ...state.audio_downloads };
-      if (action.status === "done" || action.status === "failed") {
-        delete audio_downloads[action.yt_id];
-      } else {
-        audio_downloads[action.yt_id] = {
-          status: action.status,
-          progress: action.progress ?? undefined,
-        };
-      }
-      return { ...state, audio_downloads };
-    }
 
     case "backend-info":
       return {
@@ -324,8 +303,6 @@ const reducer = (state: State, action: Action): State => {
         backend_version: action.version,
         home_dir: action.home_dir,
         audio_key: action.audio_key ?? undefined,
-        // A new connection; the backend sends the downloads it is working on next.
-        audio_downloads: {},
       };
 
     case "set-import-from":
@@ -760,7 +737,6 @@ const legacyGridState = (): GridState | undefined => {
 function App() {
   const [state, dispatch] = useReducer(reducer, {
     playlist: [],
-    audio_downloads: {},
     player_state: "unstarted",
     player_loading: false,
     should_refresh_grid: false,
@@ -816,10 +792,15 @@ function App() {
 
   const wsOnMessage = useCallback(
     (msg: ServerMsg | ServerMsg[]) => {
+      // The audio cache's state lives in its own store (AudioCache.ts).
+      const handle = (m: ServerMsg) => {
+        audioCache.handle(m);
+        dispatch(m);
+      };
       if (Array.isArray(msg)) {
-        msg.forEach(dispatch);
+        msg.forEach(handle);
       } else {
-        dispatch(msg);
+        handle(msg);
       }
     },
     [dispatch],
@@ -874,6 +855,11 @@ function App() {
   const playId = useCallback(
     (id: string) => dispatch({ type: "play-id", id }),
     [],
+  );
+
+  const downloadAudio = useCallback(
+    (id: string) => sendMsg({ type: "download-audio", yt_id: id }),
+    [sendMsg],
   );
 
   const gridRef = useRef<AgGridReact<ITrack>>(null);
@@ -984,7 +970,10 @@ function App() {
     onStatusChange: (status, id) => {
       // Right in the audio element's event, so it also happens for tracks that start
       // while the screen is locked.
-      if (status === "playing") registerMediaSessionRef.current();
+      if (status === "playing") {
+        registerMediaSessionRef.current();
+        audioCache.markCached(id);
+      }
       // The UI only distinguishes these; transient states (buffering, cued) keep the last
       // one, and just show whether playback is loading.
       if (status === "playing" || status === "paused" || status === "ended") {
@@ -1350,6 +1339,26 @@ function App() {
           current_time: t,
         });
       }
+    },
+    [playback],
+  );
+
+  // Shows the new position right away, not after the next progress update.
+  const onWaveformSeek = useCallback(
+    (seconds: number) => {
+      const d = playback?.duration();
+      if (!playback || !d) return;
+      playback.seek(seconds);
+      document.documentElement.style.setProperty(
+        "--stereo-playback-progress",
+        `${seconds / d}`,
+      );
+      dispatch({
+        type: "set-playback-progress",
+        percent: (100.0 * seconds) / d,
+        duration: d,
+        current_time: seconds,
+      });
     },
     [playback],
   );
@@ -1795,9 +1804,15 @@ function App() {
     [settings, setSettings],
   );
 
-  const currentDownload: AudioDownload | undefined = state.current_id
-    ? state.audio_downloads[state.current_id]
+  const currentAudio = useTrackAudio(state.current_id);
+  const currentDownload = isDownloading(currentAudio.download)
+    ? currentAudio.download
     : undefined;
+  const currentWaveform = useWaveform(
+    state.current_id,
+    currentAudio.cached,
+    requestReply,
+  );
 
   const hasSearchInput =
     isQuerylessSearchKind(state.search_kind) || !!state.search_box_input;
@@ -2073,6 +2088,7 @@ function App() {
       onArtistClick={handleArtistClick}
       onLabelClick={handleLabelClick}
       addTrack={addSearchResultTrack}
+      downloadAudio={downloadAudio}
     />
   ) : !backendReady ? (
     <HStack height="100%" hAlign="center" vAlign="center">
@@ -2132,6 +2148,7 @@ function App() {
       onArtistClick={handleArtistClick}
       onLabelClick={handleLabelClick}
       onShazamSimilar={handleShazamSimilar}
+      downloadAudio={downloadAudio}
     />
   );
 
@@ -2578,6 +2595,30 @@ function App() {
                       </HStack>
                       {currentDownload ? (
                         <AudioDownloadProgress download={currentDownload} />
+                      ) : state.current_id && currentWaveform !== null ? (
+                        <HStack
+                          className="progress-slider"
+                          width="100%"
+                          vAlign="center"
+                          gap={2}
+                        >
+                          <Text type="supporting" hasTabularNumbers>
+                            {formatDuration(state.current_time ?? 0)}
+                          </Text>
+                          <StackItem size="fill">
+                            <Waveform
+                              peaks={currentWaveform}
+                              currentTime={state.current_time ?? 0}
+                              duration={state.duration ?? 0}
+                              onSeek={onWaveformSeek}
+                            />
+                          </StackItem>
+                          <Text type="supporting" hasTabularNumbers>
+                            {state.duration
+                              ? formatDuration(state.duration)
+                              : "--:--"}
+                          </Text>
+                        </HStack>
                       ) : (
                         <HStack
                           className="progress-slider"
