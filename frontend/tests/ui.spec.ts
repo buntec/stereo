@@ -1,4 +1,10 @@
-import { test, expect, type Page, type WebSocketRoute } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Page,
+  type Route,
+  type WebSocketRoute,
+} from "@playwright/test";
 
 const exampleTracks = Array.from({ length: 12 }, (_, index) => ({
   title: `Example track ${index + 1}`,
@@ -37,14 +43,16 @@ async function openApp(
   await page.route("https://www.youtube.com/**", (route) => route.abort());
   await page.route("https://i.ytimg.com/**", (route) => route.abort());
   const audioRequests: string[] = [];
-  const audio = options.audio ?? "hold";
+  /** Requests answered with `hold`, which a test may still answer itself. */
+  const heldAudio: Route[] = [];
+  let audio = options.audio ?? "hold";
   if (audio !== "off")
     await page.route("**/audio/**", (route) => {
       const url = new URL(route.request().url());
       audioRequests.push(
         `${route.request().method()} ${url.pathname}?${url.searchParams}`,
       );
-      if (audio === "hold") return;
+      if (audio === "hold") return void heldAudio.push(route);
       if (audio === "fail")
         return route.fulfill({ status: 502, body: "yt-dlp failed" });
       // Range requests as the backend serves them; Chromium only seeks with those.
@@ -192,6 +200,11 @@ async function openApp(
   return {
     messages,
     audioRequests,
+    heldAudio,
+    /** Changes how further audio requests are answered (not "off"). */
+    setAudio: (mode: "hold" | "ok" | "fail") => {
+      audio = mode;
+    },
     send: (message: unknown) => socket.send(JSON.stringify(message)),
   };
 }
@@ -550,6 +563,48 @@ test("skips tracks whose audio can't be downloaded, and stops after three in a r
     "GET /audio/audit1",
     "GET /audio/audit2",
   ]);
+});
+
+test("a track paused while it downloads stays paused if the download fails", async ({
+  page,
+}) => {
+  const { audioRequests, heldAudio, setAudio } = await openApp(page);
+  await expect.poll(() => heldAudio.length).toBeGreaterThan(0);
+  const button = page.locator(".play-pause-button");
+  await button.click();
+  await expect(button).toHaveAccessibleName("Play");
+  setAudio("fail");
+  for (const route of heldAudio.splice(0))
+    await route.fulfill({ status: 502, body: "yt-dlp failed" });
+  await expect(
+    page.getByText("Couldn't download this track's audio: yt-dlp failed", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(button).toHaveAccessibleName("Play");
+  expect(audioRequests.filter((r) => !r.includes("/audit0?"))).toEqual([]);
+});
+
+test("play retries a track whose download failed", async ({ page }) => {
+  const { audioRequests, setAudio } = await openApp(page, {
+    audio: "fail",
+    audioSeconds: 240,
+  });
+  await expect(
+    page.getByText(
+      "Couldn't download the audio of 3 tracks in a row, stopping: yt-dlp failed",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  const button = page.locator(".play-pause-button");
+  await expect(button).toHaveAccessibleName("Play");
+  setAudio("ok");
+  const before = audioRequests.length;
+  await button.click();
+  await expect(button).toHaveAccessibleName("Pause");
+  expect(audioRequests.slice(before)).toContain(
+    "GET /audio/audit2?key=test-key",
+  );
 });
 
 test("shows the playing track's thumbnail, blurred, behind the app", async ({

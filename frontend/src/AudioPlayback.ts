@@ -29,6 +29,12 @@ export const useAudioPlayback = (
   const idRef = useRef<string | undefined>(undefined);
   const prefetchedRef = useRef(new Set<string>());
   const failuresRef = useRef(0);
+  /**
+   * Whether the app wants playback to go on: set by `load` and `play`, cleared
+   * by `pause` and `stop`. The element can't tell, since it keeps downloading a
+   * track that was paused while loading.
+   */
+  const wantsPlayRef = useRef(false);
   const loadRef = useRef<(id: string) => void>(() => {});
 
   // One element for the whole session: iOS lets an element that is already
@@ -61,17 +67,24 @@ export const useAudioPlayback = (
   };
 
   const playAudio = () => {
+    wantsPlayRef.current = true;
     audio.play().catch((e: unknown) => {
+      const name = e instanceof DOMException ? e.name : undefined;
+      // AbortError: the source changed or playback was paused before it started.
+      // NotSupportedError: the source failed, which the `error` handler handles.
+      if (name === "AbortError" || name === "NotSupportedError") return;
+      wantsPlayRef.current = false;
+      emit("paused");
       // NotAllowedError: autoplay was blocked, the user has to press play.
-      // AbortError: the source changed before playback started.
-      if (e instanceof DOMException && e.name === "NotAllowedError") {
-        emit("paused");
+      if (name !== "NotAllowedError") {
+        eventsRef.current.onError?.(`Couldn't start playback: ${String(e)}`);
       }
     });
   };
 
   const load = (id: string) => {
     idRef.current = id;
+    wantsPlayRef.current = true;
     const key = keyRef.current;
     if (!key) return;
     audio.src = audioUrl(id, key);
@@ -103,9 +116,11 @@ export const useAudioPlayback = (
       const id = idRef.current;
       const key = keyRef.current;
       if (!id || !key || !audio.hasAttribute("src")) return;
-      failuresRef.current += 1;
+      // Paused or stopped while the track was loading: stay put.
+      const skip = wantsPlayRef.current;
+      if (skip) failuresRef.current += 1;
       const failures = failuresRef.current;
-      const stop = failures >= MAX_CONSECUTIVE_FAILURES;
+      const stop = skip && failures >= MAX_CONSECUTIVE_FAILURES;
       // The element doesn't expose why the request failed; the backend's
       // response does (it remembers failed downloads, so this is quick).
       fetch(audioUrl(id, key))
@@ -120,11 +135,16 @@ export const useAudioPlayback = (
           eventsRef.current.onError?.(
             stop
               ? `Couldn't download the audio of ${failures} tracks in a row, stopping${what}`
-              : `Couldn't download this track's audio, skipping it${what}`,
+              : skip
+                ? `Couldn't download this track's audio, skipping it${what}`
+                : `Couldn't download this track's audio${what}`,
           );
         });
-      if (stop) {
+      if (!skip) {
+        emit("paused", id);
+      } else if (stop) {
         failuresRef.current = 0;
+        wantsPlayRef.current = false;
         emit("paused", id);
       } else {
         advance();
@@ -159,9 +179,18 @@ export const useAudioPlayback = (
     if (!ready) return null;
     return {
       load: (id) => loadRef.current(id),
-      play: () => playAudio(),
-      pause: () => audio.pause(),
+      play: () => {
+        // A failed source stays failed: retry it with the current key.
+        const id = idRef.current;
+        if (audio.error && id) loadRef.current(id);
+        else playAudio();
+      },
+      pause: () => {
+        wantsPlayRef.current = false;
+        audio.pause();
+      },
       stop: () => {
+        wantsPlayRef.current = false;
         audio.pause();
         audio.currentTime = 0;
       },
@@ -172,6 +201,8 @@ export const useAudioPlayback = (
       duration: () => (Number.isFinite(audio.duration) ? audio.duration : 0),
       status: () => {
         if (!audio.hasAttribute("src")) return "unstarted";
+        // A failed source isn't paused, but waits for `play` to retry it.
+        if (audio.error) return "paused";
         if (audio.ended) return "ended";
         if (audio.paused) return "paused";
         if (audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA)

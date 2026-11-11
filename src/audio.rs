@@ -65,6 +65,9 @@ const TOUCH_INTERVAL: Duration = Duration::from_secs(3600);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 /// Prefix of the progress lines yt-dlp prints for us (`--progress-template`).
 const PROGRESS_PREFIX: &str = "stereo-progress ";
+/// Locked (shared) by every process using the cache dir, which several backends may share (e.g.
+/// an installed service and a development backend).
+const LOCK_FILE: &str = ".lock";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DownloadUpdate {
@@ -87,6 +90,8 @@ pub struct AudioCache {
     /// The latest update of every download that hasn't finished, for sessions that connect later.
     active: Mutex<HashMap<String, DownloadUpdate>>,
     updates: broadcast::Sender<DownloadUpdate>,
+    /// Holds a shared lock on [`LOCK_FILE`] for as long as the cache is in use.
+    _lock: Option<std::fs::File>,
 }
 
 static CACHE: OnceLock<Arc<AudioCache>> = OnceLock::new();
@@ -195,14 +200,10 @@ impl AudioCache {
         tokio::fs::create_dir_all(&dir)
             .await
             .with_context(|| format!("can't create {}", dir.display()))?;
-        // Leftovers of downloads interrupted by a shutdown.
-        if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                if entry.file_name().to_string_lossy().starts_with(".dl-") {
-                    let _ = tokio::fs::remove_dir_all(entry.path()).await;
-                }
-            }
-        }
+        let lock = {
+            let dir = dir.clone();
+            tokio::task::spawn_blocking(move || lock_and_clean(&dir)).await??
+        };
         Ok(Self {
             dir,
             limit_bytes,
@@ -213,6 +214,7 @@ impl AudioCache {
             failures: Mutex::new(HashMap::new()),
             active: Mutex::new(HashMap::new()),
             updates: broadcast::channel(1024).0,
+            _lock: lock,
         })
     }
 
@@ -427,6 +429,39 @@ impl AudioCache {
         }
         Ok(())
     }
+}
+
+/// Takes a shared lock on the cache dir, first deleting the leftovers of downloads interrupted by
+/// a shutdown if no other process uses the cache: otherwise they may be its live downloads. The
+/// lock is `None` if the file system doesn't support locking, and then nothing is deleted.
+fn lock_and_clean(dir: &Path) -> anyhow::Result<Option<std::fs::File>> {
+    let path = dir.join(LOCK_FILE);
+    let lock = std::fs::File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("can't open {}", path.display()))?;
+    match lock.try_lock() {
+        Ok(()) => {
+            for entry in std::fs::read_dir(dir)?.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(".dl-") {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+            lock.unlock()?;
+        }
+        // Another process uses the cache; its leftovers wait until a process has it to itself.
+        Err(std::fs::TryLockError::WouldBlock) => {}
+        Err(std::fs::TryLockError::Error(e)) => {
+            tracing::warn!("Can't lock {}: {e}", path.display());
+            return Ok(None);
+        }
+    }
+    // Waits only while another process that just started cleans up.
+    lock.lock_shared()
+        .with_context(|| format!("can't lock {}", path.display()))?;
+    Ok(Some(lock))
 }
 
 /// Marks a file as recently played, for eviction.
@@ -700,8 +735,55 @@ exit 1"#,
             cache.subscribe().0.is_empty(),
             "failed downloads aren't active"
         );
-        let leftovers = std::fs::read_dir(cache_dir.path()).unwrap().count();
+        let leftovers = std::fs::read_dir(cache_dir.path())
+            .unwrap()
+            .filter(|e| e.as_ref().unwrap().file_name() != LOCK_FILE)
+            .count();
         assert_eq!(leftovers, 0, "the download directory is cleaned up");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn keeps_downloads_of_other_processes_sharing_the_cache() {
+        let tools = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let leftover = cache_dir.path().join(".dl-leftover");
+        std::fs::create_dir(&leftover).unwrap();
+        // Signals that it started, then waits to be released before writing its output.
+        let yt_dlp = fake_yt_dlp(
+            tools.path(),
+            &format!(
+                "touch \"$(dirname \"$0\")/started\"\n\
+                 while [ ! -e \"$(dirname \"$0\")/release\" ]; do sleep 0.05; done\n{WRITE_OUTPUT}"
+            ),
+        );
+        let new_cache =
+            || AudioCache::new(cache_dir.path().to_path_buf(), u64::MAX, yt_dlp.clone());
+
+        let first = Arc::new(new_cache().await.unwrap());
+        assert!(!leftover.exists(), "a sole process cleans up leftovers");
+        std::fs::create_dir(&leftover).unwrap();
+
+        let download = tokio::spawn({
+            let first = first.clone();
+            async move { first.get("dQw4w9WgXcQ").await }
+        });
+        while !tools.path().join("started").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let second = new_cache().await.unwrap();
+        std::fs::write(tools.path().join("release"), "").unwrap();
+        let path = download.await.unwrap().unwrap();
+        assert!(path.is_file(), "the first process's download survives");
+        assert!(
+            leftover.exists(),
+            "leftovers stay while the cache is shared"
+        );
+
+        drop(first);
+        drop(second);
+        new_cache().await.unwrap();
+        assert!(!leftover.exists());
     }
 
     #[tokio::test]
