@@ -4,7 +4,10 @@ use axum::{routing::get, Router};
 use axum_embed::{FallbackBehavior, ServeEmbed};
 use clap::{Parser, Subcommand};
 use rust_embed::RustEmbed;
-use stereo_backend::{server, settings::Settings};
+use stereo_backend::{
+    audio, server,
+    settings::{Settings, DEFAULT_AUDIO_CACHE_LIMIT_GB, DEFAULT_YT_DLP},
+};
 
 #[derive(RustEmbed, Clone)]
 #[folder = "dist"]
@@ -95,6 +98,26 @@ fn plist_content(settings: &Settings, exe: &std::path::Path, log_path: &std::pat
     for origin in &settings.allowed_origins {
         argv.extend(["--allowed-origin".to_string(), origin.clone()]);
     }
+    if settings.cache_dir.is_some() {
+        argv.extend([
+            "--cache-dir".to_string(),
+            settings
+                .audio_cache_dir()
+                .parent()
+                .expect("the audio cache dir is a subdirectory")
+                .display()
+                .to_string(),
+        ]);
+    }
+    if settings.audio_cache_limit_gb != DEFAULT_AUDIO_CACHE_LIMIT_GB {
+        argv.extend([
+            "--audio-cache-limit-gb".to_string(),
+            settings.audio_cache_limit_gb.to_string(),
+        ]);
+    }
+    if settings.yt_dlp != DEFAULT_YT_DLP {
+        argv.extend(["--yt-dlp".to_string(), settings.yt_dlp.clone()]);
+    }
     if settings.verbosity > 0 {
         argv.push(format!("-{}", "v".repeat(settings.verbosity.into())));
     }
@@ -104,14 +127,29 @@ fn plist_content(settings: &Settings, exe: &std::path::Path, log_path: &std::pat
         .collect::<Vec<_>>()
         .join("\n");
 
+    let mut env_vars = Vec::new();
+    // launchd's default PATH lacks e.g. Homebrew, where yt-dlp and the Deno it needs live.
+    if let Ok(path) = std::env::var("PATH") {
+        env_vars.push(("PATH", path));
+    }
     // The token goes in the environment rather than argv so it doesn't show up in `ps`; the
     // plist itself is made owner-only below.
-    let env = match &settings.ws_token {
-        Some(token) => format!(
-            "    <key>EnvironmentVariables</key>\n    <dict>\n        <key>STEREO_WS_TOKEN</key>\n        <string>{}</string>\n    </dict>\n",
-            xml_escape(token)
-        ),
-        None => String::new(),
+    if let Some(token) = &settings.ws_token {
+        env_vars.push(("STEREO_WS_TOKEN", token.clone()));
+    }
+    let env = if env_vars.is_empty() {
+        String::new()
+    } else {
+        let entries = env_vars
+            .iter()
+            .map(|(key, value)| {
+                format!(
+                    "        <key>{key}</key>\n        <string>{}</string>\n",
+                    xml_escape(value)
+                )
+            })
+            .collect::<String>();
+        format!("    <key>EnvironmentVariables</key>\n    <dict>\n{entries}    </dict>\n")
     };
 
     format!(
@@ -236,11 +274,13 @@ async fn main() -> anyhow::Result<()> {
     stereo_backend::utils::ensure_default_repo(&repos_dir).await?;
     stereo_backend::git::recover_pending_repositories(&repos_dir).await;
     stereo_backend::beatport::init(&home).await;
+    audio::init(&settings).await;
 
     let settings = Arc::new(settings);
 
     let mut router = Router::new()
         .route("/ws", get(server::ws_handler))
+        .route("/audio/:id", get(audio::handler))
         .with_state(settings.clone());
 
     if !settings.dev {

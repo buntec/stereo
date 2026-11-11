@@ -36,6 +36,9 @@ pub enum MsgServer {
     BackendInfo {
         version: String,
         home_dir: String,
+        /// Key for the `/audio` route, or `None` if audio downloads are unavailable (yt-dlp can't
+        /// be run), in which case nothing can be played.
+        audio_key: Option<String>,
     },
     Repos {
         repos: Vec<Repo>,

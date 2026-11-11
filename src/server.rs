@@ -21,7 +21,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{
-    beatport, db, git,
+    audio, beatport, db, git,
     message::{MsgClient, MsgServer, SearchKind},
     models::{Collection, Track},
     scraper,
@@ -298,6 +298,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
         .send(MsgServer::BackendInfo {
             version: env!("CARGO_PKG_VERSION").to_string(),
             home_dir: home.to_string_lossy().to_string(),
+            audio_key: audio::key(),
         })
         .await;
     let _ = server_tx
@@ -2325,6 +2326,9 @@ mod websocket_security_tests {
             port,
             allowed_origins: Vec::new(),
             ws_token: None,
+            cache_dir: None,
+            audio_cache_limit_gb: crate::settings::DEFAULT_AUDIO_CACHE_LIMIT_GB,
+            yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
             verbosity: 0,
             dev: false,
         }
@@ -2438,6 +2442,9 @@ mod tests {
             port,
             allowed_origins: vec![],
             ws_token: None,
+            cache_dir: None,
+            audio_cache_limit_gb: crate::settings::DEFAULT_AUDIO_CACHE_LIMIT_GB,
+            yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
             verbosity: 0,
             dev: false,
         };
