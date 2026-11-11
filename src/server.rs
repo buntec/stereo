@@ -82,9 +82,9 @@ async fn forward_collection_moves(session: uuid::Uuid, events: mpsc::Sender<Sess
 }
 
 /// Sends the session which tracks are downloaded and the state of unfinished audio downloads, then
-/// every change.
+/// every change. If the session falls behind and misses changes, it gets the whole state again.
 async fn forward_audio_cache(
-    snapshot: audio::Snapshot,
+    mut snapshot: audio::Snapshot,
     mut updates: broadcast::Receiver<audio::CacheEvent>,
     server_tx: mpsc::Sender<MsgServer>,
 ) {
@@ -94,32 +94,38 @@ async fn forward_audio_cache(
         progress: update.progress,
         error: update.error.map(|e| e.to_string()),
     };
-    let cached = MsgServer::AudioCached {
-        yt_ids: snapshot.cached,
-    };
-    if server_tx.send(cached).await.is_err() {
-        return;
-    }
-    for update in snapshot.downloads {
-        if server_tx.send(download(update)).await.is_err() {
+    loop {
+        let cached = MsgServer::AudioCached {
+            yt_ids: snapshot.cached,
+        };
+        if server_tx.send(cached).await.is_err() {
             return;
         }
-    }
-    loop {
-        let message = match updates.recv().await {
-            Ok(audio::CacheEvent::Download(update)) => download(update),
-            Ok(audio::CacheEvent::Evicted(yt_ids)) => MsgServer::AudioEvicted { yt_ids },
-            // Unlikely with the channel's capacity; a client also forgets a download once its track
-            // starts playing, in case it missed the final update.
-            Err(broadcast::error::RecvError::Lagged(missed)) => {
-                tracing::warn!("Missed {missed} audio download updates");
-                continue;
+        for update in snapshot.downloads {
+            if server_tx.send(download(update)).await.is_err() {
+                return;
             }
-            Err(broadcast::error::RecvError::Closed) => break,
-        };
-        if server_tx.send(message).await.is_err() {
-            break;
         }
+        loop {
+            let message = match updates.recv().await {
+                Ok(audio::CacheEvent::Download(update)) => download(update),
+                Ok(audio::CacheEvent::Evicted(yt_ids)) => MsgServer::AudioEvicted { yt_ids },
+                // Unlikely with the channel's capacity.
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    tracing::warn!("Missed {missed} audio cache updates, resending its state");
+                    break;
+                }
+                Err(broadcast::error::RecvError::Closed) => return,
+            };
+            if server_tx.send(message).await.is_err() {
+                return;
+            }
+        }
+        let Some((next_snapshot, next_updates)) = audio::subscribe().await else {
+            return;
+        };
+        snapshot = next_snapshot;
+        updates = next_updates;
     }
 }
 

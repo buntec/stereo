@@ -74,8 +74,7 @@ pub fn compute(path: &Path) -> anyhow::Result<Vec<u8>> {
         let channels = buf.spec().channels().count().max(1);
         buf.copy_to_vec_interleaved(&mut samples);
         for frame in samples.chunks_exact(channels) {
-            let mono = frame.iter().sum::<f32>() / channels as f32;
-            blocks.push(mono);
+            blocks.push(frame_energy(frame));
         }
     }
     let levels = blocks.finish();
@@ -83,7 +82,17 @@ pub fn compute(path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(buckets(&levels, BUCKETS))
 }
 
-/// RMS levels of consecutive blocks of [`BLOCK_FRAMES`] mono samples.
+/// The mean square of a frame's channel samples. Combining channels by energy rather than averaging
+/// the samples keeps out-of-phase content (e.g. stereo widening) from canceling out.
+fn frame_energy(frame: &[f32]) -> f64 {
+    frame
+        .iter()
+        .map(|&s| f64::from(s) * f64::from(s))
+        .sum::<f64>()
+        / frame.len().max(1) as f64
+}
+
+/// RMS levels of consecutive blocks of [`BLOCK_FRAMES`] frames, from each frame's energy.
 #[derive(Default)]
 struct Blocks {
     levels: Vec<f32>,
@@ -92,8 +101,8 @@ struct Blocks {
 }
 
 impl Blocks {
-    fn push(&mut self, sample: f32) {
-        self.sum_squares += f64::from(sample) * f64::from(sample);
+    fn push(&mut self, energy: f64) {
+        self.sum_squares += energy;
         self.frames += 1;
         if self.frames == BLOCK_FRAMES {
             self.flush();
@@ -158,11 +167,18 @@ mod tests {
     fn blocks_compute_rms() {
         let mut blocks = Blocks::default();
         for _ in 0..BLOCK_FRAMES {
-            blocks.push(0.5);
+            blocks.push(frame_energy(&[0.5]));
         }
-        blocks.push(-1.0);
-        blocks.push(1.0);
+        blocks.push(frame_energy(&[-1.0]));
+        blocks.push(frame_energy(&[1.0]));
         assert_eq!(blocks.finish(), [0.5, 1.0]);
+    }
+
+    #[test]
+    fn opposite_phase_channels_keep_their_energy() {
+        assert_eq!(frame_energy(&[0.5, 0.5]), frame_energy(&[0.5, -0.5]));
+        assert_eq!(frame_energy(&[0.5, -0.5]), 0.25);
+        assert_eq!(frame_energy(&[1.0, 0.0]), 0.5);
     }
 
     #[test]

@@ -14,7 +14,8 @@ const CACHED: TrackAudio = { cached: true };
 
 /**
  * Which tracks' audio the backend has downloaded, and the downloads it is
- * working on, from its `audio-*` messages. Kept outside the app's reducer so a
+ * working on, from its `audio-*` messages only: playing a track doesn't prove
+ * it's still downloaded, since buffered audio keeps playing after an eviction. Kept outside the app's reducer so a
  * download's progress updates re-render only what shows that track (e.g. its
  * grid row's icon), not the whole app.
  */
@@ -39,13 +40,6 @@ class AudioCacheStore {
 
   private changed() {
     this.listeners.forEach((listener) => listener());
-  }
-
-  /** A track that plays is downloaded, even if its final update got lost. */
-  markCached(id: string) {
-    if (this.get(id) === CACHED) return;
-    this.set(id, CACHED);
-    this.changed();
   }
 
   /** Updates from a server message; other messages are ignored. */

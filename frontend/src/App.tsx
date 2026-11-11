@@ -62,7 +62,7 @@ import {
   useTrackAudio,
 } from "./AudioCache.ts";
 import { Waveform } from "./Waveform.tsx";
-import { useWaveform } from "./useWaveform.ts";
+import { forgetMissingWaveforms, useWaveform } from "./useWaveform.ts";
 import type { PlaybackStatus } from "./Playback.ts";
 import { useAudioPlayback } from "./AudioPlayback.ts";
 import {
@@ -795,6 +795,7 @@ function App() {
     (msg: ServerMsg | ServerMsg[]) => {
       // The audio cache's state lives in its own store (AudioCache.ts).
       const handle = (m: ServerMsg) => {
+        forgetMissingWaveforms(m);
         audioCache.handle(m);
         dispatch(m);
       };
@@ -973,7 +974,6 @@ function App() {
       // while the screen is locked.
       if (status === "playing") {
         registerMediaSessionRef.current();
-        audioCache.markCached(id);
       }
       // The UI only distinguishes these; transient states (buffering, cued) keep the last
       // one, and just show whether playback is loading.
