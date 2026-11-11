@@ -15,8 +15,8 @@
 //! that triggered a download has no way to report it, as are evictions, so clients can show which
 //! tracks are downloaded.
 //!
-//! Waveforms of cached tracks (`waveform.rs`) are computed on first request and cached in
-//! [`WAVEFORM_DIR`], deleted along with their audio.
+//! Waveforms and beats of cached tracks (`waveform.rs`, `beats.rs`) are computed on first request
+//! and cached in [`WAVEFORM_DIR`], deleted along with their audio.
 
 use std::{
     collections::HashMap,
@@ -72,8 +72,11 @@ const PROGRESS_PREFIX: &str = "stereo-progress ";
 /// Locked (shared) by every process using the cache dir, which several backends may share (e.g.
 /// an installed service and a development backend).
 const LOCK_FILE: &str = ".lock";
-/// Subdirectory of the cache dir holding the waveform of a cached track as `{id}.peaks`.
+/// Subdirectory of the cache dir holding the waveform of a cached track as `{id}.peaks` and its
+/// beats as `{id}.beats` (each a little-endian `u32` of milliseconds and a `u8` strength).
 const WAVEFORM_DIR: &str = "waveforms";
+/// Bytes per beat in a `.beats` file.
+const BEAT_LEN: usize = 5;
 /// Waveforms computed at once; decoding a track keeps a core busy for a fraction of a second.
 const MAX_CONCURRENT_WAVEFORMS: usize = 2;
 
@@ -183,8 +186,8 @@ pub fn download_in_background(id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The waveform of a cached track, or `None` if it isn't cached or can't be decoded.
-pub async fn waveform(id: &str) -> Option<Vec<u8>> {
+/// The waveform and beats of a cached track, or `None` if it isn't cached or can't be decoded.
+pub async fn waveform(id: &str) -> Option<waveform::Analysis> {
     let cache = CACHE.get()?;
     if !is_valid_id(id) {
         return None;
@@ -481,34 +484,63 @@ impl AudioCache {
         self.dir.join(WAVEFORM_DIR).join(format!("{id}.peaks"))
     }
 
-    async fn waveform(&self, id: &str) -> Option<Vec<u8>> {
-        let path = self.waveform_path(id);
-        if let Ok(peaks) = tokio::fs::read(&path).await {
-            if peaks.len() == waveform::BUCKETS {
-                return Some(peaks);
-            }
+    fn beats_path(&self, id: &str) -> PathBuf {
+        self.dir.join(WAVEFORM_DIR).join(format!("{id}.beats"))
+    }
+
+    /// The cached analysis of `id`. A waveform without beats is from an older version, whose
+    /// waveforms are also less accurate: it's computed again.
+    async fn cached_analysis(&self, id: &str) -> Option<waveform::Analysis> {
+        let peaks = tokio::fs::read(self.waveform_path(id)).await.ok()?;
+        let beats = tokio::fs::read(self.beats_path(id)).await.ok()?;
+        if peaks.len() != waveform::BUCKETS || beats.len() % BEAT_LEN != 0 {
+            return None;
         }
+        let beats = beats
+            .chunks_exact(BEAT_LEN)
+            .map(|b| (u32::from_le_bytes([b[0], b[1], b[2], b[3]]), b[4]))
+            .collect();
+        Some(waveform::Analysis { peaks, beats })
+    }
+
+    async fn waveform(&self, id: &str) -> Option<waveform::Analysis> {
+        if let Some(analysis) = self.cached_analysis(id).await {
+            return Some(analysis);
+        }
+        let path = self.waveform_path(id);
+        let beats_path = self.beats_path(id);
         let audio = self.cached(id).await?;
         let _permit = self.waveforms.acquire().await.ok()?;
         let dir = self.dir.join(WAVEFORM_DIR);
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<waveform::Analysis> {
             let started = Instant::now();
-            let peaks = waveform::compute(&audio)?;
+            let analysis = waveform::compute(&audio)?;
             tracing::debug!(
-                "Computed the waveform of {} in {:.1?}",
+                "Computed the waveform and {} beats of {} in {:.1?}",
+                analysis.beats.len(),
                 audio.display(),
                 started.elapsed()
             );
             // Written whole and renamed, so a concurrent request never reads half a file.
             std::fs::create_dir_all(&dir)?;
-            let mut tmp = tempfile::NamedTempFile::new_in(&dir)?;
-            std::io::Write::write_all(&mut tmp, &peaks)?;
-            tmp.persist(&path)?;
-            Ok(peaks)
+            let beats: Vec<u8> = analysis
+                .beats
+                .iter()
+                .flat_map(|&(ms, strength)| {
+                    let [a, b, c, d] = ms.to_le_bytes();
+                    [a, b, c, d, strength]
+                })
+                .collect();
+            for (bytes, path) in [(&beats, &beats_path), (&analysis.peaks, &path)] {
+                let mut tmp = tempfile::NamedTempFile::new_in(&dir)?;
+                std::io::Write::write_all(&mut tmp, bytes)?;
+                tmp.persist(path)?;
+            }
+            Ok(analysis)
         })
         .await;
         match result {
-            Ok(Ok(peaks)) => Some(peaks),
+            Ok(Ok(analysis)) => Some(analysis),
             Ok(Err(e)) => {
                 tracing::debug!("No waveform for {id}: {e:#}");
                 None
@@ -556,6 +588,7 @@ impl AudioCache {
             tracing::debug!("Evicted {} from the audio cache", path.display());
             if let Some(id) = path.file_stem().and_then(|s| s.to_str()) {
                 let _ = tokio::fs::remove_file(self.waveform_path(id)).await;
+                let _ = tokio::fs::remove_file(self.beats_path(id)).await;
                 evicted.push(id.to_string());
             }
         }
@@ -962,6 +995,7 @@ exit 1"#,
             .enumerate()
         {
             std::fs::write(waveforms.join(format!("{id}.peaks")), [0u8; 3]).unwrap();
+            std::fs::write(waveforms.join(format!("{id}.beats")), [0u8; 5]).unwrap();
             let path = cache_dir.path().join(format!("{id}.m4a"));
             std::fs::write(&path, [0u8; 10]).unwrap();
             std::fs::File::options()
@@ -982,8 +1016,9 @@ exit 1"#,
         assert!(!cache_dir.path().join("midmidmidmi.m4a").exists());
         assert!(cache_dir.path().join("newnewnewne.m4a").exists());
         assert!(
-            !waveforms.join("midmidmidmi.peaks").exists(),
-            "the waveform goes with its audio"
+            !waveforms.join("midmidmidmi.peaks").exists()
+                && !waveforms.join("midmidmidmi.beats").exists(),
+            "the waveform and beats go with their audio"
         );
         assert!(waveforms.join("newnewnewne.peaks").exists());
         assert_eq!(

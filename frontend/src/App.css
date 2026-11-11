@@ -11,6 +11,14 @@
   min-width: 0;
 }
 
+/* The logo thumps with the playing track's beats (`--beat`, from useBeatPulse.ts),
+   growing from where its cabinet stands. */
+.stereo-logo {
+  flex-shrink: 0;
+  transform: scale(calc(1 + 0.14 * var(--beat, 0)));
+  transform-origin: 50% 90%;
+}
+
 /* The search grows up to a comfortable query width; the auto margins then take
    the leftover space, centering it between the collection and nav-bar controls. */
 .header-search {

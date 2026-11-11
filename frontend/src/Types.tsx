@@ -15,6 +15,9 @@ export type AudioDownload = {
   error?: string;
 };
 
+/** A beat of a track: its time and its strength (0–255) relative to the track's strong beats. */
+export type Beat = [ms: number, strength: number];
+
 export type TrackSource =
   | "beatport"
   | "soundcloud"
@@ -275,6 +278,8 @@ export type ServerMsg =
       yt_id: string;
       /** Loudness values (0–255) evenly spread over the track. */
       peaks?: number[] | null;
+      /** The track's beats, as `[milliseconds, strength (0–255)]`. */
+      beats?: Beat[] | null;
     }
   | { type: "yt-anon-playlist"; id: number; url: string }
   | { type: "track-info"; track: ITrack }
