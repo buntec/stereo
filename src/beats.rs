@@ -7,7 +7,7 @@
 //! little (dynamic programming, as in Ellis, "Beat Tracking by Dynamic Programming", 2007).
 
 /// The beats' times in milliseconds, with their strength (0–255), relative to the track's strongest
-/// beats: weak in a breakdown without kicks.
+/// beats: weak in a breakdown without kicks, and in quiet passages and fades.
 pub type Beat = (u32, u8);
 
 /// Cutoff of the low-pass filter that isolates the kick drum and bass.
@@ -91,15 +91,22 @@ impl BeatTracker {
     /// The beats, shifted `offset` seconds earlier: the audio a player skips at the start.
     pub fn finish(self, offset: f64) -> Vec<Beat> {
         let rate = self.sample_rate / self.hop as f64;
+        let windowed = self.energies.map(|energies| windowed(&energies));
         // Each band's onsets relative to their spread, so both count.
-        let bands = self
-            .energies
-            .map(|energies| standardized(onset_envelope(&energies)));
+        let bands = windowed
+            .each_ref()
+            .map(|energies| standardized(onset_envelope(energies)));
         let onsets: Vec<f32> = bands[0].iter().zip(&bands[1]).map(|(a, b)| a + b).collect();
         let Some(period) = tempo_period(&onsets, rate) else {
             return Vec::new();
         };
-        let (beats, strengths) = track(&onsets, period);
+        let (beats, contrasts) = track(&onsets, period);
+        let energy: Vec<f64> = windowed[0]
+            .iter()
+            .zip(&windowed[1])
+            .map(|(a, b)| a + b)
+            .collect();
+        let strengths = strengths(&beats, &contrasts, &energy);
         beats
             .into_iter()
             .zip(strengths)
@@ -128,17 +135,29 @@ fn standardized(mut values: Vec<f32>) -> Vec<f32> {
     values
 }
 
-/// The rise in energy (dB) into each hop.
-fn onset_envelope(energies: &[f32]) -> Vec<f32> {
-    let mut windowed = Vec::with_capacity(energies.len());
+/// Each hop's energy summed over the [`ENERGY_WINDOW`] hops up to it.
+fn windowed(energies: &[f32]) -> Vec<f64> {
     let mut sum = 0.0f64;
-    for (i, &e) in energies.iter().enumerate() {
-        sum += f64::from(e);
-        if i >= ENERGY_WINDOW {
-            sum -= f64::from(energies[i - ENERGY_WINDOW]);
-        }
-        windowed.push(10.0 * (sum.max(1e-12) as f32).log10());
-    }
+    energies
+        .iter()
+        .enumerate()
+        .map(|(i, &e)| {
+            sum += f64::from(e);
+            if i >= ENERGY_WINDOW {
+                sum -= f64::from(energies[i - ENERGY_WINDOW]);
+            }
+            sum.max(0.0)
+        })
+        .collect()
+}
+
+/// The rise in windowed energy (dB) into each hop. Being logarithmic, it's as large in a quiet
+/// passage as in a loud one: it finds the beats, not their loudness.
+fn onset_envelope(windowed: &[f64]) -> Vec<f32> {
+    let windowed: Vec<f32> = windowed
+        .iter()
+        .map(|&sum| 10.0 * (sum.max(1e-12) as f32).log10())
+        .collect();
     let loudest = windowed.iter().copied().fold(f32::MIN, f32::max);
     let floor = loudest - DYNAMIC_RANGE_DB;
     let mut onsets = vec![0.0; windowed.len()];
@@ -194,8 +213,9 @@ fn tempo_period(onsets: &[f32], rate: f64) -> Option<f64> {
     Some((min_lag - 1 + best) as f64 + shift)
 }
 
-/// The beats (envelope sample indices) that best fit `period`, and their strengths.
-fn track(onsets: &[f32], period: f64) -> (Vec<usize>, Vec<u8>) {
+/// The beats (envelope sample indices) that best fit `period`, and their onsets' contrast (the
+/// smoothed onset envelope at each beat, relative to its spread).
+fn track(onsets: &[f32], period: f64) -> (Vec<usize>, Vec<f64>) {
     let n = onsets.len();
     let std = {
         let mean = onsets.iter().map(|&o| f64::from(o)).sum::<f64>() / n as f64;
@@ -286,20 +306,37 @@ fn track(onsets: &[f32], period: f64) -> (Vec<usize>, Vec<u8>) {
     let first = beats.iter().position(strong).unwrap_or(0);
     let end = beats.len() - beats.iter().rev().position(strong).unwrap_or(0);
     let beats = beats[first..end.max(first)].to_vec();
+    let contrasts = beats.iter().map(|&b| local[b]).collect();
+    (beats, contrasts)
+}
 
-    // Strengths relative to the track's strong beats, so a few outliers don't flatten the rest.
-    let mut levels: Vec<f64> = beats.iter().map(|&b| local[b]).collect();
-    levels.sort_by(f64::total_cmp);
-    let reference = levels
-        .get(levels.len() * 9 / 10)
+/// The beats' strengths: their onsets' contrast, scaled by their loudness (the amplitude of the
+/// peak windowed `energy` around each beat), relative to the track's strong beats so a few
+/// outliers don't flatten the rest. The contrast alone would make a beat 40dB down pulse as hard
+/// as one at full volume.
+fn strengths(beats: &[usize], contrasts: &[f64], energy: &[f64]) -> Vec<u8> {
+    let levels: Vec<f64> = beats
+        .iter()
+        .zip(contrasts)
+        .map(|(&b, &contrast)| {
+            // From a little before the beat, which may land next to its onset, to past its attack.
+            let around = &energy[b.saturating_sub(ENERGY_WINDOW / 2).min(energy.len())
+                ..(b + ENERGY_WINDOW + 1).min(energy.len())];
+            let peak = around.iter().copied().fold(0.0, f64::max);
+            contrast * peak.sqrt()
+        })
+        .collect();
+    let mut sorted = levels.clone();
+    sorted.sort_by(f64::total_cmp);
+    let reference = sorted
+        .get(sorted.len() * 9 / 10)
         .copied()
         .unwrap_or(0.0)
         .max(f64::MIN_POSITIVE);
-    let strengths = beats
+    levels
         .iter()
-        .map(|&b| (local[b] / reference * 255.0).round().clamp(0.0, 255.0) as u8)
-        .collect();
-    (beats, strengths)
+        .map(|level| (level / reference * 255.0).round().clamp(0.0, 255.0) as u8)
+        .collect()
 }
 
 #[cfg(test)]
@@ -310,6 +347,17 @@ mod tests {
 
     /// Kicks (decaying 60Hz bursts) at `bpm`, starting at `first` seconds, for `seconds`.
     fn kicks(bpm: f64, first: f64, seconds: f64) -> Vec<f32> {
+        kicks_at(bpm, first, seconds, 30.0, |_| 0.8)
+    }
+
+    /// Kicks decaying at `decay` per second, with the amplitude `amplitude(t)` at `t` seconds.
+    fn kicks_at(
+        bpm: f64,
+        first: f64,
+        seconds: f64,
+        decay: f64,
+        amplitude: impl Fn(f64) -> f64,
+    ) -> Vec<f32> {
         let n = (seconds * f64::from(RATE)) as usize;
         let period = 60.0 / bpm;
         (0..n)
@@ -319,10 +367,23 @@ mod tests {
                     return 0.0;
                 }
                 let since = (t - first) % period;
-                ((2.0 * std::f64::consts::PI * 60.0 * since).sin() * (-since * 30.0).exp() * 0.8)
-                    as f32
+                ((2.0 * std::f64::consts::PI * 60.0 * since).sin()
+                    * (-since * decay).exp()
+                    * amplitude(t)) as f32
             })
             .collect()
+    }
+
+    /// The median strength of the beats from `from` to `to` seconds.
+    fn median_strength(beats: &[Beat], from: f64, to: f64) -> u8 {
+        let mut strengths: Vec<u8> = beats
+            .iter()
+            .filter(|&&(ms, _)| (from * 1000.0..to * 1000.0).contains(&f64::from(ms)))
+            .map(|&(_, strength)| strength)
+            .collect();
+        assert!(!strengths.is_empty(), "no beats from {from}s to {to}s");
+        strengths.sort();
+        strengths[strengths.len() / 2]
     }
 
     fn beats_of(samples: &[f32], offset: f64) -> Vec<Beat> {
@@ -378,6 +439,48 @@ mod tests {
         let first = beats_of(&samples, 0.0)[0].0;
         let shifted = beats_of(&samples, 0.25)[0].0;
         assert_eq!(first - shifted, 250);
+    }
+
+    #[test]
+    fn quiet_passages_pulse_less() {
+        // Loud, 40dB down, loud; then loud, 6dB down, loud.
+        for (quiet, at_most) in [(0.008, 10), (0.4, 160)] {
+            let samples = kicks_at(120.0, 0.25, 60.0, 10.0, |t| {
+                if (20.0..40.0).contains(&t) {
+                    quiet
+                } else {
+                    0.8
+                }
+            });
+            let beats = beats_of(&samples, 0.0);
+            let loud = [
+                median_strength(&beats, 5.0, 15.0),
+                median_strength(&beats, 45.0, 55.0),
+            ];
+            let soft = median_strength(&beats, 25.0, 35.0);
+            assert!(loud.iter().all(|&s| s > 200), "loud beats {loud:?}");
+            assert!(soft <= at_most, "beats at {quiet} have strength {soft}");
+            assert!(
+                soft > 0 || quiet < 0.01,
+                "beats at {quiet} have no strength"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fade_out_fades_the_pulse() {
+        let samples = kicks_at(120.0, 0.25, 40.0, 30.0, |t| {
+            if t < 20.0 {
+                0.8
+            } else {
+                0.8 * (40.0 - t) / 20.0
+            }
+        });
+        let beats = beats_of(&samples, 0.0);
+        let early = median_strength(&beats, 22.0, 26.0);
+        let late = median_strength(&beats, 32.0, 36.0);
+        assert!(median_strength(&beats, 5.0, 15.0) > 200);
+        assert!(early > late, "{early} then {late} while fading out");
     }
 
     #[test]
