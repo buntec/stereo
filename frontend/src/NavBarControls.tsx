@@ -16,6 +16,7 @@ import SettingsMenu from "./SettingsMenu.tsx";
 import TailscaleButton from "./TailscaleButton.tsx";
 import BeatportSessionDialog from "./BeatportSessionDialog.tsx";
 import YouTubeSessionDialog from "./YouTubeSessionDialog.tsx";
+import { inDesktopApp } from "./Utils.tsx";
 import {
   youTubeConnection,
   type AppearanceType,
@@ -145,6 +146,16 @@ function NavBarControls({
     refreshSpotifySession();
     refreshBeatportSession();
     refreshYouTubeSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, requestReply]);
+
+  // In the desktop app, Beatport is connected from Stereo in a browser: show
+  // what was connected there on coming back.
+  useEffect(() => {
+    if (!inDesktopApp || !isConnected) return;
+    const refresh = () => refreshBeatportSession();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, requestReply]);
 

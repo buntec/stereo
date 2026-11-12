@@ -712,11 +712,14 @@ pub enum MsgClient {
         id: i64,
     },
     /// Finds the YouTube login of the browser the requesting tab runs in, identified by that
-    /// tab's `navigator.userAgent`; `login` is the profile the user picked from `youtube-logins`.
+    /// tab's `navigator.userAgent`, or of any browser without one (the desktop app, whose webview
+    /// is no browser of the user's); `login` is the profile the user picked from
+    /// `youtube-logins`.
     #[serde(rename = "connect-youtube-session")]
     ConnectYouTubeSession {
         id: i64,
-        user_agent: String,
+        #[serde(default)]
+        user_agent: Option<String>,
         #[serde(default)]
         login: Option<String>,
     },

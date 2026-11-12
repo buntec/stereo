@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "No IPC: the window shows Stereo's own web UI, served by its backend",
+  "windows": ["main"],
+  "permissions": []
+}

@@ -22,6 +22,11 @@ struct Cli {
 
     #[command(flatten)]
     settings: Settings,
+
+    /// Exit once stdin closes. The desktop app starts its backend with this, so that the backend
+    /// never outlives it, even when the app crashes.
+    #[arg(long, hide = true)]
+    exit_with_stdin: bool,
 }
 
 #[derive(Subcommand)]
@@ -277,6 +282,8 @@ async fn main() -> anyhow::Result<()> {
 
     let home = settings.home_dir();
     std::fs::create_dir_all(&home)?;
+    // Before any repository is touched, and held until the process exits.
+    let data_dir_lock = stereo_backend::data_dir::DataDirLock::acquire(&home)?;
     let repos_dir = home.join("gitrepos");
     stereo_backend::utils::ensure_default_repo(&repos_dir).await?;
     stereo_backend::git::recover_pending_repositories(&repos_dir).await;
@@ -288,6 +295,7 @@ async fn main() -> anyhow::Result<()> {
     let mut router = Router::new()
         .route("/ws", get(server::ws_handler))
         .route("/audio/{id}", get(audio::handler))
+        .route("/info", get(info))
         .with_state(settings.clone());
 
     if !settings.dev {
@@ -301,6 +309,7 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = format!("{}:{}", settings.host, settings.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    data_dir_lock.record_port(listener.local_addr()?.port());
     let mode = if settings.dev { "dev" } else { "release" };
     eprintln!("stereo listening on http://{addr}  [{mode}]");
     eprintln!("data dir: {}", settings.home_dir().display());
@@ -334,6 +343,13 @@ async fn main() -> anyhow::Result<()> {
             std::future::pending().await
         }
     };
+    let stdin_closed = async {
+        if cli.exit_with_stdin {
+            stdin_closed().await
+        } else {
+            std::future::pending().await
+        }
+    };
     let result: anyhow::Result<()> = tokio::select! {
         result = axum::serve(listener, router) => result.map_err(Into::into),
         result = tailnet => result.map_err(Into::into).and_then(|r| r.map_err(Into::into)),
@@ -342,11 +358,55 @@ async fn main() -> anyhow::Result<()> {
             // As the signal would have, without waiting for blocking tasks as the runtime drops.
             std::process::exit(0);
         }
+        () = stdin_closed => {
+            if tailscale_on {
+                remove_tailnet_route().await;
+            }
+            // The app that would have ended our yt-dlp downloads is gone, and exiting skips
+            // their `kill_on_drop`.
+            end_own_process_group();
+            std::process::exit(0);
+        }
     };
     if tailscale_on {
         remove_tailnet_route().await;
     }
     result
+}
+
+/// What the desktop app looks for to tell a running Stereo from another server on its port.
+async fn info() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "app": "stereo",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+}
+
+/// Resolves once stdin is closed (or fails), e.g. when the process that started us exits.
+/// Read on a thread of its own: tokio's stdin reads on a blocking-pool thread that can't be
+/// cancelled, and the runtime waits for it as it drops, so a serve error would never exit.
+async fn stdin_closed() {
+    let (closed, on_closed) = tokio::sync::oneshot::channel::<()>();
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut stdin = std::io::stdin().lock();
+        let mut buf = [0; 256];
+        while let Ok(1..) = stdin.read(&mut buf) {}
+        drop(closed);
+    });
+    let _ = on_closed.await;
+}
+
+/// Ends the other processes of our process group, e.g. yt-dlp downloads, when we lead it, as we do
+/// when the desktop app starts us. A group we don't lead, e.g. a shell pipeline's, isn't ours.
+fn end_own_process_group() {
+    #[cfg(unix)]
+    unsafe {
+        if libc::getpgrp() == libc::getpid() {
+            libc::signal(libc::SIGTERM, libc::SIG_IGN);
+            libc::killpg(0, libc::SIGTERM);
+        }
+    }
 }
 
 /// Shutdown waits this long at most for the tailnet route's removal: less than launchd's 20 s

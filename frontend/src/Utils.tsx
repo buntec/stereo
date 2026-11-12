@@ -1,5 +1,30 @@
 import { useState, useEffect } from "react";
 import type { ICollectionStats } from "./Types.tsx";
+import { currentWsToken } from "./wsToken.ts";
+
+declare global {
+  interface Window {
+    __STEREO_DESKTOP__?: boolean;
+  }
+}
+
+/** Whether this page runs in Stereo's desktop app (which sets the flag, see
+ * `desktop/src-tauri/src/lib.rs`) rather than in a browser tab. */
+export const inDesktopApp = window.__STEREO_DESKTOP__ === true;
+
+/** Opens this Stereo in the user's web browser; the desktop app opens new
+ * windows there. For what needs the browser's cookies together with its
+ * User-Agent, which the desktop app's webview doesn't share. With this page's
+ * WebSocket token, which the browser may not know (`App.tsx` picks it up). */
+export const openInBrowser = () => {
+  const token = currentWsToken();
+  const fragment = token ? `#stereo-token=${encodeURIComponent(token)}` : "";
+  window.open(
+    `${window.location.origin}/${fragment}`,
+    "_blank",
+    "noopener,noreferrer",
+  );
+};
 
 export function shuffleArray<T>(array: T[]): T[] {
   for (let i = array.length - 1; i > 0; i--) {

@@ -15,6 +15,7 @@ import {
   type YouTubeConnection,
   type YouTubeLogin,
 } from "./Types.tsx";
+import { inDesktopApp } from "./Utils.tsx";
 
 type YouTubeSessionDialogProps = {
   isOpen: boolean;
@@ -53,10 +54,12 @@ function YouTubeSessionDialog({
   const connect = (login?: string) => {
     setConnecting(true);
     requestReply(
-      // The login is read from the browser this tab runs in.
+      // The login is read from the browser this tab runs in. The desktop app's
+      // webview is none of the user's browsers: the backend looks in all of
+      // them, and several logins found are offered to pick from.
       {
         type: "connect-youtube-session",
-        user_agent: navigator.userAgent,
+        user_agent: inDesktopApp ? undefined : navigator.userAgent,
         login,
       },
       (r) => {
@@ -114,7 +117,8 @@ function YouTubeSessionDialog({
                   </Text>
                 )}
                 <Text as="div" type="body">
-                  In this browser, log in to{" "}
+                  In {inDesktopApp ? "your web browser" : "this browser"}, log
+                  in to{" "}
                   <Link href="https://www.youtube.com" isExternalLink>
                     youtube.com
                   </Link>{" "}

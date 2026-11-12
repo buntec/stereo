@@ -65,6 +65,10 @@ rusqlite = "0.31"
 # Decodes downloaded audio (YouTube's AAC in MP4) for the player's waveform, in pure Rust.
 symphonia = { version = "0.6", default-features = false, features = ["aac", "isomp4"] }
 
+[target.'cfg(unix)'.dependencies]
+# Ends the process group of a desktop app's backend (`--exit-with-stdin`) when the app is gone.
+libc = "0.2"
+
 # Decoding a track for its waveform takes many seconds unoptimized; optimize the decoder in debug
 # builds too.
 [profile.dev.package.symphonia-core]

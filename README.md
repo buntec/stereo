@@ -31,6 +31,20 @@ Then open `http://stereo.local:8005/#stereo-token=choose-a-long-random-token`. T
 is not sent in HTTP requests; the frontend presents an encoded form of it during the WebSocket
 handshake. Missing-origin WebSocket clients are rejected.
 
+## As a desktop app
+
+Stereo also comes as a desktop app (macOS, Linux, Windows), built with [Tauri](https://tauri.app)
+and [just](https://github.com/casey/just):
+
+```
+just desktop-build
+```
+
+It opens a Stereo that already runs on port 8005 (e.g. the service from `stereo install`), or
+else starts its own, with the same collections, and stops it when you quit. Beatport and YouTube
+are connected from Stereo in your browser, which the app opens for you. See
+[desktop/README.md](desktop/README.md).
+
 ## On your phone, via Tailscale
 
 To use Stereo from your phone or other devices on your [tailnet](https://tailscale.com), start it
