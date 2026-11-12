@@ -282,6 +282,8 @@ async fn main() -> anyhow::Result<()> {
 
     let home = settings.home_dir();
     std::fs::create_dir_all(&home)?;
+    // Before any repository is touched, and held until the process exits.
+    let data_dir_lock = stereo_backend::data_dir::DataDirLock::acquire(&home)?;
     let repos_dir = home.join("gitrepos");
     stereo_backend::utils::ensure_default_repo(&repos_dir).await?;
     stereo_backend::git::recover_pending_repositories(&repos_dir).await;
@@ -307,6 +309,7 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = format!("{}:{}", settings.host, settings.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    data_dir_lock.record_port(listener.local_addr()?.port());
     let mode = if settings.dev { "dev" } else { "release" };
     eprintln!("stereo listening on http://{addr}  [{mode}]");
     eprintln!("data dir: {}", settings.home_dir().display());

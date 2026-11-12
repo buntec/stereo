@@ -1,13 +1,17 @@
 //! Stereo's desktop app: a window onto Stereo's web UI, served by a `stereo` backend on loopback.
 //!
-//! On launch the app looks for a Stereo already running on the CLI's default port, or on the port
-//! of the launchd service from `stereo install`, and opens that one: two backends on the same
-//! data directory would race each other's git syncs. Otherwise it starts its bundled backend, on the
-//! same port when it's free, and stops it again when the app quits.
+//! On launch the app opens the Stereo that uses its data directory, waiting for one that is still
+//! starting, or else one running on the CLI's default port or on the port of the launchd service
+//! from `stereo install`: two backends on the same data directory would race each other's git
+//! syncs. Otherwise it starts its bundled backend, on the same port when it's free, and stops it
+//! again when the app quits. Only one instance of the app runs: launching it again focuses its
+//! window, since the backend it started would go away with it.
 
 use std::collections::VecDeque;
+use std::fs::{OpenOptions, TryLockError};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -59,6 +63,65 @@ struct Backend {
 /// start page, and how many tokens it rejected.
 #[derive(Default)]
 struct TokenPrompt(Mutex<Option<(u16, Url, u32)>>);
+
+/// The data directory the bundled backend uses, as `Settings::home_dir` finds it.
+fn data_dir() -> PathBuf {
+    let home = std::env::var_os("STEREO_HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let base = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
+            base.join(".local").join("share").join("stereo")
+        });
+    std::path::absolute(&home).unwrap_or(home)
+}
+
+/// Whether a backend uses a data directory, from its lock (`data_dir.rs` in the backend).
+#[derive(Debug, PartialEq)]
+enum Owner {
+    None,
+    /// With the port it listens on, once it does.
+    Backend(Option<u16>),
+}
+
+fn data_dir_owner(dir: &Path) -> Owner {
+    // Not created here: a backend starting now would find it locked for a moment.
+    let Ok(file) = OpenOptions::new().read(true).open(dir.join("stereo.lock")) else {
+        return Owner::None;
+    };
+    match file.try_lock_shared() {
+        Err(TryLockError::WouldBlock) => {
+            let port = std::fs::read_to_string(dir.join("stereo.port"))
+                .ok()
+                .and_then(|port| port.trim().parse().ok());
+            Owner::Backend(port)
+        }
+        // Released as `file` closes. An error is the backend's to report, if it gets one too.
+        Ok(()) | Err(TryLockError::Error(_)) => Owner::None,
+    }
+}
+
+/// Waits until the backend that uses `dir`, if any, answers, and returns its port. `Err` with an
+/// error message if it doesn't by `deadline`.
+fn wait_for_owner(dir: &Path, deadline: Instant) -> Result<Option<u16>, String> {
+    loop {
+        let port = match data_dir_owner(dir) {
+            Owner::None => return Ok(None),
+            Owner::Backend(port) => port,
+        };
+        if let Some(port) = port.filter(|port| probe(*port) == Probe::Stereo) {
+            return Ok(Some(port));
+        }
+        if Instant::now() > deadline {
+            let at = port.map_or(String::new(), |port| format!(" at http://localhost:{port}"));
+            return Err(format!(
+                "Another Stereo is using {}, but did not answer{at}.",
+                dir.display()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
 
 /// What listens on a loopback port.
 #[derive(Debug, PartialEq)]
@@ -526,54 +589,60 @@ fn start_backend(
 /// Opens a running Stereo, or starts the bundled one and opens it once it's up. Runs on its own
 /// thread, since probing and waiting block.
 fn connect(app: AppHandle, window: WebviewWindow, start_page: Url) {
-    let candidates = candidate_ports();
-    let probes: Vec<Probe> = candidates.iter().map(|port| probe(*port)).collect();
-    if let Some(i) = probes.iter().position(|probe| *probe == Probe::Stereo) {
-        return open_ui(&app, &window, &start_page, candidates[i]);
-    }
-    let port = if probes[0] == Probe::Free {
-        candidates[0]
-    } else {
-        // Rather than fail: Stereo works on any port, only localStorage starts out empty.
-        match unused_loopback_port() {
-            Ok(port) => port,
-            Err(error) => {
-                let message = "Could not find a free port for Stereo.";
-                return show_error(&window, &start_page, message, &error.to_string());
-            }
-        }
-    };
-
-    let stderr = Arc::new(Mutex::new(VecDeque::new()));
-    let exited = Arc::new(Mutex::new(None));
-    if let Err(error) = start_backend(&app, port, stderr.clone(), exited.clone()) {
-        return show_error(&window, &start_page, &error, "");
-    }
-
-    let details = || {
-        stderr
-            .lock()
-            .unwrap()
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    let dir = data_dir();
     let deadline = Instant::now() + STARTUP_TIMEOUT;
-    loop {
-        if let Some(status) = exited.lock().unwrap().clone() {
-            let message = format!("Stereo's backend {status} while starting.");
-            return show_error(&window, &start_page, &message, &details());
+    let (port, stderr, exited) = loop {
+        // The Stereo on our data directory, even while it's still starting up.
+        match wait_for_owner(&dir, deadline) {
+            Ok(Some(port)) => return open_ui(&app, &window, &start_page, port),
+            Ok(None) => {}
+            Err(message) => return show_error(&window, &start_page, &message, ""),
         }
-        if probe(port) == Probe::Stereo {
-            break;
+        let candidates = candidate_ports();
+        let probes: Vec<Probe> = candidates.iter().map(|port| probe(*port)).collect();
+        if let Some(i) = probes.iter().position(|probe| *probe == Probe::Stereo) {
+            return open_ui(&app, &window, &start_page, candidates[i]);
         }
-        if Instant::now() > deadline {
-            let message = "Stereo's backend did not start in time.";
-            return show_error(&window, &start_page, message, &details());
+        let port = if probes[0] == Probe::Free {
+            candidates[0]
+        } else {
+            // Rather than fail: Stereo works on any port, only localStorage starts out empty.
+            match unused_loopback_port() {
+                Ok(port) => port,
+                Err(error) => {
+                    let message = "Could not find a free port for Stereo.";
+                    return show_error(&window, &start_page, message, &error.to_string());
+                }
+            }
+        };
+
+        let stderr = Arc::new(Mutex::new(VecDeque::new()));
+        let exited = Arc::new(Mutex::new(None));
+        if let Err(error) = start_backend(&app, port, stderr.clone(), exited.clone()) {
+            return show_error(&window, &start_page, &error, "");
         }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+        let started = loop {
+            if let Some(status) = exited.lock().unwrap().clone() {
+                // Another backend took the data directory as ours started: open that one.
+                if matches!(data_dir_owner(&dir), Owner::Backend(_)) && Instant::now() < deadline {
+                    break false;
+                }
+                let message = format!("Stereo's backend {status} while starting.");
+                return show_error(&window, &start_page, &message, &stderr_text(&stderr));
+            }
+            if probe(port) == Probe::Stereo {
+                break true;
+            }
+            if Instant::now() > deadline {
+                let message = "Stereo's backend did not start in time.";
+                return show_error(&window, &start_page, message, &stderr_text(&stderr));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        if started {
+            break (port, stderr, exited);
+        }
+    };
     open_ui(&app, &window, &start_page, port);
 
     // A backend that goes away later leaves the UI reconnecting forever: say so instead.
@@ -588,10 +657,21 @@ fn connect(app: AppHandle, window: WebviewWindow, start_page: Url) {
             .load(std::sync::atomic::Ordering::SeqCst)
         {
             let message = format!("Stereo's backend {status}.");
-            show_error(&window, &start_page, &message, &details());
+            show_error(&window, &start_page, &message, &stderr_text(&stderr));
         }
         return;
     }
+}
+
+/// The backend's last stderr lines, for an error page.
+fn stderr_text(stderr: &Mutex<VecDeque<String>>) -> String {
+    stderr
+        .lock()
+        .unwrap()
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Stops the backend as Ctrl-C would, giving it time to remove its `--tailscale` route, then ends
@@ -617,6 +697,15 @@ fn stop_backend(child: CommandChild) {
 
 pub fn run() {
     tauri::Builder::default()
+        // First, so that a second instance exits before it does anything else. Its backend, or
+        // the one it found, would go away with the instance that started it.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         // Its script would cancel `target="_blank"` link clicks for an IPC command the page may
         // not call: such links open in the browser through `on_new_window` instead.
@@ -731,6 +820,26 @@ mod tests {
             None
         );
         assert_eq!(port_argument(&args(&["stereo", "--port"])), None);
+    }
+
+    #[test]
+    fn finds_the_backend_that_locked_the_data_directory() {
+        let dir = std::env::temp_dir().join(format!("stereo-desktop-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(data_dir_owner(&dir), Owner::None);
+
+        let lock = std::fs::File::create(dir.join("stereo.lock")).unwrap();
+        assert_eq!(data_dir_owner(&dir), Owner::None);
+        lock.lock().unwrap();
+        assert_eq!(data_dir_owner(&dir), Owner::Backend(None));
+        std::fs::write(dir.join("stereo.port"), "8123\n").unwrap();
+        assert_eq!(data_dir_owner(&dir), Owner::Backend(Some(8123)));
+        // Checking leaves the lock to its owner.
+        assert_eq!(data_dir_owner(&dir), Owner::Backend(Some(8123)));
+
+        drop(lock);
+        assert_eq!(data_dir_owner(&dir), Owner::None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

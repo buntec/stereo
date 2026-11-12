@@ -43,8 +43,9 @@ _desktop-sidecar profile:
     mkdir -p desktop/src-tauri/binaries
     cp target/{{ profile }}/stereo{{ exe }} desktop/src-tauri/binaries/stereo-$(rustc --print host-tuple){{ exe }}
 
-# Build and run the desktop app with a debug backend. If a stereo already runs on port 8005, the
-# app opens that one instead: stop it, or pick another port with STEREO_PORT, to try the bundled one
+# Build and run the desktop app with a debug backend. If a stereo already runs on port 8005 or uses
+# the default data dir, the app opens that one instead: stop it, or pick another port and data dir
+# with STEREO_PORT and STEREO_HOME, to try the bundled one. Quit a packaged Stereo app first
 desktop-dev: build-frontend
     cargo build
     just _desktop-sidecar debug

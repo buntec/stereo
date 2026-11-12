@@ -9,20 +9,28 @@ packages it with a release backend under `desktop/src-tauri/target/release/bundl
 `cd desktop && bun run build -- --bundles dmg` after `just desktop-build`. `just desktop-check`
 lints and tests the launcher.
 
-**Which backend.** On launch, the app looks for a Stereo running on port 8005, the CLI's default, or
-on the port of the launchd service from `stereo install` (from its plist), and opens it: two
-backends on the same data directory would race each other's git syncs. Otherwise it starts its
+**Which backend.** Two backends on the same data directory would race each other's database
+writes and git syncs, so a `stereo` locks its data directory (`stereo.lock` in it) before it
+touches a collection, and once it listens writes its port to `stereo.port` there; another `stereo`
+on that directory exits with an error. On launch, the app opens the Stereo that has locked its data
+directory (`STEREO_HOME`, else `~/.local/share/stereo`), waiting for one that is still starting up.
+Otherwise it looks for a Stereo running on port 8005, the CLI's default, or on the port of the
+launchd service from `stereo install` (from its plist), and opens it. Otherwise it starts its
 bundled `stereo` (a Tauri sidecar) on port 8005, or on a free port if something else holds 8005,
 with the default data directory (`~/.local/share/stereo`), so it shows the same collections as the
 CLI. Its backend stops when the app quits, or crashes (it's started with `--exit-with-stdin`, and
 then ends its yt-dlp downloads too), and changes not yet synced with git are synced on its next
 start, as after Ctrl-C. While the app runs, its Stereo is also at `http://localhost:8005` in a
-browser. `STEREO_PORT` picks another port (and is then the only one looked at), e.g. to try the
-bundled backend in development while another Stereo runs on 8005; the backend also takes the other
-`STEREO_*` variables (apps opened from the Finder or Dock don't see them).
+browser. `STEREO_PORT` picks another port (and is then the only one looked at), and `STEREO_HOME`
+another data directory, e.g. to try the bundled backend in development while another Stereo runs;
+the backend also takes the other `STEREO_*` variables (apps opened from the Finder or Dock don't
+see them).
 
 A port that stays the same keeps the page's origin, and with it what the UI keeps in
 localStorage (grid state, settings), across launches.
+
+**One instance.** Launching the app again, e.g. a development build while a packaged one runs,
+focuses the window of the one already running: the backend it started stops when it quits.
 
 **Quitting** sends the backend `SIGTERM`, as Ctrl-C would, and waits up to 20 s for it to exit
 (with `--tailscale` it removes its `tailscale serve` route first) before killing what is left of
