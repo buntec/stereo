@@ -14,6 +14,16 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 const audio = new Audio();
 audio.preload = "auto";
 
+/**
+ * Whether the page can set the volume: iOS and iPadOS ignore `volume` (it reads
+ * back as 1), leaving it to the hardware buttons; `muted` works everywhere.
+ */
+export const canSetVolume = (() => {
+  const probe = new Audio();
+  probe.volume = 0.5;
+  return probe.volume === 0.5;
+})();
+
 const audioUrl = (id: string, key: string) =>
   `/audio/${encodeURIComponent(id)}?key=${encodeURIComponent(key)}`;
 
@@ -218,6 +228,13 @@ export const useAudioPlayback = (
         return "playing";
       },
       currentId: () => idRef.current,
+      setVolume: (volume, muted) => {
+        // Squared: loudness is perceived roughly logarithmically, so a linear
+        // gain would put most of the audible change in the slider's low end.
+        const v = Math.min(1, Math.max(0, volume));
+        audio.volume = v * v;
+        audio.muted = muted;
+      },
       prefetch: (ids) => {
         const key = keyRef.current;
         if (!key) return;

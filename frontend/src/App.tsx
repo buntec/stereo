@@ -87,7 +87,8 @@ import BpmCheck from "./BpmCheck.tsx";
 import { formatTempo } from "./tempo.ts";
 import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
-import { useAudioPlayback } from "./AudioPlayback.ts";
+import { canSetVolume, useAudioPlayback } from "./AudioPlayback.ts";
+import VolumeControl, { DEFAULT_VOLUME } from "./VolumeControl.tsx";
 import {
   formatDuration,
   useLocalStorage,
@@ -181,6 +182,8 @@ const defaultSettings: Settings = {
   backgroundVideo: true,
   backgroundPulse: DEFAULT_BACKGROUND_PULSE,
   shufflePlay: false,
+  volume: DEFAULT_VOLUME,
+  muted: false,
 };
 
 type State = {
@@ -1990,6 +1993,28 @@ function App() {
     updatePlaylist(shufflePlay);
   }, [settings, setSettings, updatePlaylist]);
 
+  const volume = settings.volume ?? DEFAULT_VOLUME;
+  const muted = settings.muted ?? false;
+  useEffect(() => {
+    playback?.setVolume(volume / 100, muted);
+  }, [playback, volume, muted]);
+
+  const setVolume = useCallback(
+    (volume: number) => setSettings((s) => ({ ...s, volume, muted: false })),
+    [setSettings],
+  );
+
+  const toggleMuted = useCallback(
+    () =>
+      setSettings((s) => {
+        const volume = s.volume ?? DEFAULT_VOLUME;
+        // Slid all the way down: unmuting brings the sound back at half volume.
+        if (volume === 0) return { ...s, volume: 50, muted: false };
+        return { ...s, muted: !s.muted };
+      }),
+    [setSettings],
+  );
+
   const toggleBackgroundVideo = useCallback(
     () =>
       setSettings({ ...settings, backgroundVideo: !settings.backgroundVideo }),
@@ -2394,6 +2419,7 @@ function App() {
     "5": () => updateCurrentRating(5),
     s: () => toggleShuffle(),
     b: () => toggleBackgroundVideo(),
+    m: () => toggleMuted(),
     c: () => centerGridAroundCurrentTrack(),
     t: () => scrollActiveGridToTop(),
     p: () => togglePlayback(),
@@ -3126,6 +3152,17 @@ function App() {
                           />
                         </Tooltip>
                       </HStack>
+
+                      {touch ? null : <Divider orientation="vertical" />}
+
+                      <VolumeControl
+                        volume={volume}
+                        muted={muted}
+                        setVolume={setVolume}
+                        toggleMuted={toggleMuted}
+                        showSlider={canSetVolume}
+                        size={footerButtonSize}
+                      />
                     </HStack>
                   </StackItem>
                 </HStack>

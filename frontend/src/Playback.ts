@@ -32,6 +32,11 @@ export interface PlaybackEngine {
   currentId(): string | undefined;
   /** Hints that these tracks are likely to be played next. */
   prefetch(ids: string[]): void;
+  /**
+   * Sets the playback volume, 0–1 on a perceptual scale (the engine maps it to
+   * gain), and whether playback is muted. Only affects this page's audio.
+   */
+  setVolume(volume: number, muted: boolean): void;
 }
 
 export interface PlaybackEvents {
