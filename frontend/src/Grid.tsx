@@ -60,17 +60,13 @@ import {
   type RefObject,
 } from "react";
 
-import {
-  PlayIcon,
-  PlusIcon,
-  ColumnsIcon,
-  MagnifyingGlassIcon,
-} from "@radix-ui/react-icons";
+import { PlayIcon, PlusIcon, ColumnsIcon } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import { AudioCacheButton } from "./AudioCacheButton.tsx";
 import logger from "./logger.tsx";
 import { MenuCheck } from "./Menu.tsx";
+import ShazamIcon from "./ShazamIcon.tsx";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -247,7 +243,7 @@ const PlayControlRenderer: React.FC<
         onClick={() => context.onShazamSimilar(data)}
         label="Find similar songs on Shazam"
         tooltip="Find similar songs on Shazam"
-        icon={<MagnifyingGlassIcon />}
+        icon={<ShazamIcon size={15} />}
       />
 
       <EditTrackDialog
