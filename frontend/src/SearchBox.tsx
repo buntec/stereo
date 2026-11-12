@@ -15,7 +15,7 @@ import {
   MixerHorizontalIcon,
 } from "@radix-ui/react-icons";
 
-import { MenuCheck, MenuHeading } from "./Menu.tsx";
+import { MenuHeading } from "./Menu.tsx";
 import {
   isChartSearchKind,
   isQuerylessSearchKind,
@@ -209,12 +209,7 @@ function SearchBox({
           hasCloseOnSelect={false}
         >
           {LIMIT_OPTIONS.map((n) => (
-            <DropdownMenuRadioItem
-              key={n}
-              value={`${n}`}
-              label={`${n}`}
-              endContent={<MenuCheck isChecked={n === searchLimit} />}
-            />
+            <DropdownMenuRadioItem key={n} value={`${n}`} label={`${n}`} />
           ))}
         </DropdownMenuRadioGroup>
 
@@ -229,9 +224,6 @@ function SearchBox({
                 label={s.label}
                 value={searchSources.includes(s.value)}
                 onChange={(checked) => toggleSearchSource(s.value, checked)}
-                endContent={
-                  <MenuCheck isChecked={searchSources.includes(s.value)} />
-                }
               />
             ))}
           </>

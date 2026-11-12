@@ -12,7 +12,7 @@ import {
   ListBulletIcon,
   ResetIcon,
 } from "@radix-ui/react-icons";
-import { MenuCheck, MenuHeading } from "./Menu.tsx";
+import { MenuHeading } from "./Menu.tsx";
 import { collectionLabel } from "./CollectionSelector.tsx";
 import type { IPlaylist } from "./Types.tsx";
 
@@ -82,7 +82,6 @@ function PlaylistMenu({
                 value={p.id}
                 label={p.name}
                 description={collectionLabel(p.collection)}
-                endContent={<MenuCheck isChecked={p.id === active?.id} />}
               />
             ))}
           </DropdownMenuRadioGroup>

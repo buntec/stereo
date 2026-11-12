@@ -31,6 +31,7 @@ import { stereoTheme } from "./theme";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { IconButton } from "@astryxdesign/core/IconButton";
+import { ToggleButton } from "@astryxdesign/core/ToggleButton";
 import { HStack, VStack, StackItem } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Divider } from "@astryxdesign/core/Divider";
@@ -3091,13 +3092,13 @@ function App() {
                             </>
                           }
                         >
-                          <IconButton
-                            variant={settings.shufflePlay ? "primary" : "ghost"}
+                          <ToggleButton
+                            isIconOnly
                             size={footerButtonSize}
                             label="Toggle shuffle play"
-                            aria-pressed={settings.shufflePlay}
+                            isPressed={settings.shufflePlay}
                             icon={<ShuffleIcon />}
-                            onClick={toggleShuffle}
+                            onPressedChange={toggleShuffle}
                           />
                         </Tooltip>
 
@@ -3108,15 +3109,13 @@ function App() {
                             </>
                           }
                         >
-                          <IconButton
-                            variant={
-                              settings.backgroundVideo ? "primary" : "ghost"
-                            }
+                          <ToggleButton
+                            isIconOnly
                             size={footerButtonSize}
                             label="Toggle background artwork"
-                            aria-pressed={settings.backgroundVideo}
+                            isPressed={settings.backgroundVideo}
                             icon={<MagicWandIcon />}
-                            onClick={toggleBackgroundVideo}
+                            onPressedChange={toggleBackgroundVideo}
                           />
                         </Tooltip>
                       </HStack>

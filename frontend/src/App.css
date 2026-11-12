@@ -322,12 +322,6 @@
   min-width: 0;
 }
 
-.now-playing-meta .astryx-button {
-  /* Keep the hover padding but align the text with the title. */
-  margin-inline: calc(-1 * var(--spacing-1));
-  padding-inline: var(--spacing-1);
-}
-
 /* The playing track's thumbnail, blurred and slowly moving behind the app. It
    brightens and swells with the beats (`--beat`, from useBeatPulse.ts), as much as
    the settings' background pulse (`--beat-strength`, 0–1) says; `scale` composes
@@ -451,12 +445,6 @@
 /* AG Grid's no-rows overlay defaults to letting pointer events pass through. */
 .grid .ag-overlay-no-rows-wrapper {
   pointer-events: auto;
-}
-
-@media (max-width: 48rem) {
-  .release-columns {
-    flex-direction: column;
-  }
 }
 
 /* Touch screens: a play button above the recommended 44px tap size; the other footer

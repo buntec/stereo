@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import { Button } from "@astryxdesign/core/Button";
+import { Link } from "@astryxdesign/core/Link";
 
 export default function Title({
   title,
@@ -23,13 +23,13 @@ export default function Title({
   const textType = "supporting";
   const searchable = (name: string, onClick?: (name: string) => void) =>
     onClick ? (
-      <Button
-        label={name}
-        variant="ghost"
-        size="sm"
+      <Link
+        type={textType}
         tooltip={`Search for ${name}`}
         onClick={() => onClick(name)}
-      />
+      >
+        {name}
+      </Link>
     ) : (
       <Text type={textType}>{name}</Text>
     );
@@ -54,13 +54,7 @@ export default function Title({
         {trackName ?? title}
       </Text>
       {groups.length > 0 && (
-        <HStack
-          gap={0}
-          wrap="wrap"
-          vAlign="center"
-          hAlign="start"
-          className="now-playing-meta"
-        >
+        <HStack gap={0} wrap="wrap" vAlign="center" hAlign="start">
           {groups.map((group, index) => (
             <Fragment key={index}>
               {index > 0 && <Text type={textType}>&nbsp;·&nbsp;</Text>}
