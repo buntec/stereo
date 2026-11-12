@@ -132,8 +132,12 @@ const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${windo
 const WS_TOKEN_KEY = "stereo-ws-token";
 const urlFragment = new URLSearchParams(window.location.hash.slice(1));
 const wsTokenFromFragment = urlFragment.get("stereo-token");
-// A single-use code from the Tailscale button's QR code, traded for the token on connect.
+// A single-use code from the Tailscale button's QR code, traded for the token on connect. Offered
+// on every attempt until the token arrives or the backend rejects it, so a connection that fails
+// for another reason (network, backend restarting) doesn't lose it.
 let pairingCode = urlFragment.get("stereo-pair");
+/** The close code of a rejected pairing code (`PAIRING_REJECTED` in `server.rs`). */
+const PAIRING_REJECTED = 4401;
 if (wsTokenFromFragment || pairingCode) {
   window.history.replaceState(
     null,
@@ -965,6 +969,7 @@ function App() {
       // The audio cache's state lives in its own store (AudioCache.ts).
       const handle = (m: ServerMsg) => {
         if (m.type === "auth-token") {
+          pairingCode = null;
           rememberWsToken(m.token);
           return;
         }
@@ -983,8 +988,6 @@ function App() {
 
   const wsOnError = useCallback(
     () =>
-      // A rejected pairing code is explained on close.
-      !pairingCode &&
       dispatch({
         type: "notification",
         message: "WebSocket error encountered.",
@@ -1001,8 +1004,7 @@ function App() {
     (ev: CloseEvent) => {
       activeRepo.current = null;
       dispatch({ type: "repos", repos: [] });
-      // Still set if the connection never opened: the code was rejected.
-      if (pairingCode) {
+      if (pairingCode && ev.code === PAIRING_REJECTED) {
         pairingCode = null;
         dispatch({
           type: "notification",
@@ -1024,8 +1026,6 @@ function App() {
   );
 
   const wsOnOpen = useCallback(() => {
-    // Used up; the token it brings follows.
-    pairingCode = null;
     dispatch({ type: "dismiss-connection-closed-notification" });
   }, [dispatch]);
 

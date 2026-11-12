@@ -11,7 +11,7 @@ use std::{
 use anyhow::Context;
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
         State,
     },
     http::{header, HeaderMap, StatusCode},
@@ -319,7 +319,10 @@ fn tailnet_ws_handler(
     } else if let Some(pairing) = websocket_pairing_protocol(headers) {
         // Used up even if the upgrade then fails: a code never works twice.
         if !tailscale::redeem_pairing_code(&pairing[PAIRING_PROTOCOL.len()..]) {
-            return (StatusCode::UNAUTHORIZED, "Invalid or expired pairing code").into_response();
+            return ws
+                .protocols([pairing])
+                .on_upgrade(reject_pairing_code)
+                .into_response();
         }
         (pairing, Some(token))
     } else {
@@ -335,6 +338,24 @@ fn tailnet_ws_handler(
 }
 
 const PAIRING_PROTOCOL: &str = "stereo.pair.";
+
+/// The close code for a pairing code that is invalid, expired or used. Browsers can't read the
+/// status of a failed handshake, so a rejected code is told apart from an unreachable server
+/// (after which the client offers the code again) by an upgrade closed with this code.
+/// `App.tsx` matches it.
+const PAIRING_REJECTED: u16 = 4401;
+
+async fn reject_pairing_code(mut socket: WebSocket) {
+    let close = Message::Close(Some(CloseFrame {
+        code: PAIRING_REJECTED,
+        reason: "Invalid or expired pairing code".into(),
+    }));
+    if socket.send(close).await.is_ok() {
+        // Wait for the client's close, so that it sees a clean close with the code.
+        let drain = async { while let Some(Ok(_)) = socket.recv().await {} };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), drain).await;
+    }
+}
 
 /// The `stereo.pair.<code>` subprotocol the client offered, if any.
 fn websocket_pairing_protocol(headers: &HeaderMap) -> Option<String> {
@@ -3218,11 +3239,20 @@ mod tests {
                 m["type"] == "auth-token" && m["token"] == token
             })
             .await;
-        // Used up.
-        assert_eq!(
-            tailnet_handshake(port, origin, Some(&pairing)).await.err(),
-            Some(401)
-        );
+        // Used up: the upgrade is closed with a code saying so.
+        let mut socket = tailnet_handshake(port, origin, Some(&pairing))
+            .await
+            .unwrap();
+        match socket.next().await {
+            Some(Ok(tungstenite::Message::Close(Some(frame)))) => {
+                assert_eq!(u16::from(frame.code), PAIRING_REJECTED);
+            }
+            other => panic!("expected a close frame, got {other:?}"),
+        }
+        assert!(!matches!(
+            socket.next().await,
+            Some(Ok(tungstenite::Message::Text(_)))
+        ));
     }
 
     #[tokio::test]

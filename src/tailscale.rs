@@ -6,10 +6,12 @@
 //! apart by listener means no forwarded header has to be trusted.
 //!
 //! The Serve config is machine-wide, so stereo never replaces another route on its port and
-//! removes only a route it created. A marker file in the data dir records that route, so a restart
-//! after a crash takes it over.
+//! removes only the root handler it created. A lease file per port in the data dir records that
+//! route and stays locked while its stereo runs, so a later run takes over the route of one that
+//! crashed but never that of one still running.
 use std::{
     collections::HashMap,
+    fs::{File, OpenOptions, TryLockError},
     net::SocketAddr,
     path::{Path, PathBuf},
     process::Stdio,
@@ -42,7 +44,8 @@ pub const PAIRING_TTL: Duration = Duration::from_secs(120);
 const MAX_PAIRING_CODES: usize = 16;
 
 const TOKEN_FILE: &str = "tailnet-token";
-const MARKER_FILE: &str = "tailscale-route";
+/// The leases, one file per tailnet port.
+const LEASE_DIR: &str = "tailscale-routes";
 
 static INSTANCE: OnceLock<Arc<Tailscale>> = OnceLock::new();
 
@@ -181,12 +184,58 @@ fn url(status: &[u8], port: u16) -> Result<(String, String), String> {
     Ok((name, url))
 }
 
+/// A claim on stereo's route on one tailnet port: `<lease dir>/<port>`, exclusively locked by the
+/// stereo using that port (the OS releases the lock when the process ends, even in a crash) and
+/// holding the proxy target of the route it created, if any.
+///
+/// The files are emptied rather than deleted, so a lock is always on the file at its path.
+struct Lease {
+    path: PathBuf,
+    _file: File,
+}
+
+impl Lease {
+    /// The lease for `port`, unless a running stereo holds it.
+    fn acquire(dir: &Path, port: u16) -> std::io::Result<Option<Self>> {
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join(port.to_string());
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self { path, _file: file })),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(error)) => Err(error),
+        }
+    }
+
+    /// The proxy target of the route recorded.
+    fn proxy(&self) -> Option<String> {
+        let text = std::fs::read_to_string(&self.path).ok()?;
+        Some(text.trim())
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+    }
+
+    fn record(&self, proxy: Option<&str>) {
+        let text = proxy.map(|proxy| format!("{proxy}\n")).unwrap_or_default();
+        if let Err(error) = std::fs::write(&self.path, text) {
+            tracing::warn!("could not record the tailscale serve route: {error}");
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     stopped: bool,
     // This process may have created the route.
     owned: bool,
     host: Option<String>,
+    /// This process's lease on `port`, once acquired; held until it exits.
+    lease: Option<Lease>,
 }
 
 struct Tailscale {
@@ -195,8 +244,8 @@ struct Tailscale {
     port: u16,
     /// Where `tailscale serve` proxies to: the tailnet listener.
     proxy: String,
-    /// Records the route stereo created: `<port> <proxy>`.
-    marker: Option<PathBuf>,
+    /// Where the leases live (see `Lease`).
+    leases: Option<PathBuf>,
     token: String,
     // Held across each setup attempt, so shutdown waits for one in flight.
     state: Mutex<State>,
@@ -212,14 +261,14 @@ impl Tailscale {
         programs: Vec<PathBuf>,
         port: u16,
         target: SocketAddr,
-        marker: Option<PathBuf>,
+        leases: Option<PathBuf>,
         token: String,
     ) -> Self {
         Self {
             programs,
             port,
             proxy: format!("http://{target}"),
-            marker,
+            leases,
             token,
             state: Mutex::default(),
             status: watch::Sender::new(TailscaleStatus::Starting),
@@ -275,29 +324,45 @@ impl Tailscale {
         Ok(url(&self.cli(&["status", "--json"]).await?, self.port)?.0)
     }
 
+    /// Remove the root handler on `port`, stereo's route. Without `--set-path`, `off` would remove
+    /// every handler on the port, other services' subpaths too.
     async fn off(&self, port: u16) -> Result<(), String> {
-        self.cli(&["serve", &format!("--https={port}"), "off"])
+        self.cli(&["serve", &format!("--https={port}"), "--set-path=/", "off"])
             .await
             .map(drop)
     }
 
-    fn marked(&self) -> Option<(u16, String)> {
-        let text = std::fs::read_to_string(self.marker.as_ref()?).ok()?;
-        let (port, proxy) = text.trim().split_once(' ')?;
-        Some((port.parse().ok()?, proxy.to_string()))
-    }
-
-    fn mark(&self) {
-        let Some(marker) = &self.marker else { return };
-        if let Err(error) = std::fs::write(marker, format!("{} {}\n", self.port, self.proxy)) {
-            tracing::warn!("could not record the tailscale serve route: {error}");
+    /// Remove the routes that stereos which no longer run left on other ports.
+    async fn remove_abandoned(&self, config: &ServeConfig, host: &str) -> Result<(), String> {
+        let Some(dir) = &self.leases else {
+            return Ok(());
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Ok(());
+        };
+        for entry in entries.flatten() {
+            let Some(port) = entry
+                .file_name()
+                .to_str()
+                .and_then(|n| n.parse::<u16>().ok())
+            else {
+                continue;
+            };
+            if port == self.port {
+                continue;
+            }
+            // Held: that stereo still runs and serves its route.
+            let Ok(Some(lease)) = Lease::acquire(dir, port) else {
+                continue;
+            };
+            if let Some(proxy) = lease.proxy() {
+                if route(config, host, port) == Route::Proxy(proxy) {
+                    self.off(port).await?;
+                }
+                lease.record(None);
+            }
         }
-    }
-
-    fn unmark(&self) {
-        if let Some(marker) = &self.marker {
-            let _ = std::fs::remove_file(marker);
-        }
+        Ok(())
     }
 
     /// Serve stereo unless the route is taken. Returns its URL, or None once stopped.
@@ -306,39 +371,42 @@ impl Tailscale {
         if state.stopped {
             return Ok(None);
         }
+        if let (None, Some(dir)) = (&state.lease, &self.leases) {
+            match Lease::acquire(dir, self.port) {
+                Ok(Some(lease)) => state.lease = Some(lease),
+                Ok(None) => {
+                    return Err(format!(
+                        "another stereo with this data dir serves the tailnet on port {}; stop it or run stereo on another --port",
+                        self.port
+                    ))
+                }
+                Err(error) => return Err(format!("could not lock the tailscale serve route: {error}")),
+            }
+        }
         let (host, url) = url(&self.cli(&["status", "--json"]).await?, self.port)?;
         state.host = Some(host.clone());
         *self.origin.lock().unwrap() = Some(url.clone());
         let config = self.serve_config().await?;
-        let marked = self.marked();
-        // Each start listens on a new port, so an earlier stereo's route is recognized by the marker.
-        let earlier = |port: u16, target: &str| {
-            marked
-                .as_ref()
-                .is_some_and(|(p, proxy)| *p == port && proxy == target)
-        };
+        // Each start listens on a new port, so an earlier stereo's route is recognized by the lease,
+        // which only this process holds now.
+        let recorded = state.lease.as_ref().and_then(Lease::proxy);
         match route(&config, &host, self.port) {
             Route::Proxy(target) if target == self.proxy => {
-                state.owned |= earlier(self.port, &self.proxy);
+                state.owned |= recorded.as_ref() == Some(&self.proxy);
                 return Ok(Some(url));
             }
-            Route::Proxy(target) if earlier(self.port, &target) => self.off(self.port).await?,
+            Route::Proxy(target) if recorded.as_ref() == Some(&target) => {
+                self.off(self.port).await?
+            }
             Route::Proxy(target) => return Err(self.taken(&host, &format!("a proxy to {target}"))),
             Route::Taken(what) => return Err(self.taken(&host, &what)),
-            Route::Free => {
-                // A route left on another port by an earlier stereo.
-                if let Some((port, proxy)) = &marked {
-                    if *port != self.port
-                        && route(&config, &host, *port) == Route::Proxy(proxy.clone())
-                    {
-                        self.off(*port).await?;
-                    }
-                }
-            }
+            Route::Free => self.remove_abandoned(&config, &host).await?,
         }
         // Before the command: the daemon may keep the route even if it fails.
         state.owned = true;
-        self.mark();
+        if let Some(lease) = &state.lease {
+            lease.record(Some(&self.proxy));
+        }
         self.cli(&[
             "serve",
             "--bg",
@@ -361,7 +429,8 @@ impl Tailscale {
     async fn stop(&self) {
         let mut state = self.state.lock().await;
         state.stopped = true;
-        if !state.owned && self.marked() != Some((self.port, self.proxy.clone())) {
+        let recorded = state.lease.as_ref().and_then(Lease::proxy);
+        if !state.owned && recorded.as_ref() != Some(&self.proxy) {
             return;
         }
         let host = match state.host.clone() {
@@ -369,7 +438,7 @@ impl Tailscale {
             None => match self.host().await {
                 Ok(host) => host,
                 Err(error) => {
-                    // Keep the marker; the next start cleans up.
+                    // Keep the record; the next start cleans up.
                     tracing::warn!("tailscale serve cleanup: {error}");
                     return;
                 }
@@ -384,7 +453,11 @@ impl Tailscale {
             Err(error) => Err(error),
         };
         match result {
-            Ok(()) => self.unmark(),
+            Ok(()) => {
+                if let Some(lease) = &state.lease {
+                    lease.record(None);
+                }
+            }
             Err(error) => tracing::warn!("tailscale serve cleanup: {error}"),
         }
     }
@@ -468,8 +541,8 @@ pub async fn spawn(
 ) -> anyhow::Result<()> {
     let token = load_token(home, ws_token).await?;
     let programs = PROGRAMS.iter().map(PathBuf::from).collect();
-    let marker = Some(home.join(MARKER_FILE));
-    let tailscale = Arc::new(Tailscale::new(programs, port, target, marker, token));
+    let leases = Some(home.join(LEASE_DIR));
+    let tailscale = Arc::new(Tailscale::new(programs, port, target, leases, token));
     if INSTANCE.set(tailscale.clone()).is_err() {
         return Ok(());
     }
@@ -653,7 +726,8 @@ mod tests {
         );
     }
 
-    /// A fake `tailscale` CLI with a one-route Serve config in a file.
+    /// A fake `tailscale` CLI whose Serve config is a file of `<port> <path> <proxy>` handlers,
+    /// removed as Tailscale does: `off` alone removes every handler on the port, `--set-path` one.
     #[cfg(unix)]
     mod fake {
         use super::*;
@@ -661,66 +735,102 @@ mod tests {
 
         pub const STATUS: &str = r#"{"BackendState":"Running","Self":{"DNSName":"box.tail1.ts.net."},"CertDomains":["box.tail1.ts.net"]}"#;
 
-        pub fn route(port: u16, proxy: &str) -> String {
-            format!(
-                r#"{{"TCP":{{"{port}":{{"HTTPS":true}}}},"Web":{{"box.tail1.ts.net:{port}":{{"Handlers":{{"/":{{"Proxy":"{proxy}"}}}}}}}}}}"#
-            )
-        }
-
         pub struct Cli {
             pub dir: tempfile::TempDir,
         }
 
         impl Cli {
-            pub fn new(config: &str) -> Self {
+            pub fn new(routes: &[&str]) -> Self {
                 let dir = tempfile::tempdir().unwrap();
                 std::fs::write(dir.path().join("status.json"), STATUS).unwrap();
-                std::fs::write(dir.path().join("serve.json"), config).unwrap();
-                // `serve --bg` writes the route, then waits while `pause` exists, as the daemon
-                // can keep a route before the command returns.
+                let cli = Self { dir };
+                cli.set_routes(routes);
+                // `serve --bg` adds the root handler, then waits while `pause` exists, as the
+                // daemon can keep a route before the command returns.
                 let script = r#"#!/bin/sh
 dir=$(dirname "$0")
+routes="$dir/routes"
 echo "$*" >> "$dir/calls"
 case "$*" in
   "status --json") cat "$dir/status.json" ;;
-  "serve status --json") cat "$dir/serve.json" ;;
+  "serve status --json")
+    awk '
+      !($1 in seen) { seen[$1] = 1; ports[++n] = $1 }
+      { h[$1] = h[$1] (h[$1] == "" ? "" : ",") "\"" $2 "\":{\"Proxy\":\"" $3 "\"}" }
+      END {
+        printf "{\"TCP\":{"
+        for (i = 1; i <= n; i++) printf "%s\"%s\":{\"HTTPS\":true}", (i > 1 ? "," : ""), ports[i]
+        printf "},\"Web\":{"
+        for (i = 1; i <= n; i++) printf "%s\"box.tail1.ts.net:%s\":{\"Handlers\":{%s}}", (i > 1 ? "," : ""), ports[i], h[ports[i]]
+        print "}}"
+      }' "$routes" ;;
   "serve --bg --yes --https="*)
     port=${4#--https=}
-    printf '{"TCP":{"%s":{"HTTPS":true}},"Web":{"box.tail1.ts.net:%s":{"Handlers":{"/":{"Proxy":"%s"}}}}}' "$port" "$port" "$5" > "$dir/serve.json"
+    awk -v p="$port" '!($1 == p && $2 == "/")' "$routes" > "$routes.new"
+    echo "$port / $5" >> "$routes.new"
+    mv "$routes.new" "$routes"
     while [ -e "$dir/pause" ]; do sleep 0.05; done ;;
-  "serve --https="*" off") echo '{}' > "$dir/serve.json" ;;
+  "serve --https="*" --set-path=/ off")
+    port=${2#--https=}
+    awk -v p="$port" '!($1 == p && $2 == "/")' "$routes" > "$routes.new"
+    mv "$routes.new" "$routes" ;;
+  "serve --https="*" off")
+    port=${2#--https=}
+    awk -v p="$port" '$1 != p' "$routes" > "$routes.new"
+    mv "$routes.new" "$routes" ;;
   *) exit 1 ;;
 esac
 "#;
-                let path = dir.path().join("tailscale");
+                let path = cli.path("tailscale");
                 std::fs::write(&path, script).unwrap();
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-                Self { dir }
+                cli
             }
 
+            /// A stereo serving tailnet `port` from `127.0.0.1:<target>`, with leases in the
+            /// fake's directory: one per process, as for processes sharing a data dir.
             pub fn tailscale(&self, port: u16, target: u16) -> Tailscale {
                 Tailscale::new(
                     vec![self.path("tailscale")],
                     port,
                     SocketAddr::from(([127, 0, 0, 1], target)),
-                    Some(self.marker()),
+                    Some(self.path(LEASE_DIR)),
                     "t".into(),
                 )
             }
 
-            pub fn config(&self) -> String {
-                std::fs::read_to_string(self.path("serve.json"))
-                    .unwrap()
-                    .trim()
-                    .to_string()
+            /// The handlers, sorted.
+            pub fn routes(&self) -> Vec<String> {
+                let text = std::fs::read_to_string(self.path("routes")).unwrap();
+                let mut routes: Vec<_> = text.lines().map(str::to_string).collect();
+                routes.sort();
+                routes
+            }
+
+            pub fn set_routes(&self, routes: &[&str]) {
+                let text: String = routes.iter().map(|route| format!("{route}\n")).collect();
+                std::fs::write(self.path("routes"), text).unwrap();
             }
 
             pub fn calls(&self) -> String {
                 std::fs::read_to_string(self.path("calls")).unwrap_or_default()
             }
 
-            pub fn marker(&self) -> PathBuf {
-                self.path(MARKER_FILE)
+            /// What the lease for `port` records, as an earlier, crashed run left it.
+            pub fn record(&self, port: u16, proxy: &str) {
+                std::fs::create_dir_all(self.path(LEASE_DIR)).unwrap();
+                std::fs::write(self.lease(port), format!("{proxy}\n")).unwrap();
+            }
+
+            pub fn recorded(&self, port: u16) -> String {
+                std::fs::read_to_string(self.lease(port))
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            }
+
+            fn lease(&self, port: u16) -> PathBuf {
+                self.path(LEASE_DIR).join(port.to_string())
             }
 
             pub fn path(&self, name: &str) -> PathBuf {
@@ -732,12 +842,12 @@ esac
     #[cfg(unix)]
     #[tokio::test]
     async fn creates_and_removes_its_own_route() {
-        let cli = fake::Cli::new("{}");
+        let cli = fake::Cli::new(&[]);
         let tailscale = cli.tailscale(8005, 9000);
         let url = tailscale.attempt().await.unwrap();
         assert_eq!(url.as_deref(), Some("https://box.tail1.ts.net:8005"));
-        assert_eq!(cli.config(), fake::route(8005, "http://127.0.0.1:9000"));
-        assert!(cli.marker().exists());
+        assert_eq!(cli.routes(), ["8005 / http://127.0.0.1:9000"]);
+        assert_eq!(cli.recorded(8005), "http://127.0.0.1:9000");
         assert_eq!(
             tailscale.origin.lock().unwrap().as_deref(),
             Some("https://box.tail1.ts.net:8005")
@@ -746,53 +856,107 @@ esac
         assert!(tailscale.attempt().await.unwrap().is_some());
         assert_eq!(cli.calls().matches("--bg").count(), 1);
         tailscale.stop().await;
-        assert_eq!(cli.config(), "{}");
-        assert!(!cli.marker().exists());
+        assert!(cli.routes().is_empty());
+        assert_eq!(cli.recorded(8005), "");
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn leaves_other_routes_alone() {
-        let other = fake::route(8005, "http://127.0.0.1:3000");
-        let cli = fake::Cli::new(&other);
+        let other = "8005 / http://127.0.0.1:3000";
+        let cli = fake::Cli::new(&[other]);
         let tailscale = cli.tailscale(8005, 9000);
         let error = tailscale.attempt().await.unwrap_err();
         assert!(error.contains("http://127.0.0.1:3000"), "{error}");
         tailscale.stop().await;
-        assert_eq!(cli.config(), other);
+        assert_eq!(cli.routes(), [other]);
         assert!(!cli.calls().contains("--bg"));
         assert!(!cli.calls().contains("off"));
     }
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn keeps_other_handlers_on_its_port() {
+        let api = "8005 /api http://127.0.0.1:3000";
+        let cli = fake::Cli::new(&[api]);
+        let tailscale = cli.tailscale(8005, 9000);
+        assert!(tailscale.attempt().await.unwrap().is_some());
+        assert_eq!(cli.routes(), ["8005 / http://127.0.0.1:9000", api]);
+        tailscale.stop().await;
+        assert_eq!(cli.routes(), [api]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn replaces_its_route_from_an_earlier_run() {
-        let cli = fake::Cli::new(&fake::route(8005, "http://127.0.0.1:9000"));
-        std::fs::write(cli.marker(), "8005 http://127.0.0.1:9000\n").unwrap();
+        let api = "8005 /api http://127.0.0.1:3000";
+        let cli = fake::Cli::new(&["8005 / http://127.0.0.1:9000", api]);
+        cli.record(8005, "http://127.0.0.1:9000");
         let tailscale = cli.tailscale(8005, 9001);
         assert!(tailscale.attempt().await.unwrap().is_some());
-        assert!(cli.calls().contains("serve --https=8005 off"));
-        assert_eq!(cli.config(), fake::route(8005, "http://127.0.0.1:9001"));
+        assert!(cli.calls().contains("serve --https=8005 --set-path=/ off"));
+        assert_eq!(cli.routes(), ["8005 / http://127.0.0.1:9001", api]);
         tailscale.stop().await;
-        assert_eq!(cli.config(), "{}");
-        assert!(!cli.marker().exists());
+        assert_eq!(cli.routes(), [api]);
+        assert_eq!(cli.recorded(8005), "");
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn removes_its_route_left_on_another_port() {
-        let cli = fake::Cli::new(&fake::route(9005, "http://127.0.0.1:9000"));
-        std::fs::write(cli.marker(), "9005 http://127.0.0.1:9000\n").unwrap();
+        let api = "9005 /api http://127.0.0.1:3000";
+        let cli = fake::Cli::new(&["9005 / http://127.0.0.1:9000", api]);
+        cli.record(9005, "http://127.0.0.1:9000");
         let tailscale = cli.tailscale(8005, 9001);
         assert!(tailscale.attempt().await.unwrap().is_some());
-        assert!(cli.calls().contains("serve --https=9005 off"));
-        assert_eq!(cli.config(), fake::route(8005, "http://127.0.0.1:9001"));
+        assert!(cli.calls().contains("serve --https=9005 --set-path=/ off"));
+        assert_eq!(cli.routes(), ["8005 / http://127.0.0.1:9001", api]);
+        assert_eq!(cli.recorded(9005), "");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn leaves_the_route_of_a_stereo_still_running() {
+        let cli = fake::Cli::new(&[]);
+        let first = cli.tailscale(9005, 9000);
+        assert!(first.attempt().await.unwrap().is_some());
+        // Another port, the same data dir: the first one's route stays.
+        let second = cli.tailscale(8005, 9001);
+        assert!(second.attempt().await.unwrap().is_some());
+        assert!(second.attempt().await.unwrap().is_some());
+        let both = [
+            "8005 / http://127.0.0.1:9001",
+            "9005 / http://127.0.0.1:9000",
+        ];
+        assert_eq!(cli.routes(), both);
+        assert!(!cli.calls().contains("off"));
+        // The same port: refused, without touching the route.
+        let third = cli.tailscale(9005, 9002);
+        let error = third.attempt().await.unwrap_err();
+        assert!(error.contains("another stereo"), "{error}");
+        third.stop().await;
+        assert_eq!(cli.routes(), both);
+        assert_eq!(cli.recorded(9005), "http://127.0.0.1:9000");
+        // Once the first has crashed, its route is taken over.
+        drop(first);
+        let restarted = cli.tailscale(9005, 9003);
+        assert!(restarted.attempt().await.unwrap().is_some());
+        assert_eq!(
+            cli.routes(),
+            [
+                "8005 / http://127.0.0.1:9001",
+                "9005 / http://127.0.0.1:9003"
+            ]
+        );
+        second.stop().await;
+        restarted.stop().await;
+        assert!(cli.routes().is_empty());
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn reports_and_restores_a_route_that_stops_working() {
-        let cli = fake::Cli::new("{}");
+        let cli = fake::Cli::new(&[]);
         let tailscale = Arc::new(cli.tailscale(8005, 9000));
         let mut status = tailscale.status.subscribe();
         let run = tokio::spawn({
@@ -814,9 +978,9 @@ esac
         assert!(matches!(next().await, TailscaleStatus::Error { .. }));
         std::fs::write(cli.path("status.json"), fake::STATUS).unwrap();
         // Removed while Tailscale was down: created again.
-        std::fs::write(cli.path("serve.json"), "{}").unwrap();
+        cli.set_routes(&[]);
         assert!(matches!(next().await, TailscaleStatus::Serving { .. }));
-        assert_eq!(cli.config(), fake::route(8005, "http://127.0.0.1:9000"));
+        assert_eq!(cli.routes(), ["8005 / http://127.0.0.1:9000"]);
         tailscale.stop().await;
         run.await.unwrap();
     }
@@ -824,7 +988,7 @@ esac
     #[cfg(unix)]
     #[tokio::test]
     async fn shutdown_waits_for_setup_in_flight() {
-        let cli = fake::Cli::new("{}");
+        let cli = fake::Cli::new(&[]);
         std::fs::write(cli.path("pause"), "").unwrap();
         let tailscale = Arc::new(cli.tailscale(8005, 9000));
         let setup = tokio::spawn({
@@ -844,9 +1008,9 @@ esac
         std::fs::remove_file(cli.path("pause")).unwrap();
         stop.await.unwrap();
         assert!(setup.await.unwrap().unwrap().is_some());
-        assert_eq!(cli.config(), "{}");
+        assert!(cli.routes().is_empty());
         // Stopped: no later attempt serves again.
         assert_eq!(tailscale.attempt().await.unwrap(), None);
-        assert_eq!(cli.config(), "{}");
+        assert!(cli.routes().is_empty());
     }
 }
