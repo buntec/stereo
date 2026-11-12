@@ -379,6 +379,15 @@
   background-color: transparent;
 }
 
+/* The header row is sticky inside the grid's scroll viewport (ag-Grid's pinned-top rows
+   container), so rows scroll under its translucent background; blur them there, as on
+   the pop-up menus, so their text doesn't clash with the column names. */
+.grid .ag-grid-pinned-top-rows,
+.grid .ag-grid-pinned-bottom-rows {
+  -webkit-backdrop-filter: blur(var(--spacing-4)) saturate(150%);
+  backdrop-filter: blur(var(--spacing-4)) saturate(150%);
+}
+
 /* Filter dropdowns (e.g. "Contains"/"Equals") inherit the grid's translucent
    background; blur what's behind them so the options stay readable. */
 .grid .ag-select-list {
