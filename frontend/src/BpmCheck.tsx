@@ -111,8 +111,8 @@ export default function BpmCheck({
         let settled = false;
         const hide = toast({
           body: stored.bpm
-            ? `${stored.title} plays at ${measured}, but its metadata says ${stored.bpm} BPM.`
-            : `${stored.title} plays at ${measured}; its metadata has no BPM.`,
+            ? `${stored.title} plays at ${measured}, not ${stored.bpm} BPM`
+            : `${stored.title} plays at ${measured}`,
           endContent: (
             <Button
               label={`Set to ${suggestion}`}

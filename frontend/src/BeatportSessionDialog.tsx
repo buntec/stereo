@@ -72,24 +72,18 @@ function BeatportSessionDialog({
           <LayoutContent>
             <VStack gap={3}>
               <Text as="div" type="body">
-                Beatport protects its search with a bot check that Stereo
-                can&rsquo;t pass on its own. Stereo can reuse the clearance your
-                browser gets when it passes the check: in this browser, open{" "}
+                In this browser,{" "}
                 <Link
                   href="https://www.beatport.com/search?q=stereo"
                   isExternalLink
                 >
-                  a search on beatport.com
-                </Link>
-                , complete the check if it shows one, then come back and
-                connect.
+                  search beatport.com
+                </Link>{" "}
+                and pass its bot check, then connect.
               </Text>
               <Text as="div" type="supporting" color="secondary">
-                Stereo only reads Beatport&rsquo;s bot-check cookies, never a
-                Beatport login. The clearance expires after a while; when
-                Beatport searches fail again, repeat these steps. Artist and
-                label searches don&rsquo;t need it for names that already have
-                Beatport tracks in your collection.
+                Only bot-check cookies are read. Reconnect when searches fail
+                again.
               </Text>
             </VStack>
           </LayoutContent>

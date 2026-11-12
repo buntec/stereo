@@ -35,7 +35,7 @@ function SettingsMenu({
           </Text>
           <Slider
             label="Background pulse"
-            description="How strongly the background pulses with the beats."
+            labelTooltip="How strongly the background pulses with the beats."
             value={backgroundPulse}
             onChange={(v: number) => setBackgroundPulse(v)}
             min={0}
@@ -44,7 +44,7 @@ function SettingsMenu({
             formatValue={(v) => (v === 0 ? "Off" : `${v}%`)}
             valueDisplay="text"
             isDisabled={!backgroundShown}
-            disabledMessage="The background is turned off (see the footer)."
+            disabledMessage="Background is off"
           />
         </VStack>
       }

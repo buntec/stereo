@@ -39,7 +39,7 @@ export function YouTubePlaylistDialog({
         header={
           <DialogHeader
             title="Export to YouTube playlist"
-            subtitle={`Creates a private playlist on your connected YouTube account with ${trackCount} track${trackCount !== 1 ? "s" : ""}.`}
+            subtitle={`Private playlist, ${trackCount} track${trackCount !== 1 ? "s" : ""}`}
             onOpenChange={() => onOpenChange(false)}
           />
         }

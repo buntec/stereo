@@ -84,7 +84,7 @@ export default function YouTubePlaylistStagingDialog({
         header={
           <DialogHeader
             title="Review imported tracks"
-            subtitle={`${stagedTracks.length} tracks from “${name}”. Edit metadata before adding them to the collection.`}
+            subtitle={`${stagedTracks.length} tracks from “${name}”`}
             onOpenChange={onCancel}
           />
         }

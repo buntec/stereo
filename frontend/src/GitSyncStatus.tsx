@@ -36,8 +36,7 @@ export default function GitSyncStatus({
   }
   const label = gitSyncLabels[state];
   // Pending local changes are synced on a timer; the button syncs them right away.
-  const retryLabel =
-    state === "local-changes" ? "Sync now" : "Retry repository synchronization";
+  const retryLabel = state === "local-changes" ? "Sync now" : "Retry sync";
 
   return (
     <>
@@ -79,9 +78,8 @@ export default function GitSyncStatus({
             <LayoutContent>
               <VStack gap={3}>
                 <Text type="body">
-                  Stereo could not safely combine local and upstream changes.
-                  Recovery copies of both versions have been saved. Choose which
-                  version should win for conflicting collections.
+                  Local and upstream changes conflict. Backups of both were
+                  saved. Which version wins?
                 </Text>
                 {message && <Text type="supporting">{message}</Text>}
               </VStack>

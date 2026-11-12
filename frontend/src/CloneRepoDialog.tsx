@@ -5,7 +5,6 @@ import { Button } from "@astryxdesign/core/Button";
 import { FormLayout } from "@astryxdesign/core/FormLayout";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { HStack } from "@astryxdesign/core/Stack";
-import { Text } from "@astryxdesign/core/Text";
 
 type CloneRepoDialogProps = {
   isOpen: boolean;
@@ -45,11 +44,6 @@ function CloneRepoDialog({
         content={
           <LayoutContent>
             <FormLayout>
-              <Text as="div" type="body">
-                Enter a git URL. The repository will be cloned into the stereo
-                home directory and its collections will appear in the collection
-                menu.
-              </Text>
               <TextInput
                 label="Git URL"
                 value={url}

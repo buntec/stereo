@@ -78,18 +78,14 @@ function SpotifySessionDialog({
           <LayoutContent>
             <VStack gap={4}>
               <Text as="div" type="body">
-                Stereo needs your browser&rsquo;s Spotify session to create
-                playlists on your behalf. Your password never touches stereo
-                &mdash; either let stereo read the session directly from a
-                browser you&rsquo;re already logged into, or copy it yourself:
-                log into <Code>open.spotify.com</Code>, open devtools → Network,
-                pick any request to spotify.com, and copy the value of its{" "}
-                <Code>Cookie</Code> request header.
+                Detect the Spotify login from your browser, or paste the{" "}
+                <Code>Cookie</Code> header of a request to{" "}
+                <Code>open.spotify.com</Code> (devtools → Network).
               </Text>
 
               <VStack gap={3}>
                 <Button
-                  label="Auto-detect from a logged-in browser"
+                  label="Detect from browser"
                   variant="secondary"
                   onClick={detect}
                   isLoading={detecting}
@@ -112,14 +108,12 @@ function SpotifySessionDialog({
                   Backfill Spotify IDs
                 </Text>
                 <Text as="div" type="supporting">
-                  Matches every track in the current collection that&rsquo;s
-                  missing a Spotify ID by artist/title (doesn&rsquo;t require a
-                  connected account).
-                  {backfillRunning &&
-                    ` Matching… ${backfillChecked ?? 0}/${backfillTotal ?? 0} checked, ${backfillMatched ?? 0} matched.`}
+                  {backfillRunning
+                    ? `${backfillChecked ?? 0}/${backfillTotal ?? 0} checked, ${backfillMatched ?? 0} matched`
+                    : "Matches tracks without one by artist and title. No account needed."}
                 </Text>
                 <Button
-                  label="Backfill missing Spotify IDs for this collection"
+                  label="Backfill"
                   variant="secondary"
                   onClick={onBackfill}
                   isLoading={backfillRunning}

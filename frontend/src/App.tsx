@@ -369,8 +369,7 @@ const PLAYLIST_AUTO_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 /** How often the open tab looks for playlists due for an update. */
 const PLAYLIST_AUTO_SYNC_CHECK_MS = 5 * 60 * 1000;
 
-const NO_SEARCH_SOURCES_MESSAGE =
-  "Choose at least one source in Search options before searching.";
+const NO_SEARCH_SOURCES_MESSAGE = "Choose a source in Search options";
 
 const isConnectionClosedMessage = (message: string) =>
   message.startsWith("WebSocket connection closed");
@@ -1022,7 +1021,7 @@ function App() {
     () =>
       dispatch({
         type: "notification",
-        message: "WebSocket error encountered.",
+        message: "Connection error",
         kind: "error",
       }),
     [dispatch],
@@ -1040,8 +1039,7 @@ function App() {
         pairingCode = null;
         dispatch({
           type: "notification",
-          message:
-            "This sign-in code has expired or was already used. Scan a new one from Stereo's Tailscale button.",
+          message: "Sign-in code expired or already used. Scan a new one.",
           kind: "error",
         });
         return;
@@ -1051,7 +1049,7 @@ function App() {
         dispatch({
           type: "notification",
           message:
-            "Stereo no longer accepts this browser's saved sign-in. On a phone, scan a new code from Stereo's Tailscale button; otherwise open Stereo's link with its current token.",
+            "Saved sign-in no longer valid. Scan a new code, or open Stereo's link with its token.",
           kind: "error",
         });
         return;
@@ -1605,7 +1603,7 @@ function App() {
         setPendingDelete({
           ids: selectedRows.map((t) => t.yt_id),
           collection,
-          description: `This removes ${what} from ${collectionLabel(collection)}, including ratings and play counts.`,
+          description: `Removes ${what} from ${collectionLabel(collection)}, with ratings and play counts.`,
           isNowPlaying: false,
         });
       }
@@ -2488,7 +2486,6 @@ function App() {
   ) : state.collections?.length === 0 ? (
     <EmptyState
       title="Create your first collection"
-      description="A collection keeps track metadata and ratings in a local database file."
       actions={
         <Button
           label="Create collection"
@@ -2503,8 +2500,7 @@ function App() {
     </HStack>
   ) : state.collection.size === 0 ? (
     <EmptyState
-      title="Your collection is ready"
-      description="Search for music or import tracks to start curating."
+      title="Your collection is empty"
       actions={
         <HStack gap={2} wrap="wrap">
           <Button
@@ -2576,7 +2572,7 @@ function App() {
           setPendingDelete({
             ids: [state.current_id],
             collection: openCollectionPath,
-            description: `This removes “${state.track_info.title}” from ${collectionLabel(openCollectionPath)}, including its rating and play count.`,
+            description: `Removes “${state.track_info.title}” from ${collectionLabel(openCollectionPath)}, with its rating and play count.`,
             isNowPlaying: true,
           });
         }
@@ -2767,22 +2763,20 @@ function App() {
               <Banner
                 container="section"
                 status="warning"
-                title="Connecting to Stereo"
-                description="Your collection will be available when the connection is restored."
+                title="Connecting to Stereo…"
               />
             ) : state.backend_version && !state.audio_key ? (
               <Banner
                 container="section"
                 status="error"
                 title="Playback needs yt-dlp"
-                description="Install yt-dlp and Deno (e.g. brew install yt-dlp deno), then restart Stereo. If yt-dlp isn't on the PATH, pass --yt-dlp <path>."
+                description="Install yt-dlp and Deno (brew install yt-dlp deno) and restart Stereo, or pass --yt-dlp <path>."
               />
             ) : state.collection_is_valid === false ? (
               <Banner
                 container="section"
                 status="error"
-                title="This collection could not be opened"
-                description="Select another collection or create a new one."
+                title="Could not open this collection"
               />
             ) : undefined
           }

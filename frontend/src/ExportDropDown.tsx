@@ -41,7 +41,7 @@ function ExportDropDown({
       items={[
         {
           type: "section",
-          title: "Export selection to collection",
+          title: "Selection to collection",
           items: collections.map((c) => ({
             label: collectionLabel(c.path),
             onClick: () => exportToCollection(c.path),
@@ -50,35 +50,44 @@ function ExportDropDown({
         },
         { type: "divider" },
         {
-          label: "Export selection to YouTube Music playlist (50 tracks max)",
-          onClick: exportSelectionToYTM,
-          isDisabled: !hasSelection,
-        },
-        {
-          label: "Export selection to YouTube playlist (login required)",
-          onClick: exportSelectionToYTSavedPlaylist,
-          isDisabled: !hasSelection,
-        },
-        {
-          label: "Create Spotify playlist from selection",
-          onClick: exportSelectionToSpotifyPlaylist,
-          isDisabled: !hasSelection,
+          type: "section",
+          title: "Selection",
+          items: [
+            {
+              label: "YouTube Music (temporary, max 50)",
+              onClick: exportSelectionToYTM,
+              isDisabled: !hasSelection,
+            },
+            {
+              label: "YouTube playlist",
+              onClick: exportSelectionToYTSavedPlaylist,
+              isDisabled: !hasSelection,
+            },
+            {
+              label: "Spotify playlist",
+              onClick: exportSelectionToSpotifyPlaylist,
+              isDisabled: !hasSelection,
+            },
+          ],
         },
         { type: "divider" },
         {
-          label:
-            "Export first 50 tracks to temporary YouTube Music playlist (no login required)",
-          onClick: exportTop50ToYTM,
-        },
-        {
-          label:
-            "Export current view (filtered and sorted) to YouTube playlist (login required)",
-          onClick: exportAllToYTSavedPlaylist,
-        },
-        {
-          label:
-            "Create Spotify playlist from current view (filtered and sorted)",
-          onClick: exportAllToSpotifyPlaylist,
+          type: "section",
+          title: "Current view",
+          items: [
+            {
+              label: "YouTube Music (temporary, first 50)",
+              onClick: exportTop50ToYTM,
+            },
+            {
+              label: "YouTube playlist",
+              onClick: exportAllToYTSavedPlaylist,
+            },
+            {
+              label: "Spotify playlist",
+              onClick: exportAllToSpotifyPlaylist,
+            },
+          ],
         },
       ]}
     />

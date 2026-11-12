@@ -72,11 +72,7 @@ function ServiceSection({
     <VStack gap={2}>
       <Switch
         label={`Export to ${label}`}
-        description={
-          target
-            ? undefined
-            : `Turning this off later forgets the ${label} playlist; turning it on again creates a new one.`
-        }
+        labelTooltip={`Turning it off forgets the ${label} playlist.`}
         value={!!target}
         onChange={(on) => onChange(on ? { auto_sync: true } : null)}
       />
@@ -84,13 +80,13 @@ function ServiceSection({
         <VStack gap={2}>
           <Switch
             label="Update automatically"
-            description="When the playlist's tracks change, at most once an hour, while Stereo is open in a browser tab"
+            labelTooltip="When its tracks change, at most hourly, while Stereo is open"
             value={target.auto_sync}
             onChange={(auto_sync) => onChange({ ...target, auto_sync })}
           />
           {isRunning ? (
             <ProgressBar
-              label={`Updating the ${label} playlist`}
+              label="Updating"
               value={live.current ?? 0}
               max={live.total ?? 1}
               isIndeterminate={live.total === null}
@@ -112,11 +108,11 @@ function ServiceSection({
                   live.matched !== null &&
                   live.total !== null &&
                   live.matched < live.total
-                    ? ` · ${live.matched} of ${live.total} tracks found on ${label}`
+                    ? ` · ${live.matched} of ${live.total} found`
                     : "")
                 : status?.url
                   ? "Not updated from this machine yet"
-                  : `The first sync creates a private ${label} playlist named ${playlist.name}`}
+                  : "Not created yet"}
             </Text>
           )}
           <HStack gap={2} vAlign="center" wrap="wrap">
@@ -137,7 +133,7 @@ function ServiceSection({
                   size="sm"
                   variant="ghost"
                   icon={<LinkBreak2Icon />}
-                  tooltip={`Forget this ${label} playlist (it isn't deleted); the next sync creates a new one`}
+                  tooltip={`Forget this ${label} playlist without deleting it`}
                   onClick={onUnlink}
                 />
               </>
@@ -206,7 +202,7 @@ function PlaylistDetails({
           nameTaken
             ? {
                 type: "error",
-                message: "A playlist with this name already exists",
+                message: "Name already taken",
               }
             : undefined
         }
@@ -216,9 +212,7 @@ function PlaylistDetails({
           {collectionLabel(playlist.collection)}
         </Text>
         <Text type="supporting" color="secondary">
-          {collectionExists
-            ? describeView(playlist)
-            : "This collection doesn't exist anymore, so the playlist is empty."}
+          {collectionExists ? describeView(playlist) : "Collection not found"}
         </Text>
         <HStack gap={2} wrap="wrap">
           <Button
@@ -233,7 +227,6 @@ function PlaylistDetails({
               label="Replace with current view"
               size="sm"
               variant="ghost"
-              tooltip="Use the collection, column filters and sorting shown now"
               onClick={onReplaceWithView}
             />
           )}
@@ -241,7 +234,7 @@ function PlaylistDetails({
       </VStack>
       <NumberInput
         label="Track limit"
-        description={`Only the first tracks of the view. Exports take at most ${MAX_SYNCED_TRACKS}.`}
+        labelTooltip={`Exports take at most ${MAX_SYNCED_TRACKS} tracks.`}
         placeholder="All tracks"
         value={playlist.limit}
         min={1}

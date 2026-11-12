@@ -5,12 +5,11 @@ import { Button } from "@astryxdesign/core/Button";
 import { FormLayout } from "@astryxdesign/core/FormLayout";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { HStack } from "@astryxdesign/core/Stack";
-import { Text } from "@astryxdesign/core/Text";
 
 type SavePlaylistDialogProps = {
   isOpen: boolean;
   onClose: () => void;
-  /** The collection the view shows, for the explanation. */
+  /** The collection the view shows, for the subtitle. */
   collectionName: string;
   /** Names already taken, which would be confusing to reuse. */
   existingNames: string[];
@@ -51,17 +50,19 @@ function SavePlaylistDialog({
       width={420}
     >
       <Layout
-        header={<DialogHeader title="Save playlist" onOpenChange={onClose} />}
+        header={
+          <DialogHeader
+            title="Save playlist"
+            subtitle={`${collectionName} with its current filters and sorting`}
+            onOpenChange={onClose}
+          />
+        }
         content={
           <LayoutContent>
             <FormLayout>
-              <Text as="div" type="body">
-                Saves {collectionName} with its current column filters and
-                sorting. The playlist follows the collection: tracks you add,
-                rate or edit later show up in it whenever they match.
-              </Text>
               <TextInput
                 label="Playlist name"
+                labelTooltip="Tracks you add, rate or edit later show up whenever they match."
                 value={name}
                 hasAutoFocus
                 onChange={setName}
@@ -69,7 +70,7 @@ function SavePlaylistDialog({
                   isTaken
                     ? {
                         type: "error",
-                        message: "A playlist with this name already exists",
+                        message: "Name already taken",
                       }
                     : undefined
                 }

@@ -69,7 +69,7 @@ function PlaylistMenu({
         <>
           <MenuHeading>Playlists</MenuHeading>
           <DropdownMenuRadioGroup
-            aria-label="Playlists"
+            label="Playlists"
             value={active?.id}
             onChange={(id) => {
               const playlist = playlists.find((p) => p.id === id);
@@ -105,7 +105,6 @@ function PlaylistMenu({
       <DropdownMenuItem
         icon={<BookmarkIcon />}
         label="Save current view as playlist…"
-        description="The collection with its column filters and sorting"
         isDisabled={!canSave}
         onClick={onSaveAs}
       />

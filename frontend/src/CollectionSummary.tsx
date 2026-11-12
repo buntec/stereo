@@ -38,7 +38,7 @@ function ScoredNameColumn({
           <ListItem
             key={n.name}
             label={n.name}
-            description={`${n.count} tracks · weighted average release age: ${Math.round(n.weighted_avg_days_since_release)} days`}
+            description={`${n.count} tracks · avg. age ${Math.round(n.weighted_avg_days_since_release)} days`}
             endContent={
               <Button
                 label={`Search ${n.name}`}
