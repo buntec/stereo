@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
@@ -47,8 +46,8 @@ function AddTracksDialog({
       <Layout
         header={
           <DialogHeader
-            title="Some tracks already exist"
-            subtitle={`${conflicts.length} already in the collection. Choose which to overwrite.`}
+            title="Overwrite existing tracks?"
+            subtitle={`${conflicts.length} already in the collection`}
             onOpenChange={() => onOpenChange(false)}
           />
         }
@@ -89,10 +88,6 @@ function AddTracksDialog({
                   />
                 ))}
               </List>
-
-              <Text type="supporting">
-                Unchecked tracks are left as-is. New tracks are always added.
-              </Text>
             </VStack>
           </LayoutContent>
         }

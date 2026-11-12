@@ -131,7 +131,7 @@ function SearchBox({
               : !isTop100 && !searchSources.length
                 ? {
                     type: "warning",
-                    message: "Choose at least one source in Search options.",
+                    message: "Choose a source in Search options",
                   }
                 : undefined
           }

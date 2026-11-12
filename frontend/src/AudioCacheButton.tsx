@@ -84,14 +84,10 @@ export function AudioCacheButton({
       : failed
         ? ([
             "failed",
-            `Download failed${download?.error ? `: ${download.error}` : ""}. Click to retry`,
+            `Retry download${download?.error ? ` (${download.error})` : ""}`,
             <ExclamationTriangleIcon />,
           ] as const)
-        : ([
-            "missing",
-            "Not downloaded. Click to download",
-            <DownloadIcon />,
-          ] as const);
+        : (["missing", "Download", <DownloadIcon />] as const);
 
   return (
     <IconButton

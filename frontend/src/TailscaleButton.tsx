@@ -95,8 +95,7 @@ function PairingQr({
     <VStack gap={1} hAlign="center">
       <QrCode text={`${url}/#stereo-pair=${code}`} />
       <Text type="supporting">
-        Scan to open Stereo on a phone or tablet on your tailnet. Each code
-        signs in one device, once.
+        Scan on a device in your tailnet. Each code works once.
       </Text>
     </VStack>
   );
@@ -141,7 +140,7 @@ function Details({
     return (
       <VStack gap={1}>
         <Text>{status.message}</Text>
-        <Text type="supporting">Stereo keeps retrying.</Text>
+        <Text type="supporting">Retrying…</Text>
       </VStack>
     );
   return (

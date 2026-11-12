@@ -93,8 +93,7 @@ function YouTubeSessionDialog({
           <LayoutContent>
             {logins ? (
               <RadioList
-                label="Which YouTube login should Stereo use?"
-                description="More than one profile of this browser is logged in to YouTube."
+                label="Choose a YouTube login"
                 value={picked}
                 onChange={setPicked}
               >
@@ -115,21 +114,14 @@ function YouTubeSessionDialog({
                   </Text>
                 )}
                 <Text as="div" type="body">
-                  Stereo creates playlists on your YouTube account using the
-                  YouTube login of this browser. Make sure you&rsquo;re logged
-                  in to{" "}
+                  In this browser, log in to{" "}
                   <Link href="https://www.youtube.com" isExternalLink>
                     youtube.com
                   </Link>{" "}
-                  here with the account or channel you want playlists on, then
-                  connect.
+                  with the account or channel for your playlists, then connect.
                 </Text>
                 <Text as="div" type="supporting" color="secondary">
-                  Stereo reads your YouTube cookies from this browser each time
-                  it exports a playlist and never keeps a copy, so logging out
-                  of YouTube here disconnects it too. It uses YouTube&rsquo;s
-                  own, undocumented web API, which has no quota but may change
-                  without notice.
+                  Cookies are read on each export, never stored.
                 </Text>
               </VStack>
             )}

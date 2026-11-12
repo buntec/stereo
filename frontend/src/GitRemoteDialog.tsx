@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { Text } from "@astryxdesign/core/Text";
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
@@ -7,7 +6,6 @@ import { IconButton } from "@astryxdesign/core/IconButton";
 import { FormLayout } from "@astryxdesign/core/FormLayout";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { HStack } from "@astryxdesign/core/Stack";
-import { Code } from "@astryxdesign/core/Code";
 import { GitHubLogoIcon } from "@radix-ui/react-icons";
 
 type GitRemoteDialogProps = {
@@ -34,8 +32,8 @@ function GitRemoteDialog({
     <>
       <IconButton
         variant={currentRemote ? "primary" : "secondary"}
-        label="Configure git remote for collection backups"
-        tooltip="Configure git remote for collection backups"
+        label="Git remote"
+        tooltip="Git remote"
         icon={<GitHubLogoIcon />}
         onClick={() => {
           setDialogOpen(true);
@@ -63,14 +61,9 @@ function GitRemoteDialog({
           content={
             <LayoutContent>
               <FormLayout>
-                <Text as="div" type="body">
-                  Set a remote URL to automatically push collection snapshots
-                  after each change. Create an empty repo on GitHub or GitLab
-                  first, then paste its URL here. Example:{" "}
-                  <Code>git@github.com:you/stereo-collections.git</Code>
-                </Text>
                 <TextInput
-                  label="Remote URL (origin)"
+                  label="Remote URL"
+                  labelTooltip="Collections are pushed here after changes. Use an empty repository."
                   placeholder="git@github.com:you/stereo-collections.git"
                   value={value}
                   onChange={setValue}

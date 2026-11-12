@@ -1,6 +1,4 @@
 import { useState } from "react";
-import { Text } from "@astryxdesign/core/Text";
-import { Code } from "@astryxdesign/core/Code";
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
@@ -67,8 +65,8 @@ function ImportDialog({
         : ({
             type: "error",
             message: fromRepo
-              ? "This collection could not be read."
-              : "This collection could not be read. Check the file path or URL and try again.",
+              ? "Could not read this collection"
+              : "No collection found here",
           } as const);
 
   return (
@@ -76,8 +74,8 @@ function ImportDialog({
       {showTrigger && (
         <IconButton
           variant="secondary"
-          label="Import tracks from another collection"
-          tooltip="Import tracks from another collection"
+          label="Import tracks"
+          tooltip="Import tracks"
           icon={<DownloadIcon />}
           onClick={() => setDialogOpen(true)}
         />
@@ -95,54 +93,38 @@ function ImportDialog({
             <LayoutContent>
               <FormLayout>
                 {fromRepo ? (
-                  <>
-                    <Text as="div" type="body">
-                      Import tracks from another collection in this repository.
-                    </Text>
-
-                    <Selector
-                      label="Import from"
-                      placeholder={
-                        repoCollections.length > 0
-                          ? "Choose a collection"
-                          : "No other collections in this repository"
-                      }
-                      isDisabled={repoCollections.length === 0}
-                      options={repoCollections.map((c) => ({
-                        value: c.path,
-                        label: collectionLabel(c.path),
-                      }))}
-                      value={
-                        repoCollections.some((c) => c.path === importFrom)
-                          ? importFrom
-                          : undefined
-                      }
-                      onChange={setImportFrom}
-                      status={isValidImportFrom === false ? status : undefined}
-                    />
-                  </>
+                  <Selector
+                    label="Import from"
+                    placeholder={
+                      repoCollections.length > 0
+                        ? "Choose a collection"
+                        : "No other collections in this repository"
+                    }
+                    isDisabled={repoCollections.length === 0}
+                    options={repoCollections.map((c) => ({
+                      value: c.path,
+                      label: collectionLabel(c.path),
+                    }))}
+                    value={
+                      repoCollections.some((c) => c.path === importFrom)
+                        ? importFrom
+                        : undefined
+                    }
+                    onChange={setImportFrom}
+                    status={isValidImportFrom === false ? status : undefined}
+                  />
                 ) : (
-                  <>
-                    <Text as="div" type="body">
-                      Import tracks from another collection. You can use an
-                      absolute file path like{" "}
-                      <Code>/path/to/collection.db</Code> or a URL like{" "}
-                      <Code>https://example.com/collection.db</Code>. In any
-                      case, the import source is validated before the import
-                      button is enabled.
-                    </Text>
-
-                    <TextInput
-                      label="Import from"
-                      value={importFrom}
-                      onChange={setImportFrom}
-                      status={status}
-                    />
-                  </>
+                  <TextInput
+                    label="File path or URL"
+                    placeholder="/path/to/collection.db"
+                    value={importFrom}
+                    onChange={setImportFrom}
+                    status={status}
+                  />
                 )}
 
                 <CheckboxInput
-                  label="Keep user data (ratings, play count, etc.)"
+                  label="Keep ratings and play history"
                   value={keepUserData}
                   onChange={setKeepUserData}
                 />

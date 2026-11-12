@@ -209,10 +209,8 @@ function CollectionSelector({
         title="Delete collection?"
         description={
           pendingDelete
-            ? `This deletes ${collectionLabel(pendingDelete)} with all its tracks, ratings and play counts.` +
-              (selectedRepo?.remote
-                ? " The deletion is synced to the repository's remote, so it also disappears on your other machines."
-                : "")
+            ? `Deletes ${collectionLabel(pendingDelete)} with all its tracks, ratings and play counts` +
+              (selectedRepo?.remote ? ", on all your machines." : ".")
             : ""
         }
         actionLabel="Delete collection"

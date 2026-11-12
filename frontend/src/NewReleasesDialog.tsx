@@ -252,8 +252,7 @@ function NewReleasesDialog({
     </HStack>
   ) : candidates.artists.length === 0 && candidates.labels.length === 0 ? (
     <Text type="body">
-      Rate some tracks 4★ or higher first — new releases are searched for by the
-      artists and labels you rate highest.
+      Rate tracks 4★ or higher to see their artists and labels here.
     </Text>
   ) : (
     // Side by side when the dialog is wide enough, stacked otherwise.
@@ -287,7 +286,7 @@ function NewReleasesDialog({
         header={
           <DialogHeader
             title="Latest releases"
-            subtitle={`Search for releases from the last ${days} day${days === 1 ? "" : "s"} by these artists and labels.`}
+            subtitle={`From the last ${days} day${days === 1 ? "" : "s"}`}
             onOpenChange={close}
           />
         }

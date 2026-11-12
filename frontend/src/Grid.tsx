@@ -158,7 +158,6 @@ const NoSearchResultsOverlay = ({
   <EmptyState
     isCompact
     title="No tracks found"
-    description="Try another title, artist, label, or search source."
     actions={<Button label="Back to collection" onClick={onExitSearch} />}
   />
 );
@@ -167,7 +166,6 @@ const NoFilterMatchesOverlay = ({ api }: CustomNoRowsOverlayProps) => (
   <EmptyState
     isCompact
     title="No tracks match these filters"
-    description="Clear the filters to see your collection again."
     actions={
       <Button label="Clear filters" onClick={() => api.setFilterModel(null)} />
     }

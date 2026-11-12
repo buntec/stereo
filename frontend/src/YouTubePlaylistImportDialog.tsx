@@ -95,7 +95,7 @@ function YouTubePlaylistImportDialog({
           header={
             <DialogHeader
               title="Import YouTube playlist"
-              subtitle="Imports videos from a public YouTube or YouTube Music playlist."
+              subtitle="Public playlists only"
               onOpenChange={close}
             />
           }

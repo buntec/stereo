@@ -54,16 +54,16 @@ export default function ImportMenu({
         }}
         items={[
           {
-            label: "Import from another collection in this repo",
+            label: "Collection in this repo",
             onClick: () => openCollectionImport("repo"),
             isDisabled: repoCollections.length === 0,
           },
           {
-            label: "Import collection/database (file or URL)",
+            label: "Collection file or URL",
             onClick: () => openCollectionImport("path"),
           },
           {
-            label: "Import YouTube playlist",
+            label: "YouTube playlist",
             onClick: () => setYoutubeOpen(true),
           },
         ]}

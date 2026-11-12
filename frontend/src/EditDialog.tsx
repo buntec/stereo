@@ -126,10 +126,9 @@ export function EditTrackDialog({
           header={
             <DialogHeader
               title="Edit track"
-              subtitle="Update the details saved in your collection."
               onOpenChange={closeDialog}
               endContent={
-                <Tooltip content="Fill in missing fields from Beatport, Traxsource, and Volumo">
+                <Tooltip content="From Beatport, Traxsource and Volumo">
                   <Button
                     variant="secondary"
                     size="sm"
@@ -146,11 +145,7 @@ export function EditTrackDialog({
             <LayoutContent>
               <FormLayout>
                 {isValid === false && (
-                  <Banner
-                    status="error"
-                    title="Check track details"
-                    description="Enter a title and YouTube video ID, and check the formats of the other fields."
-                  />
+                  <Banner status="error" title="Check track details" />
                 )}
                 <HStack gap={2} vAlign="end">
                   <img
@@ -166,8 +161,7 @@ export function EditTrackDialog({
                         !value.yt_id.trim()
                           ? {
                               type: "error",
-                              message:
-                                "Enter the ID of the YouTube video used for playback.",
+                              message: "Required",
                             }
                           : undefined
                       }
@@ -182,7 +176,7 @@ export function EditTrackDialog({
                   isRequired
                   status={
                     !value.title.trim()
-                      ? { type: "error", message: "Enter a track title." }
+                      ? { type: "error", message: "Required" }
                       : undefined
                   }
                   value={value.title}
@@ -191,7 +185,7 @@ export function EditTrackDialog({
 
                 <TextInput
                   label="Artists"
-                  description="Separate multiple artists with commas."
+                  description="Comma-separated"
                   value={value.artists.join(",")}
                   onChange={(v) =>
                     setValue({
@@ -204,7 +198,7 @@ export function EditTrackDialog({
                 {freeformDate ? (
                   <TextInput
                     label="Release date"
-                    description="Use YYYY, YYYY-MM, or YYYY-MM-DD."
+                    description="YYYY, YYYY-MM or YYYY-MM-DD"
                     value={value.release_date ?? ""}
                     onChange={(release_date) =>
                       setValue({

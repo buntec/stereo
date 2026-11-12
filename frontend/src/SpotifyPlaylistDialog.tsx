@@ -86,7 +86,7 @@ function SpotifyPlaylistDialog({
         header={
           <DialogHeader
             title="Export to Spotify playlist"
-            subtitle={`Exports up to ${trackCount} track${trackCount !== 1 ? "s" : ""} to Spotify. Tracks are matched by artist/title, so some may not be found.`}
+            subtitle={`${trackCount} track${trackCount !== 1 ? "s" : ""}, matched by artist and title`}
             onOpenChange={() => onOpenChange(false)}
           />
         }
@@ -102,7 +102,7 @@ function SpotifyPlaylistDialog({
                 <RadioListItem value="new" label="Create a new playlist" />
                 <RadioListItem
                   value="existing"
-                  label="Replace tracks in an existing playlist"
+                  label="Replace an existing playlist"
                 />
               </RadioList>
 
@@ -135,13 +135,12 @@ function SpotifyPlaylistDialog({
                       lookupStatus === "found"
                         ? {
                             type: "warning",
-                            message: `This will remove all existing tracks from "${lookupName}" and replace them with this export. Its link stays the same.`,
+                            message: `Replaces all tracks in "${lookupName}"`,
                           }
                         : lookupStatus === "not-found"
                           ? {
                               type: "error",
-                              message:
-                                "Couldn't find that playlist. Paste the playlist's share link or its spotify:playlist:... URI.",
+                              message: "Playlist not found",
                             }
                           : undefined
                     }

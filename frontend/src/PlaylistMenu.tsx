@@ -105,7 +105,6 @@ function PlaylistMenu({
       <DropdownMenuItem
         icon={<BookmarkIcon />}
         label="Save current view as playlist…"
-        description="The collection with its column filters and sorting"
         isDisabled={!canSave}
         onClick={onSaveAs}
       />
