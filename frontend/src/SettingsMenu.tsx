@@ -4,6 +4,7 @@ import { Slider } from "@astryxdesign/core/Slider";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { GearIcon } from "@radix-ui/react-icons";
+import type { ReactNode } from "react";
 
 /** How strongly the background pulses with the beats by default, in %. */
 export const DEFAULT_BACKGROUND_PULSE = 50;
@@ -13,6 +14,9 @@ type SettingsMenuProps = {
   backgroundShown: boolean;
   backgroundPulse: number;
   setBackgroundPulse: (pulse: number) => void;
+  /** Controls that live in the nav bar on wide screens (e.g. the appearance switch). */
+  header?: ReactNode;
+  footer?: ReactNode;
 };
 
 // A popover rather than a dialog, so the background stays visible while
@@ -21,6 +25,8 @@ function SettingsMenu({
   backgroundShown,
   backgroundPulse,
   setBackgroundPulse,
+  header,
+  footer,
 }: SettingsMenuProps) {
   return (
     <Popover
@@ -33,6 +39,7 @@ function SettingsMenu({
           <Text type="label" weight="bold">
             Settings
           </Text>
+          {header}
           <Slider
             label="Background pulse"
             labelTooltip="How strongly the background pulses with the beats."
@@ -46,6 +53,7 @@ function SettingsMenu({
             isDisabled={!backgroundShown}
             disabledMessage="Background is off"
           />
+          {footer}
         </VStack>
       }
     >

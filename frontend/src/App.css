@@ -58,6 +58,12 @@
   }
   .collection-controls {
     flex: 1;
+    flex-wrap: nowrap;
+  }
+  /* Half the cell padding, which the compact grid columns' widths count on
+     (COMPACT_CONTROLS_WIDTH in Grid.tsx). */
+  .grid {
+    --ag-cell-horizontal-padding: var(--spacing-2);
   }
 }
 

@@ -971,6 +971,9 @@ function App() {
 
   // Phones and tablets: footer buttons sized for fingers rather than a mouse.
   const touch = useMediaQuery("(pointer: coarse)");
+  // Phone-sized screens, the same breakpoint as App.css's: the header and toolbar
+  // condense and the grids tighten their fixed columns.
+  const narrow = useMediaQuery("(max-width: 48rem)");
   const footerButtonSize = touch ? "lg" : "sm";
   const consumeNotifications = useCallback(
     (ids: number[]) => dispatch({ type: "consume-notifications", ids }),
@@ -2432,8 +2435,9 @@ function App() {
     ArrowDown: () => nextTrack(),
   });
 
-  const importMenu = (
+  const importMenu = (isIconOnly = false) => (
     <ImportMenu
+      isIconOnly={isIconOnly}
       setImportFrom={(path: string) =>
         dispatch({ type: "set-import-from", path })
       }
@@ -2468,6 +2472,7 @@ function App() {
 
   const collectionBody = isSearchGridActive ? (
     <SearchResultsGrid
+      isCompact={narrow}
       // Chart results get different columns and default sort; remounting applies them.
       key={state.search_is_chart ? "chart" : "search"}
       isChart={state.search_is_chart}
@@ -2519,12 +2524,13 @@ function App() {
                 ?.focus()
             }
           />
-          {importMenu}
+          {importMenu()}
         </HStack>
       }
     />
   ) : (
     <TracksGrid
+      isCompact={narrow}
       gridRef={gridRef}
       currentId={state.current_id}
       playId={playIdForGrid}
@@ -2742,6 +2748,7 @@ function App() {
               </StackItem>
               <HStack vAlign="center" hAlign="end">
                 <NavBarControls
+                  isCompact={narrow}
                   version={state.backend_version}
                   appearance={settings.appearance}
                   setAppearance={(appearance) =>
@@ -2809,7 +2816,12 @@ function App() {
                     : "transparent"
                 }
                 startContent={
-                  <HStack width="100%" gap={2} vAlign="center" wrap="wrap">
+                  <HStack
+                    width="100%"
+                    gap={narrow ? 1 : 2}
+                    vAlign="center"
+                    wrap="wrap"
+                  >
                     {isSearchGridActive ? (
                       <>
                         <Text type="supporting">
@@ -2902,6 +2914,7 @@ function App() {
                           </>
                         )}
                         <ExportDropDown
+                          isIconOnly={narrow}
                           selectionCount={trackSelection.selectionCount}
                           collections={state.collections ?? []}
                           exportToCollection={exportSelectedTracksToCollection}
@@ -2920,9 +2933,10 @@ function App() {
                             exportAllToSpotifyPlaylist
                           }
                         />
-                        {importMenu}
+                        {importMenu(narrow)}
                         {state.collection && state.collection.size > 0 && (
                           <ColumnsMenu
+                            isIconOnly={narrow}
                             gridRef={gridRef}
                             onReset={resetColumnState}
                           />

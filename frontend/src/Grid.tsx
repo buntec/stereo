@@ -37,6 +37,7 @@ import {
   type GetRowIdParams,
   type ColDef,
   type RowSelectionOptions,
+  type SelectionColumnDef,
   type SelectionChangedEvent,
   type CellKeyDownEvent,
   type FullWidthCellKeyDownEvent,
@@ -48,6 +49,7 @@ import {
 
 import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import { useTheme } from "@astryxdesign/core/theme";
+import { useMediaQuery } from "@astryxdesign/core/hooks";
 
 import {
   useState,
@@ -101,8 +103,35 @@ const flexWidth = (flex: number): ColDef => ({
 });
 
 // Width of the controls column (thumbnail play button and two icon buttons), which is
-// fixed by its renderer's content.
+// fixed by its renderer's content: 104px plus the cell's horizontal padding.
 const CONTROLS_WIDTH = 136;
+
+// Narrow screens: App.css halves the cells' horizontal padding there, so the fixed
+// columns shrink by as much, and the free-text columns may get narrower before the grid
+// scrolls sideways. The selection column fits just its checkbox.
+const COMPACT_CONTROLS_WIDTH = 120;
+const COMPACT_FLEX_MIN_WIDTH = 100;
+const compactColumns = (colDefs: ColDef[]): ColDef[] =>
+  colDefs.map((c) =>
+    c.field === "yt_id"
+      ? { ...c, ...fixedWidth(COMPACT_CONTROLS_WIDTH) }
+      : c.flex
+        ? { ...c, minWidth: COMPACT_FLEX_MIN_WIDTH }
+        : c,
+  );
+// Touch screens get taller rows, spacing out the rows' small buttons so a tap doesn't
+// land on the neighboring row's.
+const ROW_HEIGHT = 32;
+const TOUCH_ROW_HEIGHT = 40;
+const useRowHeight = () =>
+  useMediaQuery("(pointer: coarse)") ? TOUCH_ROW_HEIGHT : ROW_HEIGHT;
+
+const compactSelectionColumn: SelectionColumnDef = {
+  width: 32,
+  minWidth: 32,
+  maxWidth: 32,
+  resizable: false,
+};
 
 const ArtistCellRenderer = (params: ICellRendererParams<ITrack, string[]>) => (
   <HStack as="span" gap={0} vAlign="center" height="100%">
@@ -370,6 +399,7 @@ interface SearchResultsGridProps {
   downloadAudio: (id: string) => void;
   // Scrolls the playing track into view (the floating "show playing track" button).
   onShowCurrent: () => void;
+  isCompact?: boolean;
 }
 
 type SearchResultsGridContext = {
@@ -402,6 +432,7 @@ export const SearchResultsGrid = ({
   isSearching,
   onExitSearch,
   onShowCurrent,
+  isCompact = false,
 }: SearchResultsGridProps) => {
   const [colDefs] = useState<ColDef[]>(() => [
     ...(isChart
@@ -501,7 +532,13 @@ export const SearchResultsGrid = ({
     };
   }, []);
 
+  const columnDefs = useMemo(
+    () => (isCompact ? compactColumns(colDefs) : colDefs),
+    [colDefs, isCompact],
+  );
+
   const theme = useGridTheme();
+  const rowHeight = useRowHeight();
 
   const columnTypes = useMemo(() => {
     return {
@@ -617,10 +654,11 @@ export const SearchResultsGrid = ({
         rowModelType={"clientSide"}
         getRowId={getRowId}
         columnTypes={columnTypes}
-        columnDefs={colDefs}
+        columnDefs={columnDefs}
         rowSelection={rowSelection}
+        selectionColumnDef={isCompact ? compactSelectionColumn : undefined}
         rowClassRules={rowClassRules}
-        rowHeight={32}
+        rowHeight={rowHeight}
         context={context}
         onSelectionChanged={onSelectionChanged}
       />
@@ -643,9 +681,14 @@ type ToggleableColumn = {
 type ColumnsMenuProps = {
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
   onReset: () => void;
+  isIconOnly?: boolean;
 };
 
-export const ColumnsMenu = ({ gridRef, onReset }: ColumnsMenuProps) => {
+export const ColumnsMenu = ({
+  gridRef,
+  onReset,
+  isIconOnly = false,
+}: ColumnsMenuProps) => {
   const [columns, setColumns] = useState<ToggleableColumn[]>([]);
   const [isOpen, setIsOpen] = useState(false);
 
@@ -696,6 +739,7 @@ export const ColumnsMenu = ({ gridRef, onReset }: ColumnsMenuProps) => {
       button={{
         label: "View",
         icon: <ColumnsIcon />,
+        isIconOnly,
         variant: "ghost",
         tooltip: "View options",
       }}
@@ -737,6 +781,7 @@ interface TracksGridProps {
   downloadAudio: (id: string) => void;
   // Scrolls the playing track into view (the floating "show playing track" button).
   onShowCurrent: () => void;
+  isCompact?: boolean;
 }
 
 type TracksGridContext = {
@@ -770,6 +815,7 @@ export const TracksGrid = ({
   onShazamSimilar,
   downloadAudio,
   onShowCurrent,
+  isCompact = false,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -894,6 +940,11 @@ export const TracksGrid = ({
     };
   }, []);
 
+  const columnDefs = useMemo(
+    () => (isCompact ? compactColumns(colDefs) : colDefs),
+    [colDefs, isCompact],
+  );
+
   const defaultColDef = useMemo<ColDef>(() => {
     return {
       filterParams: {
@@ -903,6 +954,7 @@ export const TracksGrid = ({
   }, []);
 
   const theme = useGridTheme();
+  const rowHeight = useRowHeight();
 
   const columnTypes = useMemo(() => {
     return {
@@ -1024,10 +1076,11 @@ export const TracksGrid = ({
         rowClassRules={rowClassRules}
         initialState={restoredState}
         onStateUpdated={onStateUpdate0}
-        columnDefs={colDefs}
+        columnDefs={columnDefs}
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}
-        rowHeight={32}
+        selectionColumnDef={isCompact ? compactSelectionColumn : undefined}
+        rowHeight={rowHeight}
         getRowId={getRowId}
         context={context}
         rowBuffer={10}

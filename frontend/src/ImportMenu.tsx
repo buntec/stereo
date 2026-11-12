@@ -17,6 +17,7 @@ type ImportMenuProps = {
   repoCollections: ICollection[];
   requestReply: RequestReply;
   onYouTubeImport: (name: string, tracks: ITrack[]) => void;
+  isIconOnly?: boolean;
 };
 
 export default function ImportMenu({
@@ -29,6 +30,7 @@ export default function ImportMenu({
   repoCollections,
   requestReply,
   onYouTubeImport,
+  isIconOnly = false,
 }: ImportMenuProps) {
   const [collectionOpen, setCollectionOpen] = useState(false);
   const [source, setSource] = useState<ImportSource>("path");
@@ -48,7 +50,7 @@ export default function ImportMenu({
         button={{
           label: "Import tracks",
           icon: <DownloadIcon />,
-          isIconOnly: false,
+          isIconOnly,
           variant: "ghost",
           tooltip: "Import tracks",
         }}

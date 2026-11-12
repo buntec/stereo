@@ -99,7 +99,8 @@ function CollectionSelector({
             : "Select collection",
           variant: "ghost",
           width: 220,
-          style: { maxWidth: "100%" },
+          // Shrinks (truncating the name) to stay beside the logo on narrow screens.
+          style: { maxWidth: "100%", minWidth: 0 },
           tooltip,
           icon: (
             <StatusDot
