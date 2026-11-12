@@ -27,27 +27,14 @@
   margin-inline: auto;
 }
 
-/* Account buttons in the nav bar: brand color when connected, muted otherwise.
-   Spotify's and Beatport's greens are too faint on the light nav surface, so
-   light mode uses darker variants (>= 3:1 against it); light-dark() follows the
-   color-scheme the Astryx Theme sets, which also covers the System appearance. */
-.stereo-app {
-  --stereo-brand-youtube: #ff0000;
-  --stereo-brand-spotify: light-dark(#169c46, #1ed760);
-  --stereo-brand-beatport: light-dark(#009a5c, #01ff95);
-}
-.account-button svg {
-  color: var(--color-text-secondary);
-  transition: color var(--duration-medium) var(--ease-standard);
-}
-.account-youtube[data-connected="true"] svg {
-  color: var(--stereo-brand-youtube);
-}
-.account-spotify[data-connected="true"] svg {
-  color: var(--stereo-brand-spotify);
-}
-.account-beatport[data-connected="true"] svg {
-  color: var(--stereo-brand-beatport);
+/* Account buttons in the nav bar: a monochrome icon with a StatusDot in the
+   button's bottom-right corner (see AccountButton in NavBarControls.tsx). */
+.account-button .astryx-status-dot {
+  position: absolute;
+  inset-block-end: var(--spacing-1);
+  inset-inline-end: var(--spacing-1);
+  box-shadow: 0 0 0 var(--spacing-0-5) var(--color-background-surface);
+  pointer-events: none;
 }
 
 /* The Tailscale button's QR code: black on white in both themes, as many scanners reject

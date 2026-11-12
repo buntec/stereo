@@ -5,6 +5,7 @@ import {
   SegmentedControlItem,
 } from "@astryxdesign/core/SegmentedControl";
 import { HStack } from "@astryxdesign/core/Stack";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
 import { DesktopIcon, MoonIcon, SunIcon } from "@radix-ui/react-icons";
 import SpotifyIcon from "./SpotifyIcon.tsx";
@@ -52,17 +53,16 @@ const appearanceOptions: {
 ];
 
 type AccountButtonProps = {
-  service: "youtube" | "spotify" | "beatport";
   label: string;
   icon: ReactNode;
   connected: boolean;
   onClick: () => void;
 };
 
-// The icon shows the service's brand color when connected and is muted otherwise
-// (see .account-button in App.css).
+// A monochrome service icon with a StatusDot in the corner for the connection state
+// (positioned by .account-button in App.css). The button's label and tooltip spell
+// the state out, so it isn't carried by the dot's color alone.
 function AccountButton({
-  service,
   label,
   icon,
   connected,
@@ -71,11 +71,18 @@ function AccountButton({
   const status = connected ? "Connected" : "Not connected";
   return (
     <IconButton
-      className={`account-button account-${service}`}
-      data-connected={connected}
+      className="account-button"
       label={`${label}: ${status}`}
       tooltip={`${label}: ${status}`}
-      icon={icon}
+      icon={
+        <>
+          {icon}
+          <StatusDot
+            variant={connected ? "success" : "neutral"}
+            label={status}
+          />
+        </>
+      }
       variant="ghost"
       onClick={onClick}
     />
@@ -153,21 +160,18 @@ function NavBarControls({
         )}
         <HStack vAlign="center">
           <AccountButton
-            service="youtube"
             label="YouTube"
             icon={<YouTubeIcon size={16} />}
             connected={youtubeConnection !== null}
             onClick={() => openDialog(setYoutubeOpen, refreshYouTubeSession)}
           />
           <AccountButton
-            service="spotify"
             label="Spotify"
             icon={<SpotifyIcon size={16} />}
             connected={spotifyConnected}
             onClick={() => openDialog(setSpotifyOpen, refreshSpotifySession)}
           />
           <AccountButton
-            service="beatport"
             label="Beatport"
             icon={<BeatportIcon size={16} />}
             connected={beatportBrowser !== null}
