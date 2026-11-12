@@ -22,7 +22,7 @@ use tokio::sync::Mutex;
 use wreq::Client;
 
 use crate::{
-    browser_cookies::{self, browsers_for, Cookie, Profile, Store},
+    browser_cookies::{self, all_browsers, browsers_for, Cookie, Profile, Store},
     message::YouTubeLogin,
     utils,
 };
@@ -74,8 +74,8 @@ impl YouTubeSession {
     }
 }
 
-/// Finds the YouTube login in the browser identified by `user_agent` and saves where it is.
-/// Every profile of every browser that sends this User-Agent is looked at (only the one with id
+/// Finds the YouTube login in the browser identified by `user_agent` (in any browser without one)
+/// and saves where it is. Every profile of every browser that sends this User-Agent is looked at (only the one with id
 /// `login` if given, as picked from an earlier [`Connected::Choose`]), and a profile only counts
 /// once YouTube confirms its cookies are logged in. A single such profile is connected; several
 /// are returned for the user to choose from, since neither the User-Agent nor the order of the
@@ -83,14 +83,20 @@ impl YouTubeSession {
 pub async fn connect(
     client: &Client,
     home: &Path,
-    user_agent: String,
+    user_agent: Option<String>,
     login: Option<String>,
 ) -> anyhow::Result<Connected> {
-    let browsers = browsers_for(&user_agent);
-    anyhow::ensure!(
-        !browsers.is_empty(),
-        "Don't know how to read cookies from this browser ({user_agent})"
-    );
+    let browsers = match &user_agent {
+        Some(user_agent) => {
+            let browsers = browsers_for(user_agent);
+            anyhow::ensure!(
+                !browsers.is_empty(),
+                "Don't know how to read cookies from this browser ({user_agent})"
+            );
+            browsers
+        }
+        None => all_browsers(),
+    };
     let generation = {
         let mut current = GENERATION.lock().await;
         *current += 1;
@@ -161,7 +167,11 @@ pub async fn connect(
             logged_out.join(", ")
         )
     };
-    message.push_str(" Log in to youtube.com in this browser, then connect again.");
+    message.push_str(if user_agent.is_some() {
+        " Log in to youtube.com in this browser, then connect again."
+    } else {
+        " Log in to youtube.com in your browser, then connect again."
+    });
     if !unreadable.is_empty() {
         message.push_str(&format!(
             " (Could not read cookies from {}.)",

@@ -340,9 +340,8 @@ async fn main() -> anyhow::Result<()> {
             std::future::pending().await
         }
     };
-    let exit_with_stdin = cli.exit_with_stdin;
     let stdin_closed = async {
-        if exit_with_stdin {
+        if cli.exit_with_stdin {
             stdin_closed().await
         } else {
             std::future::pending().await
@@ -360,6 +359,9 @@ async fn main() -> anyhow::Result<()> {
             if tailscale_on {
                 remove_tailnet_route().await;
             }
+            // The app that would have ended our yt-dlp downloads is gone, and exiting skips
+            // their `kill_on_drop`.
+            end_own_process_group();
             std::process::exit(0);
         }
     };
@@ -378,11 +380,30 @@ async fn info() -> axum::Json<serde_json::Value> {
 }
 
 /// Resolves once stdin is closed (or fails), e.g. when the process that started us exits.
+/// Read on a thread of its own: tokio's stdin reads on a blocking-pool thread that can't be
+/// cancelled, and the runtime waits for it as it drops, so a serve error would never exit.
 async fn stdin_closed() {
-    use tokio::io::AsyncReadExt;
-    let mut stdin = tokio::io::stdin();
-    let mut buf = [0; 256];
-    while let Ok(1..) = stdin.read(&mut buf).await {}
+    let (closed, on_closed) = tokio::sync::oneshot::channel::<()>();
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut stdin = std::io::stdin().lock();
+        let mut buf = [0; 256];
+        while let Ok(1..) = stdin.read(&mut buf) {}
+        drop(closed);
+    });
+    let _ = on_closed.await;
+}
+
+/// Ends the other processes of our process group, e.g. yt-dlp downloads, when we lead it, as we do
+/// when the desktop app starts us. A group we don't lead, e.g. a shell pipeline's, isn't ours.
+fn end_own_process_group() {
+    #[cfg(unix)]
+    unsafe {
+        if libc::getpgrp() == libc::getpid() {
+            libc::signal(libc::SIGTERM, libc::SIG_IGN);
+            libc::killpg(0, libc::SIGTERM);
+        }
+    }
 }
 
 /// Shutdown waits this long at most for the tailnet route's removal: less than launchd's 20 s

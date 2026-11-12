@@ -227,7 +227,8 @@ export type ClientMsg =
   | {
       type: "connect-youtube-session";
       id?: number;
-      user_agent: string;
+      /** Left out by the desktop app, to look in every browser. */
+      user_agent?: string;
       /** The `id` of the login picked from a `youtube-logins` reply. */
       login?: string;
     }

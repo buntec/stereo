@@ -36,10 +36,12 @@ dev:
 dev-tailscale: build-frontend
     cargo run -- -v --tailscale --port {{ dev-port }}
 
+exe := if os() == "windows" { ".exe" } else { "" }
+
 # Copy a backend build into the desktop app's bundle inputs, where Tauri expects its sidecar.
 _desktop-sidecar profile:
     mkdir -p desktop/src-tauri/binaries
-    cp target/{{ profile }}/stereo desktop/src-tauri/binaries/stereo-$(rustc --print host-tuple)
+    cp target/{{ profile }}/stereo{{ exe }} desktop/src-tauri/binaries/stereo-$(rustc --print host-tuple){{ exe }}
 
 # Build and run the desktop app with a debug backend. If a stereo already runs on port 8005, the
 # app opens that one instead: stop it, or pick another port with STEREO_PORT, to try the bundled one

@@ -78,6 +78,15 @@ pub fn browsers_for(user_agent: &str) -> Vec<Browser> {
     }
 }
 
+/// Every browser [`browsers_for`] knows, for when there is no User-Agent to go by.
+pub fn all_browsers() -> Vec<Browser> {
+    // A User-Agent token of each family `browsers_for` tells apart.
+    ["Firefox/", "Edg/", "OPR/", "Chrome/", "Safari/"]
+        .into_iter()
+        .flat_map(browsers_for)
+        .collect()
+}
+
 /// Where one browser profile keeps its cookies. Saved by sessions that read their cookies afresh
 /// each time they're used, so it stays the same across versions.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

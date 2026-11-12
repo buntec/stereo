@@ -15,7 +15,7 @@ import {
   type YouTubeConnection,
   type YouTubeLogin,
 } from "./Types.tsx";
-import { inDesktopApp, openInBrowser } from "./Utils.tsx";
+import { inDesktopApp } from "./Utils.tsx";
 
 type YouTubeSessionDialogProps = {
   isOpen: boolean;
@@ -54,10 +54,12 @@ function YouTubeSessionDialog({
   const connect = (login?: string) => {
     setConnecting(true);
     requestReply(
-      // The login is read from the browser this tab runs in.
+      // The login is read from the browser this tab runs in. The desktop app's
+      // webview is none of the user's browsers: the backend looks in all of
+      // them, and several logins found are offered to pick from.
       {
         type: "connect-youtube-session",
-        user_agent: navigator.userAgent,
+        user_agent: inDesktopApp ? undefined : navigator.userAgent,
         login,
       },
       (r) => {
@@ -120,10 +122,7 @@ function YouTubeSessionDialog({
                   <Link href="https://www.youtube.com" isExternalLink>
                     youtube.com
                   </Link>{" "}
-                  with the account or channel for your playlists, then connect
-                  {inDesktopApp &&
-                    " from Stereo in that browser. This app shares the connection"}
-                  .
+                  with the account or channel for your playlists, then connect.
                 </Text>
                 <Text as="div" type="supporting" color="secondary">
                   Cookies are read on each export, never stored.
@@ -149,23 +148,13 @@ function YouTubeSessionDialog({
                 />
               )}
               <Button label="Close" variant="secondary" onClick={closeDialog} />
-              {inDesktopApp ? (
-                // The login is looked for in the browser the page runs in,
-                // which this app's webview isn't.
-                <Button
-                  label="Open Stereo in browser"
-                  variant="primary"
-                  onClick={openInBrowser}
-                />
-              ) : (
-                <Button
-                  label={connection && !logins ? "Reconnect" : "Connect"}
-                  variant="primary"
-                  onClick={() => connect(logins ? picked : undefined)}
-                  isLoading={connecting}
-                  isDisabled={connecting || (logins !== null && !picked)}
-                />
-              )}
+              <Button
+                label={connection && !logins ? "Reconnect" : "Connect"}
+                variant="primary"
+                onClick={() => connect(logins ? picked : undefined)}
+                isLoading={connecting}
+                isDisabled={connecting || (logins !== null && !picked)}
+              />
             </HStack>
           </LayoutFooter>
         }

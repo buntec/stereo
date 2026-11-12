@@ -145,14 +145,11 @@ function NavBarControls({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, requestReply]);
 
-  // In the desktop app, Beatport and YouTube are connected from Stereo in a
-  // browser: show what was connected there on coming back.
+  // In the desktop app, Beatport is connected from Stereo in a browser: show
+  // what was connected there on coming back.
   useEffect(() => {
     if (!inDesktopApp || !isConnected) return;
-    const refresh = () => {
-      refreshBeatportSession();
-      refreshYouTubeSession();
-    };
+    const refresh = () => refreshBeatportSession();
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
     // eslint-disable-next-line react-hooks/exhaustive-deps

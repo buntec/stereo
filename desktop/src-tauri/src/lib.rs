@@ -1,8 +1,8 @@
 //! Stereo's desktop app: a window onto Stereo's web UI, served by a `stereo` backend on loopback.
 //!
-//! On launch the app looks for a Stereo already running on the CLI's default port (e.g. the
-//! launchd service from `stereo install`) and opens that one: two backends on the same data
-//! directory would race each other's git syncs. Otherwise it starts its bundled backend, on the
+//! On launch the app looks for a Stereo already running on the CLI's default port, or on the port
+//! of the launchd service from `stereo install`, and opens that one: two backends on the same
+//! data directory would race each other's git syncs. Otherwise it starts its bundled backend, on the
 //! same port when it's free, and stops it again when the app quits.
 
 use std::collections::VecDeque;
@@ -21,13 +21,23 @@ use tauri_plugin_shell::ShellExt;
 /// state, settings), then stays the same across launches, and a browser tab can share it.
 const PORT: u16 = 8005;
 
-/// `PORT`, or `STEREO_PORT` like the CLI, e.g. to try the bundled backend in development while
-/// another Stereo runs on the default port. (Apps started from the Finder don't see it.)
-fn preferred_port() -> u16 {
-    std::env::var("STEREO_PORT")
-        .ok()
-        .and_then(|port| port.parse().ok())
-        .unwrap_or(PORT)
+/// `STEREO_PORT` like the CLI, e.g. to try the bundled backend in development while another
+/// Stereo runs on the default port. (Apps started from the Finder don't see it.)
+fn port_from_env() -> Option<u16> {
+    std::env::var("STEREO_PORT").ok()?.parse().ok()
+}
+
+/// The ports a running Stereo is looked for on, the first of which the bundled backend prefers:
+/// `STEREO_PORT` alone when set, else `PORT` and the launchd service's.
+fn candidate_ports() -> Vec<u16> {
+    if let Some(port) = port_from_env() {
+        return vec![port];
+    }
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut ports = vec![PORT];
+    #[cfg(target_os = "macos")]
+    ports.extend(launchd_port().filter(|port| *port != PORT));
+    ports
 }
 /// Startup recovers interrupted git syncs and checks yt-dlp, which can take a while.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
@@ -154,6 +164,8 @@ fn websocket_auth(port: u16, token: Option<&str>) -> Option<Auth> {
     let head = String::from_utf8_lossy(&head);
     match (head.split(' ').nth(1)?, token) {
         ("401", None) => Some(Auth::Required),
+        // Versions before `TOKEN_REJECTED` refuse a wrong token's upgrade.
+        ("401", Some(_)) => Some(Auth::Rejected),
         ("101", None) => Some(Auth::NotRequired),
         // A rejected token is upgraded only to be closed at once (`TOKEN_REJECTED` in
         // `server.rs`), an accepted one starts a session, whose messages follow.
@@ -220,26 +232,49 @@ fn save_token(app: &AppHandle, token: &str) {
     }
 }
 
-/// The token of the launchd service `stereo install` sets up, which keeps it in its plist.
+/// The value at `key_path` of the plist of the launchd service `stereo install` sets up, in
+/// `format` (`raw`, `json`, ...).
 #[cfg(target_os = "macos")]
-fn launchd_token() -> Option<String> {
+fn launchd_plist_value(key_path: &str, format: &str) -> Option<String> {
     let plist = std::path::Path::new(&std::env::var_os("HOME")?)
         .join("Library/LaunchAgents/com.stereo.plist");
     let output = std::process::Command::new("/usr/bin/plutil")
-        .args([
-            "-extract",
-            "EnvironmentVariables.STEREO_WS_TOKEN",
-            "raw",
-            "-o",
-            "-",
-        ])
+        .args(["-extract", key_path, format, "-o", "-"])
         .arg(plist)
         .stderr(std::process::Stdio::null())
         .output()
         .ok()?;
-    let token = String::from_utf8(output.stdout).ok()?;
-    let token = token.trim_end_matches('\n');
-    (output.status.success() && !token.is_empty()).then(|| token.to_string())
+    let value = String::from_utf8(output.stdout).ok()?;
+    let value = value.trim_end_matches('\n');
+    (output.status.success() && !value.is_empty()).then(|| value.to_string())
+}
+
+/// The launchd service's WebSocket token, which it keeps in its plist's environment.
+#[cfg(target_os = "macos")]
+fn launchd_token() -> Option<String> {
+    launchd_plist_value("EnvironmentVariables.STEREO_WS_TOKEN", "raw")
+}
+
+/// The launchd service's port, from the `--port` its plist runs it with.
+#[cfg(target_os = "macos")]
+fn launchd_port() -> Option<u16> {
+    let args = launchd_plist_value("ProgramArguments", "json")?;
+    port_argument(&serde_json::from_str::<Vec<String>>(&args).ok()?)
+}
+
+/// The port in a `stereo` command line's `--port N` or `--port=N`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn port_argument(args: &[String]) -> Option<u16> {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--port" {
+            return args.next()?.parse().ok();
+        }
+        if let Some(port) = arg.strip_prefix("--port=") {
+            return port.parse().ok();
+        }
+    }
+    None
 }
 
 /// The WebSocket tokens the app knows of: the one its backend inherits, the one entered last on
@@ -301,9 +336,7 @@ fn ask_for_token(
         )
     };
     let page = serde_json::json!({ "message": message, "token": true, "attempt": rejections });
-    let mut url = start_page.clone();
-    url.set_fragment(Some(&page.to_string()));
-    if let Err(error) = window.navigate(url) {
+    if let Err(error) = window.navigate(start_page_with(start_page, &page)) {
         eprintln!("could not show the start page: {error}");
     }
 }
@@ -350,13 +383,18 @@ fn submit_token(app: &AppHandle, token: &str) {
     }
 }
 
-/// Stereo's own pages, and the app's bundled start page; anything else opens in the browser.
+/// Stereo's own pages, the app's bundled start page (`tauri://localhost` on macOS and Linux,
+/// `http://tauri.localhost` on Windows) and what pages make themselves (`blob:`, e.g. a file
+/// export); anything else, such as `mailto:`, opens in the browser.
 fn is_app_url(url: &Url) -> bool {
-    !matches!(url.scheme(), "http" | "https")
-        || matches!(
+    match url.scheme() {
+        "http" | "https" => matches!(
             url.host_str(),
             Some("localhost" | "127.0.0.1" | "[::1]" | "tauri.localhost")
-        )
+        ),
+        "tauri" | "about" | "blob" | "data" => true,
+        _ => false,
+    }
 }
 
 fn open_in_browser(url: &Url) {
@@ -367,12 +405,18 @@ fn open_in_browser(url: &Url) {
     }
 }
 
+/// The start page, showing `page` (see its script). Percent-encoded in full, as the page decodes
+/// it: `set_fragment` would leave e.g. a `%` from the backend's stderr as it is.
+fn start_page_with(start_page: &Url, page: &serde_json::Value) -> Url {
+    let mut url = start_page.clone();
+    url.set_fragment(Some(&percent_encode(&page.to_string())));
+    url
+}
+
 /// Shows the start page with an error, for good: the app has to be restarted to try again.
 fn show_error(window: &WebviewWindow, start_page: &Url, message: &str, details: &str) {
-    let mut url = start_page.clone();
-    let error = serde_json::json!({ "message": message, "details": details }).to_string();
-    url.set_fragment(Some(&error));
-    if let Err(error) = window.navigate(url) {
+    let error = serde_json::json!({ "message": message, "details": details });
+    if let Err(error) = window.navigate(start_page_with(start_page, &error)) {
         eprintln!("could not show the error page: {error}");
     }
 }
@@ -482,18 +526,22 @@ fn start_backend(
 /// Opens a running Stereo, or starts the bundled one and opens it once it's up. Runs on its own
 /// thread, since probing and waiting block.
 fn connect(app: AppHandle, window: WebviewWindow, start_page: Url) {
-    let preferred = preferred_port();
-    let port = match probe(preferred) {
-        Probe::Stereo => return open_ui(&app, &window, &start_page, preferred),
-        Probe::Free => preferred,
+    let candidates = candidate_ports();
+    let probes: Vec<Probe> = candidates.iter().map(|port| probe(*port)).collect();
+    if let Some(i) = probes.iter().position(|probe| *probe == Probe::Stereo) {
+        return open_ui(&app, &window, &start_page, candidates[i]);
+    }
+    let port = if probes[0] == Probe::Free {
+        candidates[0]
+    } else {
         // Rather than fail: Stereo works on any port, only localStorage starts out empty.
-        Probe::Taken => match unused_loopback_port() {
+        match unused_loopback_port() {
             Ok(port) => port,
             Err(error) => {
                 let message = "Could not find a free port for Stereo.";
                 return show_error(&window, &start_page, message, &error.to_string());
             }
-        },
+        }
     };
 
     let stderr = Arc::new(Mutex::new(VecDeque::new()));
@@ -657,12 +705,43 @@ mod tests {
     }
 
     #[test]
+    fn encodes_the_start_pages_fragment_in_full() {
+        let start_page: Url = "tauri://localhost/index.html".parse().unwrap();
+        let page = serde_json::json!({ "message": "100% #1", "details": "%s %20" });
+        let url = start_page_with(&start_page, &page);
+        let fragment = url.fragment().unwrap();
+        // What `decodeURIComponent` needs: every `%` starts an escape, here of a `%` itself.
+        assert!(fragment.contains("100%25%20%231"));
+        assert!(fragment.contains("%25s%20%2520"));
+    }
+
+    #[test]
+    fn finds_the_port_on_a_command_line() {
+        let args = |args: &[&str]| args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            port_argument(&args(&["stereo", "--port", "9000"])),
+            Some(9000)
+        );
+        assert_eq!(
+            port_argument(&args(&["stereo", "--port=9001", "-v"])),
+            Some(9001)
+        );
+        assert_eq!(
+            port_argument(&args(&["stereo", "--host", "localhost"])),
+            None
+        );
+        assert_eq!(port_argument(&args(&["stereo", "--port"])), None);
+    }
+
+    #[test]
     fn only_loopback_and_app_pages_stay_in_the_window() {
         let url = |s: &str| s.parse::<Url>().unwrap();
         assert!(is_app_url(&url("http://localhost:8005/")));
         assert!(is_app_url(&url("http://127.0.0.1:51234/audio/x")));
         assert!(is_app_url(&url("tauri://localhost/index.html")));
         assert!(is_app_url(&url("http://tauri.localhost/index.html")));
+        assert!(is_app_url(&url("blob:http://localhost:8005/1234")));
+        assert!(!is_app_url(&url("mailto:someone@example.com")));
         assert!(!is_app_url(&url("https://www.beatport.com/")));
         assert!(!is_app_url(&url("https://www.youtube.com/watch?v=x")));
     }

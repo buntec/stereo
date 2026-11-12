@@ -47,6 +47,10 @@
       #status.error {
         color: var(--error);
       }
+      /* The `display` rules below would otherwise show hidden elements. */
+      [hidden] {
+        display: none !important;
+      }
       form {
         display: flex;
         gap: 8px;
