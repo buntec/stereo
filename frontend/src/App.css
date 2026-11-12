@@ -141,6 +141,55 @@
   font-size: var(--font-size-2xs);
 }
 
+/* A track row's thumbnail, which plays the track (ThumbnailPlayButton in Grid.tsx):
+   a play triangle on a scrim that darkens on hover. */
+.thumbnail-play-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--spacing-10);
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-inner);
+  overflow: hidden;
+  background: var(--color-background-muted);
+  cursor: pointer;
+}
+.thumbnail-play-button > * {
+  grid-area: 1 / 1;
+}
+.thumbnail-play-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.thumbnail-play-button::after {
+  content: "";
+  grid-area: 1 / 1;
+  align-self: stretch;
+  justify-self: stretch;
+  background: rgb(from var(--color-overlay) r g b / 0.3);
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+.thumbnail-play-button svg {
+  z-index: 1;
+  color: var(--color-on-dark);
+  filter: drop-shadow(0 0 var(--spacing-0-5) var(--color-overlay));
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+.thumbnail-play-button:hover::after {
+  background: var(--color-overlay);
+}
+.thumbnail-play-button:hover svg {
+  transform: scale(1.25);
+}
+.thumbnail-play-button:focus-visible {
+  outline: var(--border-width) solid var(--color-accent);
+  outline-offset: var(--border-width);
+}
+
 /* Audio download state of a track row (AudioCacheButton in Grid.tsx). */
 .audio-cache-button svg {
   color: var(--color-icon-secondary);
@@ -287,7 +336,9 @@
   }
   .grid .progress-bar,
   .waveform path,
-  .audio-cache-button svg {
+  .audio-cache-button svg,
+  .thumbnail-play-button svg,
+  .thumbnail-play-button::after {
     transition: none;
   }
   .download-ring-spinning,

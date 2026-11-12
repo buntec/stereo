@@ -16,7 +16,6 @@ import { Tooltip } from "@astryxdesign/core/Tooltip";
 import Rating from "./Rating";
 import { Button } from "@astryxdesign/core/Button";
 import { Text } from "@astryxdesign/core/Text";
-import { Link } from "@astryxdesign/core/Link";
 import { Divider } from "@astryxdesign/core/Divider";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
@@ -60,13 +59,20 @@ import {
   type RefObject,
 } from "react";
 
-import { PlayIcon, PlusIcon, ColumnsIcon } from "@radix-ui/react-icons";
+import {
+  PlayIcon,
+  PlusIcon,
+  ColumnsIcon,
+  HamburgerMenuIcon,
+  Pencil1Icon,
+} from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import { AudioCacheButton } from "./AudioCacheButton.tsx";
 import logger from "./logger.tsx";
 import { MenuCheck } from "./Menu.tsx";
 import ShazamIcon from "./ShazamIcon.tsx";
+import YouTubeIcon from "./YouTubeIcon.tsx";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -93,9 +99,9 @@ const flexWidth = (flex: number): ColDef => ({
   minWidth: 120,
 });
 
-// Width of the play/add/edit controls column, which is fixed by its renderer's content.
-const SEARCH_CONTROLS_WIDTH = 180;
-const TRACK_CONTROLS_WIDTH = 258;
+// Width of the controls column (thumbnail play button and two icon buttons), which is
+// fixed by its renderer's content.
+const CONTROLS_WIDTH = 136;
 
 const ArtistCellRenderer = (params: ICellRendererParams<ITrack, string[]>) => (
   <HStack as="span" gap={0} vAlign="center" height="100%">
@@ -167,6 +173,38 @@ const NoFilterMatchesOverlay = ({ api }: CustomNoRowsOverlayProps) => (
   />
 );
 
+const openInYouTube = (id: string) =>
+  window.open(
+    `https://www.youtube.com/watch?v=${id}`,
+    "_blank",
+    "noopener,noreferrer",
+  );
+
+// The track's YouTube thumbnail with a play triangle on it, which plays the track.
+const ThumbnailPlayButton = ({
+  track,
+  onPlay,
+}: {
+  track: ITrack;
+  onPlay: () => void;
+}) => (
+  <Tooltip content="Play">
+    <button
+      type="button"
+      className="thumbnail-play-button"
+      aria-label={`Play ${track.title}`}
+      onClick={onPlay}
+    >
+      <img
+        src={`https://i.ytimg.com/vi/${track.yt_id}/default.jpg`}
+        alt=""
+        loading="lazy"
+      />
+      <PlayIcon aria-hidden />
+    </button>
+  </Tooltip>
+);
+
 const PlayControlRenderer: React.FC<
   CustomCellRendererProps<ITrack, unknown, TracksGridContext>
 > = (params) => {
@@ -179,6 +217,7 @@ const PlayControlRenderer: React.FC<
   }, [context, data]);
 
   const [value, setValue] = useState(data);
+  const [editOpen, setEditOpen] = useState(false);
 
   const [isValid, setIsValid] = useState<boolean | null>(null);
 
@@ -212,41 +251,43 @@ const PlayControlRenderer: React.FC<
   if (!data || !value) return null;
 
   return (
-    <HStack gap={1} vAlign="center" className="track-control-cell">
-      <Tooltip content="Open in YouTube">
-        <Link
-          // Plain new-tab link: isExternalLink would add an icon next to every thumbnail.
-          label={`Open ${data.title} in YouTube (opens in new tab)`}
-          href={`https://www.youtube.com/watch?v=${data.yt_id}`}
-          target="_blank"
-        >
-          <img
-            className="yt-thumbnail"
-            src={`https://i.ytimg.com/vi/${data.yt_id}/default.jpg`}
-            alt="YouTube Video Thumbnail"
-            width="40"
-          />
-        </Link>
-      </Tooltip>
-      <IconButton
-        variant="ghost"
-        size="sm"
-        onClick={handlePlay}
-        label="Play"
-        tooltip="Play"
-        icon={<PlayIcon />}
-      />
+    <HStack gap={1} vAlign="center">
+      <ThumbnailPlayButton track={data} onPlay={handlePlay} />
       <AudioCacheButton id={data.yt_id} onDownload={context.downloadAudio} />
-      <IconButton
-        variant="ghost"
-        size="sm"
-        onClick={() => context.onShazamSimilar(data)}
-        label="Find similar songs on Shazam"
-        tooltip="Find similar songs on Shazam"
-        icon={<ShazamIcon size={15} />}
+      <DropdownMenu
+        hasChevron={false}
+        button={{
+          label: `Options for ${data.title}`,
+          icon: <HamburgerMenuIcon />,
+          isIconOnly: true,
+          variant: "ghost",
+          size: "sm",
+          tooltip: "Track options",
+        }}
+        items={[
+          {
+            label: "Edit",
+            icon: <Pencil1Icon />,
+            onClick: () => {
+              resetValue();
+              setEditOpen(true);
+            },
+          },
+          {
+            label: "Find similar songs on Shazam",
+            icon: <ShazamIcon size={15} />,
+            onClick: () => context.onShazamSimilar(data),
+          },
+          {
+            label: "Open in YouTube",
+            icon: <YouTubeIcon size={15} />,
+            onClick: () => openInYouTube(data.yt_id),
+          },
+        ]}
       />
-
       <EditTrackDialog
+        isOpen={editOpen}
+        onOpenChange={setEditOpen}
         isValid={isValid}
         value={value}
         setValue={setValue}
@@ -284,20 +325,8 @@ const SearchPlayControlRenderer: React.FC<
   if (!data) return null;
 
   return (
-    <HStack gap={2} vAlign="center">
-      <img
-        src={`https://i.ytimg.com/vi/${data.yt_id}/default.jpg`}
-        alt="YouTube Video Thumbnail"
-        width="40"
-      />
-      <IconButton
-        variant="secondary"
-        size="sm"
-        onClick={handlePlay}
-        label="Play"
-        tooltip="Play"
-        icon={<PlayIcon />}
-      />
+    <HStack gap={1} vAlign="center">
+      <ThumbnailPlayButton track={data} onPlay={handlePlay} />
       <AudioCacheButton id={data.yt_id} onDownload={context.downloadAudio} />
       <IconButton
         variant="secondary"
@@ -390,7 +419,7 @@ export const SearchResultsGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: SearchPlayControlRenderer,
-      ...fixedWidth(SEARCH_CONTROLS_WIDTH),
+      ...fixedWidth(CONTROLS_WIDTH),
     },
     {
       field: "title",
@@ -728,7 +757,7 @@ export const TracksGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: PlayControlRenderer,
-      ...fixedWidth(TRACK_CONTROLS_WIDTH),
+      ...fixedWidth(CONTROLS_WIDTH),
     },
     {
       field: "title",
