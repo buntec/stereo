@@ -79,6 +79,7 @@ import YouTubeIcon from "./YouTubeIcon.tsx";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
+// Not resizable, so a stateful `width` is safe here, and lets the compact layout change it.
 const fixedWidth = (width: number): ColDef => ({
   width,
   minWidth: width,
@@ -88,9 +89,12 @@ const fixedWidth = (width: number): ColDef => ({
 });
 
 // Columns whose content has a typical length (e.g. "Extended Mix"): start at that width
-// instead of growing to the longest value, but stay manually resizable.
+// instead of growing to the longest value, but stay manually resizable. User-adjustable
+// attributes are given as initial* ones throughout: a stateful `width`/`flex`/`hide` is
+// re-applied whenever the column definitions change (e.g. crossing the compact
+// breakpoint), discarding the user's resizing and column choices.
 const compactWidth = (width: number): ColDef => ({
-  width,
+  initialWidth: width,
   minWidth: 60,
   suppressAutoSize: true,
 });
@@ -98,7 +102,7 @@ const compactWidth = (width: number): ColDef => ({
 // Free-text columns share whatever space the other columns leave. They are resizable;
 // resizing one takes space from the flex columns to its right.
 const flexWidth = (flex: number): ColDef => ({
-  flex,
+  initialFlex: flex,
   minWidth: 120,
 });
 
@@ -115,7 +119,7 @@ const compactColumns = (colDefs: ColDef[]): ColDef[] =>
   colDefs.map((c) =>
     c.field === "yt_id"
       ? { ...c, ...fixedWidth(COMPACT_CONTROLS_WIDTH) }
-      : c.flex
+      : c.initialFlex
         ? { ...c, minWidth: COMPACT_FLEX_MIN_WIDTH }
         : c,
   );
@@ -655,6 +659,8 @@ export const SearchResultsGrid = ({
         getRowId={getRowId}
         columnTypes={columnTypes}
         columnDefs={columnDefs}
+        // Keep columns the user moved where they are when the definitions change.
+        maintainColumnOrder
         rowSelection={rowSelection}
         selectionColumnDef={isCompact ? compactSelectionColumn : undefined}
         rowClassRules={rowClassRules}
@@ -896,22 +902,22 @@ export const TracksGrid = ({
       field: "bp_id",
       headerName: "Beatport ID",
       filter: "agNumberColumnFilter",
-      width: 120,
-      hide: true,
+      initialWidth: 120,
+      initialHide: true,
     },
     {
       field: "sp_id",
       headerName: "Spotify ID",
       filter: true,
-      width: 120,
-      hide: true,
+      initialWidth: 120,
+      initialHide: true,
     },
     {
       field: "mb_id",
       headerName: "MusicBrainz ID",
       filter: true,
-      width: 150,
-      hide: true,
+      initialWidth: 150,
+      initialHide: true,
     },
   ]);
 
@@ -923,8 +929,8 @@ export const TracksGrid = ({
     const saved = initialState.columnSizing?.columnSizingModel ?? [];
     const savedIds = new Set(saved.map((s) => s.colId));
     const flexDefaults = colDefs.flatMap((c) =>
-      c.field && c.flex && !savedIds.has(c.field)
-        ? [{ colId: c.field, flex: c.flex }]
+      c.field && c.initialFlex && !savedIds.has(c.field)
+        ? [{ colId: c.field, flex: c.initialFlex }]
         : [],
     );
     return {
@@ -1077,6 +1083,8 @@ export const TracksGrid = ({
         initialState={restoredState}
         onStateUpdated={onStateUpdate0}
         columnDefs={columnDefs}
+        // Keep columns the user moved where they are when the definitions change.
+        maintainColumnOrder
         defaultColDef={defaultColDef}
         rowSelection={rowSelection}
         selectionColumnDef={isCompact ? compactSelectionColumn : undefined}
