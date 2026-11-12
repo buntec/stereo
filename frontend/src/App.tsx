@@ -82,6 +82,8 @@ import {
 } from "./AudioCache.ts";
 import { Waveform } from "./Waveform.tsx";
 import { forgetMissingWaveforms, useWaveform } from "./useWaveform.ts";
+import BpmCheck from "./BpmCheck.tsx";
+import { formatTempo } from "./tempo.ts";
 import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
 import { useAudioPlayback } from "./AudioPlayback.ts";
@@ -2581,6 +2583,25 @@ function App() {
     />
   );
 
+  // The playing track's metadata, once it's the playing track's.
+  const playingTrack =
+    state.track_info?.yt_id === state.current_id ? state.track_info : undefined;
+  const playingTempo = currentWaveform?.tempo;
+  const tempoLabel = playingTempo && (
+    <Tooltip
+      content={
+        (playingTempo.steady
+          ? "Measured from the audio"
+          : "Measured from the audio, whose tempo varies") +
+        (playingTrack?.bpm ? `; the metadata says ${playingTrack.bpm} BPM` : "")
+      }
+    >
+      <Text type="supporting" hasTabularNumbers className="now-playing-tempo">
+        {formatTempo(playingTempo, playingTrack?.bpm)}
+      </Text>
+    </Tooltip>
+  );
+
   // Title and track menu of the playing track, for the footer.
   const nowPlaying = state.track_info ? (
     <HStack width="100%" vAlign="center" hAlign="start" gap={2}>
@@ -2593,6 +2614,7 @@ function App() {
           releaseDate={state.track_info?.release_date}
           onArtistClick={handleArtistClick}
           onLabelClick={handleLabelClick}
+          extra={playingTrack ? tempoLabel : undefined}
         />
       </StackItem>
       {nowPlayingMenu}
@@ -3143,6 +3165,13 @@ function App() {
             notifications={state.notification_queue}
             onConsumed={consumeNotifications}
             isConnected={backendReady}
+          />
+          <BpmCheck
+            track={playingTrack}
+            tempo={playingTempo}
+            isPlaying={state.player_state === "playing"}
+            requestReply={requestReply}
+            sendMsg={sendMsg}
           />
           <NewCollectionDialog
             isOpen={createCollectionOpen}

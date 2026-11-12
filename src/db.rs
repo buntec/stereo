@@ -311,6 +311,15 @@ pub async fn update_rating(
         .rows_affected())
 }
 
+pub async fn update_bpm(pool: &SqlitePool, yt_id: &str, bpm: Option<i64>) -> anyhow::Result<u64> {
+    Ok(sqlx::query("UPDATE tracks SET bpm = ? WHERE yt_id = ?")
+        .bind(bpm)
+        .bind(yt_id)
+        .execute(pool)
+        .await?
+        .rows_affected())
+}
+
 pub async fn inc_play_count(
     pool: &SqlitePool,
     yt_id: &str,

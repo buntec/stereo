@@ -22,7 +22,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{
-    audio, beatport, db, git,
+    audio, beatport, beats, db, git,
     message::{
         MsgClient, MsgServer, PlaylistEdit, PlaylistSync, PlaylistSyncState, PlaylistTargetStatus,
         PlaylistView, SearchKind,
@@ -2184,16 +2184,16 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         MsgClient::GetWaveform { id, yt_id } => {
             let tx = tx.clone();
             tokio::spawn(async move {
-                let (peaks, beats) = audio::waveform(&yt_id)
-                    .await
-                    .map(|analysis| (analysis.peaks, analysis.beats))
-                    .unzip();
+                let analysis = audio::waveform(&yt_id).await;
+                let tempo = analysis.as_ref().and_then(|a| beats::tempo(&a.beats));
+                let (peaks, beats) = analysis.map(|a| (a.peaks, a.beats)).unzip();
                 let _ = tx
                     .send(MsgServer::Waveform {
                         id,
                         yt_id,
                         peaks,
                         beats,
+                        tempo,
                     })
                     .await;
             });
@@ -2470,6 +2470,20 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                     schedule_collection_sync(state, tx).await;
                 }
             }
+        }
+
+        MsgClient::UpdateBpm { yt_id, bpm } => {
+            let _repo_guard = lock_current_repo(state).await;
+            let pool = state.pool().context("No collection open")?;
+            anyhow::ensure!(
+                db::update_bpm(pool, &yt_id, bpm).await? > 0,
+                "The track isn't in the open collection"
+            );
+            if let Some(track) = db::get_track(pool, &yt_id).await? {
+                let _ = tx.send(MsgServer::TrackUpdate { track }).await;
+            }
+            update_collection_info(state, tx).await;
+            schedule_collection_sync(state, tx).await;
         }
 
         MsgClient::IncPlayCount { yt_id } => {
@@ -3339,6 +3353,41 @@ mod tests {
         b.rate(5).await;
         assert_eq!(rating(&new).await, Some(5));
         assert!(!old.exists());
+    }
+
+    #[tokio::test]
+    async fn updates_the_bpm_of_a_collection_track() {
+        let home = tempfile::tempdir().unwrap();
+        let (repo, port) = start_backend(home.path(), &["c"]).await;
+        let path = repo.join("c.db");
+        let mut client = Client::connect(port).await;
+        client.open(&repo, &path).await;
+
+        client
+            .send(json!({ "type": "update-bpm", "yt_id": "one", "bpm": 126 }))
+            .await;
+        client
+            .expect("track update", |m| {
+                m["type"] == "track-update" && m["track"]["bpm"] == 126
+            })
+            .await;
+        let pool = db::open_pool(&path).await.unwrap();
+        let track = db::get_track(&pool, "one").await.unwrap().unwrap();
+        pool.close().await;
+        assert_eq!(track.bpm, Some(126));
+
+        client
+            .send(json!({ "type": "update-bpm", "yt_id": "missing", "bpm": 126 }))
+            .await;
+        client
+            .expect("error", |m| {
+                m["type"] == "notification"
+                    && m["kind"] == "error"
+                    && m["message"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("isn't in the open collection"))
+            })
+            .await;
     }
 
     #[tokio::test]

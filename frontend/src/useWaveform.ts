@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Beat, RequestReply, ServerMsg } from "./Types.tsx";
+import type { Beat, RequestReply, ServerMsg, Tempo } from "./Types.tsx";
 
 /** What the backend analyzed a track's audio into. */
 export type TrackWaveform = {
@@ -7,6 +7,8 @@ export type TrackWaveform = {
   peaks: number[];
   /** In order of time. */
   beats: Beat[];
+  /** The tempo of the beats, if there are enough of them. */
+  tempo?: Tempo;
 };
 
 const waveforms = new Map<string, TrackWaveform | null>();
@@ -54,7 +56,11 @@ export const useWaveform = (
           return;
         }
         const waveform = msg.peaks?.length
-          ? { peaks: msg.peaks, beats: msg.beats ?? [] }
+          ? {
+              peaks: msg.peaks,
+              beats: msg.beats ?? [],
+              tempo: msg.tempo ?? undefined,
+            }
           : null;
         waveforms.delete(id);
         waveforms.set(id, waveform);
