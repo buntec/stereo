@@ -63,6 +63,10 @@ pub struct Settings {
     /// Run in dev mode (frontend served by Vite, not the backend)
     #[arg(long, env = "STEREO_DEV")]
     pub dev: bool,
+
+    /// Also serve over HTTPS on your tailnet, via `tailscale serve` on the same port
+    #[arg(long, env = "STEREO_TAILSCALE", global = true)]
+    pub tailscale: bool,
 }
 
 impl Settings {
@@ -148,6 +152,13 @@ impl Settings {
                 .trim_end_matches(']');
             has_remote_origin |= !matches!(host, "localhost" | "127.0.0.1" | "::1");
         }
+        if self.tailscale && !self.is_loopback_bind() {
+            // `tailscale serve` listens on the tailnet address, on the same port.
+            anyhow::bail!("--tailscale requires a loopback --host");
+        }
+        if self.tailscale && self.dev {
+            anyhow::bail!("--tailscale serves the built frontend, which --dev doesn't");
+        }
         if (!self.is_loopback_bind() || has_remote_origin) && self.ws_token.is_none() {
             anyhow::bail!("--ws-token (or STEREO_WS_TOKEN) is required for non-loopback access");
         }
@@ -171,6 +182,7 @@ mod tests {
             yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
             verbosity: 0,
             dev: false,
+            tailscale: false,
         }
     }
 
@@ -201,6 +213,16 @@ mod tests {
         assert!(settings.validate_websocket_security().is_err());
         settings.ws_token = Some("secret".to_string());
         assert!(settings.validate_websocket_security().is_ok());
+    }
+
+    #[test]
+    fn tailscale_needs_no_token_but_a_loopback_bind() {
+        let mut settings = settings("localhost");
+        settings.tailscale = true;
+        assert!(settings.validate_websocket_security().is_ok());
+        settings.host = "0.0.0.0".to_string();
+        settings.ws_token = Some("secret".to_string());
+        assert!(settings.validate_websocket_security().is_err());
     }
 
     #[test]

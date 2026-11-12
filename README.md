@@ -31,6 +31,25 @@ Then open `http://stereo.local:8005/#stereo-token=choose-a-long-random-token`. T
 is not sent in HTTP requests; the frontend presents an encoded form of it during the WebSocket
 handshake. Missing-origin WebSocket clients are rejected.
 
+## On your phone, via Tailscale
+
+To use Stereo from your phone or other devices on your [tailnet](https://tailscale.com), start it
+with `--tailscale` (also works with `stereo --tailscale install`):
+
+```
+stereo --tailscale
+```
+
+Stereo then runs `tailscale serve`, which serves it at `https://<machine>.<tailnet>.ts.net:8005`
+with a Tailscale certificate, and removes that route again on shutdown. Click the Tailscale icon
+in the top bar and scan the QR code with your phone: it opens Stereo there and signs it in. Each
+code works once, for two minutes. `localhost:8005` keeps working as before, without a token.
+
+This needs the `tailscale` CLI (on macOS, the app's bundled CLI also works),
+[MagicDNS](https://tailscale.com/kb/1081/magicdns) and
+[HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled for the tailnet.
+Stereo never replaces another route on its port; if Tailscale isn't up yet, it keeps retrying.
+
 Begin by searching for and adding music to a new collection.
 Or by importing from another collection.
 You can create as many collections as you want.

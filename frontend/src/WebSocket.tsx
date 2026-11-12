@@ -10,7 +10,8 @@ interface BaseMessage {
 
 export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
   url: string,
-  protocols: string[] | undefined,
+  /** The subprotocols to offer, read on every (re)connect. */
+  protocols: () => string[] | undefined,
   onMessage: (msg: TMsgI | TMsgI[]) => void,
   onError: (err: Event) => void,
   onClose: (ev: CloseEvent) => void,
@@ -29,7 +30,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
     let isUnmounted = false;
 
     function connect() {
-      ws.current = new WebSocket(url, protocols);
+      ws.current = new WebSocket(url, protocols());
 
       ws.current.onopen = () => {
         logger.info("WebSocket connected");

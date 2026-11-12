@@ -50,6 +50,13 @@
   color: var(--stereo-brand-beatport);
 }
 
+/* The Tailscale button's QR code, on white in both themes (see TailscaleButton.tsx). */
+.tailscale-qr {
+  inline-size: 12rem;
+  block-size: 12rem;
+  border-radius: var(--radius-element);
+}
+
 @media (max-width: 48rem) {
   .header-search {
     order: 1;

@@ -1,12 +1,13 @@
 use std::{path::PathBuf, sync::Arc};
 
-use axum::{routing::get, Router};
+use axum::{routing::get, Extension, Router};
 use axum_embed::{FallbackBehavior, ServeEmbed};
 use clap::{Parser, Subcommand};
 use rust_embed::RustEmbed;
 use stereo_backend::{
     audio, server,
     settings::{Settings, DEFAULT_AUDIO_CACHE_LIMIT_GB, DEFAULT_YT_DLP},
+    tailscale,
 };
 
 #[derive(RustEmbed, Clone)]
@@ -117,6 +118,9 @@ fn plist_content(settings: &Settings, exe: &std::path::Path, log_path: &std::pat
     }
     if settings.yt_dlp != DEFAULT_YT_DLP {
         argv.extend(["--yt-dlp".to_string(), settings.yt_dlp.clone()]);
+    }
+    if settings.tailscale {
+        argv.push("--tailscale".to_string());
     }
     if settings.verbosity > 0 {
         argv.push(format!("-{}", "v".repeat(settings.verbosity.into())));
@@ -300,9 +304,48 @@ async fn main() -> anyhow::Result<()> {
     let mode = if settings.dev { "dev" } else { "release" };
     eprintln!("stereo listening on http://{addr}  [{mode}]");
     eprintln!("data dir: {}", settings.home_dir().display());
-    axum::serve(listener, router).await?;
+
+    // `tailscale serve` proxies to a listener of its own, whose WebSockets always need the token.
+    let tailnet = if settings.tailscale {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let target = listener.local_addr()?;
+        tailscale::spawn(&home, settings.ws_token.as_deref(), settings.port, target).await?;
+        let router = router.clone().layer(Extension(server::Tailnet));
+        Some(tokio::spawn(
+            async move { axum::serve(listener, router).await },
+        ))
+    } else {
+        None
+    };
+
+    let tailnet = async {
+        match tailnet {
+            Some(task) => task.await,
+            None => std::future::pending().await,
+        }
+    };
+    tokio::select! {
+        result = axum::serve(listener, router) => result?,
+        result = tailnet => result??,
+        _ = shutdown_signal() => {}
+    }
+    tailscale::shutdown().await;
 
     Ok(())
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("installing the SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 #[cfg(test)]
@@ -319,6 +362,7 @@ mod tests {
             "https://music.example",
             "--ws-token",
             "a<b&c",
+            "--tailscale",
             "-vv",
         ]);
         let plist = plist_content(
@@ -329,6 +373,7 @@ mod tests {
         assert!(plist.contains("<string>--allowed-origin</string>"));
         assert!(plist.contains("<string>https://music.example</string>"));
         assert!(plist.contains("<string>-vv</string>"));
+        assert!(plist.contains("<string>--tailscale</string>"));
         assert!(plist.contains("<key>STEREO_WS_TOKEN</key>"));
         assert!(plist.contains("<string>a&lt;b&amp;c</string>"));
         // The token must not be passed on the command line.

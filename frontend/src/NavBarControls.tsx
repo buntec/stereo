@@ -12,12 +12,14 @@ import YouTubeIcon from "./YouTubeIcon.tsx";
 import BeatportIcon from "./BeatportIcon.tsx";
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
 import SettingsMenu from "./SettingsMenu.tsx";
+import TailscaleButton from "./TailscaleButton.tsx";
 import BeatportSessionDialog from "./BeatportSessionDialog.tsx";
 import YouTubeSessionDialog from "./YouTubeSessionDialog.tsx";
 import {
   youTubeConnection,
   type AppearanceType,
   type RequestReply,
+  type TailscaleStatus,
   type YouTubeConnection,
 } from "./Types.tsx";
 
@@ -30,6 +32,7 @@ type NavBarControlsProps = {
   setBackgroundPulse: (pulse: number) => void;
   isConnected: boolean;
   requestReply: RequestReply;
+  tailscale?: TailscaleStatus;
   collectionOpen: boolean;
   spotifyBackfillRunning: boolean;
   spotifyBackfillChecked?: number;
@@ -88,6 +91,7 @@ function NavBarControls({
   setBackgroundPulse,
   isConnected,
   requestReply,
+  tailscale,
   collectionOpen,
   spotifyBackfillRunning,
   spotifyBackfillChecked,
@@ -169,6 +173,7 @@ function NavBarControls({
             connected={beatportBrowser !== null}
             onClick={() => openDialog(setBeatportOpen, refreshBeatportSession)}
           />
+          <TailscaleButton status={tailscale} requestReply={requestReply} />
         </HStack>
         <SegmentedControl
           label="Appearance"

@@ -64,6 +64,7 @@ import type {
   PlaylistService,
   PlaylistSyncStatus,
   SortModelItem,
+  TailscaleStatus,
 } from "./Types.tsx";
 import {
   isChartSearchKind,
@@ -128,26 +129,51 @@ import { sameView } from "./playlists.ts";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
-const wsTokenFromFragment = new URLSearchParams(
-  window.location.hash.slice(1),
-).get("stereo-token");
-if (wsTokenFromFragment) {
-  window.sessionStorage.setItem("stereo-ws-token", wsTokenFromFragment);
+const WS_TOKEN_KEY = "stereo-ws-token";
+const urlFragment = new URLSearchParams(window.location.hash.slice(1));
+const wsTokenFromFragment = urlFragment.get("stereo-token");
+// A single-use code from the Tailscale button's QR code, traded for the token on connect.
+let pairingCode = urlFragment.get("stereo-pair");
+if (wsTokenFromFragment || pairingCode) {
   window.history.replaceState(
     null,
     "",
     `${window.location.pathname}${window.location.search}`,
   );
 }
-const wsToken =
-  wsTokenFromFragment ?? window.sessionStorage.getItem("stereo-ws-token");
-const wsProtocols = wsToken
-  ? [
-      `stereo.auth.${Array.from(new TextEncoder().encode(wsToken), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join("")}`,
-    ]
-  : undefined;
+
+// Kept in localStorage, so a phone stays signed in when the app is reopened, e.g. from the home
+// screen. Older versions kept it in sessionStorage.
+const storedWsToken = () => {
+  try {
+    return (
+      window.localStorage.getItem(WS_TOKEN_KEY) ??
+      window.sessionStorage.getItem(WS_TOKEN_KEY)
+    );
+  } catch {
+    return null;
+  }
+};
+const rememberWsToken = (token: string) => {
+  wsToken = token;
+  try {
+    window.localStorage.setItem(WS_TOKEN_KEY, token);
+  } catch {
+    // Still used for this page's reconnects.
+  }
+};
+let wsToken = wsTokenFromFragment ?? storedWsToken();
+if (wsTokenFromFragment) rememberWsToken(wsTokenFromFragment);
+
+const hex = (s: string) =>
+  Array.from(new TextEncoder().encode(s), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+
+const wsProtocols = (): string[] | undefined => {
+  if (pairingCode) return [`stereo.pair.${pairingCode}`];
+  return wsToken ? [`stereo.auth.${hex(wsToken)}`] : undefined;
+};
 
 /** The track after `current` in the playlist, wrapping around. */
 const nextTrackId = (
@@ -172,6 +198,8 @@ type State = {
   backend_version?: string;
   /** Key for the backend's `/audio` route; unset when it doesn't download audio. */
   audio_key?: string;
+  /** Set when the backend runs with `--tailscale`. */
+  tailscale?: TailscaleStatus;
   home_dir?: string;
   repos?: IRepo[];
   collections?: ICollection[];
@@ -387,7 +415,12 @@ const reducer = (state: State, action: Action): State => {
         backend_version: action.version,
         home_dir: action.home_dir,
         audio_key: action.audio_key ?? undefined,
+        // Follows if the backend still runs with --tailscale.
+        tailscale: undefined,
       };
+
+    case "tailscale":
+      return { ...state, tailscale: action.status };
 
     case "set-import-from":
       // Drop the previous source's validity; a fresh check-import-from follows.
@@ -630,6 +663,8 @@ const reducer = (state: State, action: Action): State => {
     case "youtube-playlist-info":
     case "clone-repo-reply":
     case "new-releases-candidates":
+    case "pairing-code":
+    case "auth-token":
     case "error-reply": // the server also sends a notification with the reason
       return { ...state };
 
@@ -929,6 +964,10 @@ function App() {
     (msg: ServerMsg | ServerMsg[]) => {
       // The audio cache's state lives in its own store (AudioCache.ts).
       const handle = (m: ServerMsg) => {
+        if (m.type === "auth-token") {
+          rememberWsToken(m.token);
+          return;
+        }
         forgetMissingWaveforms(m);
         audioCache.handle(m);
         dispatch(m);
@@ -944,6 +983,8 @@ function App() {
 
   const wsOnError = useCallback(
     () =>
+      // A rejected pairing code is explained on close.
+      !pairingCode &&
       dispatch({
         type: "notification",
         message: "WebSocket error encountered.",
@@ -960,6 +1001,17 @@ function App() {
     (ev: CloseEvent) => {
       activeRepo.current = null;
       dispatch({ type: "repos", repos: [] });
+      // Still set if the connection never opened: the code was rejected.
+      if (pairingCode) {
+        pairingCode = null;
+        dispatch({
+          type: "notification",
+          message:
+            "This sign-in code has expired or was already used. Scan a new one from Stereo's Tailscale button.",
+          kind: "error",
+        });
+        return;
+      }
       dispatch({
         type: "notification",
         message: ev.reason
@@ -972,6 +1024,8 @@ function App() {
   );
 
   const wsOnOpen = useCallback(() => {
+    // Used up; the token it brings follows.
+    pairingCode = null;
     dispatch({ type: "dismiss-connection-closed-notification" });
   }, [dispatch]);
 
@@ -2630,6 +2684,7 @@ function App() {
                   }
                   isConnected={backendReady}
                   requestReply={requestReply}
+                  tailscale={state.tailscale}
                   collectionOpen={!!state.collection}
                   spotifyBackfillRunning={state.spotify_backfill_running}
                   spotifyBackfillChecked={state.spotify_backfill_checked}
