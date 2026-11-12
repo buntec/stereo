@@ -1,6 +1,22 @@
 import { useState, useEffect } from "react";
 import type { ICollectionStats } from "./Types.tsx";
 
+declare global {
+  interface Window {
+    __STEREO_DESKTOP__?: boolean;
+  }
+}
+
+/** Whether this page runs in Stereo's desktop app (which sets the flag, see
+ * `desktop/src-tauri/src/lib.rs`) rather than in a browser tab. */
+export const inDesktopApp = window.__STEREO_DESKTOP__ === true;
+
+/** Opens this Stereo in the user's web browser; the desktop app opens new
+ * windows there. For what needs the browser's cookies together with its
+ * User-Agent, which the desktop app's webview doesn't share. */
+export const openInBrowser = () =>
+  window.open(`${window.location.origin}/`, "_blank", "noopener,noreferrer");
+
 export function shuffleArray<T>(array: T[]): T[] {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));

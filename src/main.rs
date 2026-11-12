@@ -22,6 +22,11 @@ struct Cli {
 
     #[command(flatten)]
     settings: Settings,
+
+    /// Exit once stdin closes. The desktop app starts its backend with this, so that the backend
+    /// never outlives it, even when the app crashes.
+    #[arg(long, hide = true)]
+    exit_with_stdin: bool,
 }
 
 #[derive(Subcommand)]
@@ -288,6 +293,7 @@ async fn main() -> anyhow::Result<()> {
     let mut router = Router::new()
         .route("/ws", get(server::ws_handler))
         .route("/audio/{id}", get(audio::handler))
+        .route("/info", get(info))
         .with_state(settings.clone());
 
     if !settings.dev {
@@ -334,6 +340,14 @@ async fn main() -> anyhow::Result<()> {
             std::future::pending().await
         }
     };
+    let exit_with_stdin = cli.exit_with_stdin;
+    let stdin_closed = async {
+        if exit_with_stdin {
+            stdin_closed().await
+        } else {
+            std::future::pending().await
+        }
+    };
     let result: anyhow::Result<()> = tokio::select! {
         result = axum::serve(listener, router) => result.map_err(Into::into),
         result = tailnet => result.map_err(Into::into).and_then(|r| r.map_err(Into::into)),
@@ -342,11 +356,33 @@ async fn main() -> anyhow::Result<()> {
             // As the signal would have, without waiting for blocking tasks as the runtime drops.
             std::process::exit(0);
         }
+        () = stdin_closed => {
+            if tailscale_on {
+                remove_tailnet_route().await;
+            }
+            std::process::exit(0);
+        }
     };
     if tailscale_on {
         remove_tailnet_route().await;
     }
     result
+}
+
+/// What the desktop app looks for to tell a running Stereo from another server on its port.
+async fn info() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "app": "stereo",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+}
+
+/// Resolves once stdin is closed (or fails), e.g. when the process that started us exits.
+async fn stdin_closed() {
+    use tokio::io::AsyncReadExt;
+    let mut stdin = tokio::io::stdin();
+    let mut buf = [0; 256];
+    while let Ok(1..) = stdin.read(&mut buf).await {}
 }
 
 /// Shutdown waits this long at most for the tailnet route's removal: less than launchd's 20 s

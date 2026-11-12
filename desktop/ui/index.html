@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stereo</title>
+    <!-- Shown until Stereo's backend is up, when the window navigates to it, and for errors. -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f6f7;
+        --fg: #1f1f23;
+        --muted: #6b6b75;
+        --error: #b42318;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141416;
+          --fg: #e6e6ea;
+          --muted: #9a9aa4;
+          --error: #f97066;
+        }
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.5 system-ui, sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: default;
+      }
+      main {
+        display: grid;
+        justify-items: center;
+        gap: 16px;
+        max-width: 560px;
+        padding: 0 24px;
+        text-align: center;
+      }
+      #status {
+        color: var(--muted);
+      }
+      #status.error {
+        color: var(--error);
+      }
+      pre {
+        margin: 0;
+        max-width: 100%;
+        max-height: 40vh;
+        overflow: auto;
+        text-align: left;
+        white-space: pre-wrap;
+        font-size: 12px;
+        color: var(--muted);
+        -webkit-user-select: text;
+        user-select: text;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="logo.svg" width="72" height="72" alt="" />
+      <div id="status">Starting Stereo…</div>
+      <pre id="details" hidden></pre>
+    </main>
+    <script>
+      // The desktop app comes back here with `#{"message":…,"details":…}` when Stereo's backend
+      // can't be started or stops (see src-tauri/src/lib.rs).
+      if (location.hash.length > 1) {
+        try {
+          const { message, details } = JSON.parse(
+            decodeURIComponent(location.hash.slice(1)),
+          );
+          const status = document.getElementById("status");
+          status.textContent = `${message} Quit and reopen Stereo to try again.`;
+          status.className = "error";
+          const pre = document.getElementById("details");
+          pre.textContent = details ?? "";
+          pre.hidden = !details;
+        } catch {
+          // Not an error, then.
+        }
+      }
+    </script>
+  </body>
+</html>

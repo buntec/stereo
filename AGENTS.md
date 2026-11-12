@@ -15,6 +15,9 @@ bun install              # install frontend deps (also: just init)
 just dev                 # run backend (port 8055) + frontend dev server concurrently, hot reload both
 just dev-tailscale       # build the frontend, run the backend with --tailscale (test on a phone: scan the Tailscale button's QR code)
 just build               # build frontend then backend release binary
+just desktop-dev         # run the Tauri desktop app with a debug backend (desktop/README.md)
+just desktop-build       # package the desktop app with a release backend
+just desktop-check       # clippy + tests for the desktop launcher
 just install             # build + cargo install --path .
 just test                # cargo test
 just lint                # cargo clippy
@@ -33,7 +36,7 @@ The backend binary embeds the built frontend (`dist/`) via `rust-embed`/`axum-em
 
 ### Backend (`src/`, crate `stereo-backend`, binary `stereo`)
 
-Everything is driven over a **single WebSocket connection** (`/ws`, handled in `server.rs`). There is no REST API; the only other route is `/audio/{yt_id}` (`audio.rs`). `main.rs` wires up an axum `Router` with these two routes plus a static-file fallback; it also has CLI subcommands (`version`, `install`/`uninstall`/`restart`) for running as a macOS launchd service.
+Everything is driven over a **single WebSocket connection** (`/ws`, handled in `server.rs`). There is no REST API; the only other routes are `/audio/{yt_id}` (`audio.rs`) and `/info` (app name and version, for the desktop app to recognize a running Stereo). `main.rs` wires up an axum `Router` with these routes plus a static-file fallback; it also has CLI subcommands (`version`, `install`/`uninstall`/`restart`) for running as a macOS launchd service.
 
 - **`message.rs`** — the entire client↔server protocol as two enums, `MsgClient` and `MsgServer`, serialized as JSON with a `type` tag (kebab-case). This is the source of truth for the protocol; the frontend's `Types.tsx` (`ClientMsg`/`ServerMsg`) must be kept in sync by hand — there's no codegen.
 - **`server.rs`** — `handle_socket` owns per-connection `SessionState` (current DB pool, active collection, active git repo, in-flight search/sync/export tasks) and `handle_msg` is one large match over `MsgClient` dispatching to `db`/`git`/`scraper`/`utils`. Messages are handled one at a time, so anything slow (network, git) must run in a spawned task; tasks that need to change session state afterwards post an `InternalEvent` back into the session's queue. A handler error is sent to the client as a notification, plus an `ErrorReply` for request/reply messages (`MsgClient::request_id`). Outgoing messages are batched and flushed by `send_loop` (up to 100 msgs / 100ms) rather than sent one-at-a-time.
@@ -58,6 +61,10 @@ Everything is driven over a **single WebSocket connection** (`/ws`, handled in `
 - **Theme** — `theme.ts`: Astryx's Neutral theme (`@astryxdesign/theme-neutral`) plus a few component overrides. Neutral names the Figtree font without loading it; it's self-hosted with Fontsource (`@fontsource-variable/figtree`), which registers it as `"Figtree Variable"`, so the theme's font stacks name that first.
 - Other components are single-purpose dialogs/widgets (`ImportDialog`, `ExportDropDown`, `GitRemoteDialog`, `YouTubePlaylistDialog`, `CollectionSelector` (collection + repo menu), `NavBarControls` (nav-bar version, account status buttons, `TailscaleButton` with `--tailscale`, appearance toggle, `SettingsMenu`: the gear button's popover, home for app settings such as the background pulse strength), `EditDialog`, `Rating`, `SearchBox`, `NowPlayingMenu`, `CollectionSummary`, `Keyboard` for shortcuts, etc.) — UI is Astryx (`@astryxdesign/core`, see the Astryx notes below); icons come from `@radix-ui/react-icons`.
 - **Prefer standard Astryx components.** Before building or restyling a widget, check whether Astryx already has one for the job (`bunx @astryxdesign/cli search "<thing>"`), e.g. `ToggleButton` for an on/off button rather than an `IconButton` that switches variants. Hand-roll one only for a very good reason (Astryx has no equivalent, or it can't meet a concrete requirement), and say why in a comment where it's built.
+
+### Desktop app (`desktop/`)
+
+A Tauri app (crate `stereo-desktop`, `desktop/src-tauri/src/lib.rs`) that shows the web UI in a webview; see `desktop/README.md`. It has no IPC and no UI of its own beyond a start/error page (`desktop/ui/index.html`): it opens a Stereo already running on port 8005 (recognized by `GET /info`, or the served page's title for older versions), else starts the bundled `stereo` sidecar there (or on a free port) with `--exit-with-stdin` (hidden flag: exits when the app does, even on a crash). Links to other sites and new windows open in the default browser. It sets `window.__STEREO_DESKTOP__` (`inDesktopApp` in `Utils.tsx`): Beatport and YouTube connect by reading the cookies of the browser the page runs in, found by its User-Agent, so in the app their dialogs open Stereo in the user's browser instead. The sidecar is copied into `desktop/src-tauri/binaries/` by the justfile's desktop recipes; `just bump` keeps the desktop crate's version in step.
 
 ### Protocol sync
 

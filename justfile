@@ -36,6 +36,30 @@ dev:
 dev-tailscale: build-frontend
     cargo run -- -v --tailscale --port {{ dev-port }}
 
+# Copy a backend build into the desktop app's bundle inputs, where Tauri expects its sidecar.
+_desktop-sidecar profile:
+    mkdir -p desktop/src-tauri/binaries
+    cp target/{{ profile }}/stereo desktop/src-tauri/binaries/stereo-$(rustc --print host-tuple)
+
+# Build and run the desktop app with a debug backend. If a stereo already runs on port 8005, the
+# app opens that one instead: stop it, or pick another port with STEREO_PORT, to try the bundled one
+desktop-dev: build-frontend
+    cargo build
+    just _desktop-sidecar debug
+    cd desktop && bun install && bun run dev
+
+# Package the desktop app with a release backend, under desktop/src-tauri/target/release/bundle/
+desktop-build: build
+    just _desktop-sidecar release
+    cd desktop && bun install
+    if [ "$(uname -s)" = "Darwin" ]; then cd desktop && bun run build -- --bundles app; else cd desktop && bun run build; fi
+
+# Check and test the desktop app's launcher
+desktop-check:
+    cargo build
+    just _desktop-sidecar debug
+    cd desktop/src-tauri && cargo clippy && cargo test
+
 run-backend *args:
     cargo run --release -- {{ args }}
 
@@ -47,7 +71,12 @@ lint:
 
 format:
     cargo fmt
+    cargo fmt --manifest-path desktop/src-tauri/Cargo.toml
     bun run prettier --write "frontend/src/**/*.{ts,tsx,css}"
 
 bump part="patch":
+    #!/usr/bin/env sh
+    set -eu
     cargo set-version --bump {{ part }}
+    version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+    cargo set-version --manifest-path desktop/src-tauri/Cargo.toml "$version"

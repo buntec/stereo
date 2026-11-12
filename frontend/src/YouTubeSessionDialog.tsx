@@ -15,6 +15,7 @@ import {
   type YouTubeConnection,
   type YouTubeLogin,
 } from "./Types.tsx";
+import { inDesktopApp, openInBrowser } from "./Utils.tsx";
 
 type YouTubeSessionDialogProps = {
   isOpen: boolean;
@@ -114,11 +115,15 @@ function YouTubeSessionDialog({
                   </Text>
                 )}
                 <Text as="div" type="body">
-                  In this browser, log in to{" "}
+                  In {inDesktopApp ? "your web browser" : "this browser"}, log
+                  in to{" "}
                   <Link href="https://www.youtube.com" isExternalLink>
                     youtube.com
                   </Link>{" "}
-                  with the account or channel for your playlists, then connect.
+                  with the account or channel for your playlists, then connect
+                  {inDesktopApp &&
+                    " from Stereo in that browser. This app shares the connection"}
+                  .
                 </Text>
                 <Text as="div" type="supporting" color="secondary">
                   Cookies are read on each export, never stored.
@@ -144,13 +149,23 @@ function YouTubeSessionDialog({
                 />
               )}
               <Button label="Close" variant="secondary" onClick={closeDialog} />
-              <Button
-                label={connection && !logins ? "Reconnect" : "Connect"}
-                variant="primary"
-                onClick={() => connect(logins ? picked : undefined)}
-                isLoading={connecting}
-                isDisabled={connecting || (logins !== null && !picked)}
-              />
+              {inDesktopApp ? (
+                // The login is looked for in the browser the page runs in,
+                // which this app's webview isn't.
+                <Button
+                  label="Open Stereo in browser"
+                  variant="primary"
+                  onClick={openInBrowser}
+                />
+              ) : (
+                <Button
+                  label={connection && !logins ? "Reconnect" : "Connect"}
+                  variant="primary"
+                  onClick={() => connect(logins ? picked : undefined)}
+                  isLoading={connecting}
+                  isDisabled={connecting || (logins !== null && !picked)}
+                />
+              )}
             </HStack>
           </LayoutFooter>
         }

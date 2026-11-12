@@ -8,6 +8,7 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 
 import type { RequestReply, ServerMsg } from "./Types.tsx";
+import { inDesktopApp, openInBrowser } from "./Utils.tsx";
 
 type BeatportSessionDialogProps = {
   isOpen: boolean;
@@ -72,14 +73,17 @@ function BeatportSessionDialog({
           <LayoutContent>
             <VStack gap={3}>
               <Text as="div" type="body">
-                In this browser,{" "}
+                In {inDesktopApp ? "your web browser" : "this browser"},{" "}
                 <Link
                   href="https://www.beatport.com/search?q=stereo"
                   isExternalLink
                 >
                   search beatport.com
                 </Link>{" "}
-                and pass its bot check, then connect.
+                and pass its bot check, then connect
+                {inDesktopApp &&
+                  " from Stereo in that browser. This app shares the connection"}
+                .
               </Text>
               <Text as="div" type="supporting" color="secondary">
                 Only bot-check cookies are read. Reconnect when searches fail
@@ -105,13 +109,23 @@ function BeatportSessionDialog({
                 />
               )}
               <Button label="Close" variant="secondary" onClick={closeDialog} />
-              <Button
-                label={browser ? "Reconnect" : "Connect"}
-                variant="primary"
-                onClick={connect}
-                isLoading={connecting}
-                isDisabled={connecting}
-              />
+              {inDesktopApp ? (
+                // The clearance only works with the User-Agent of the browser
+                // that earned it, which this app can't tell.
+                <Button
+                  label="Open Stereo in browser"
+                  variant="primary"
+                  onClick={openInBrowser}
+                />
+              ) : (
+                <Button
+                  label={browser ? "Reconnect" : "Connect"}
+                  variant="primary"
+                  onClick={connect}
+                  isLoading={connecting}
+                  isDisabled={connecting}
+                />
+              )}
             </HStack>
           </LayoutFooter>
         }
