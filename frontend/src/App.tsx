@@ -91,6 +91,7 @@ import {
   hasCollectionStats,
 } from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
+import { scrollGridToTop } from "./useGridScrollState.ts";
 import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector, { collectionLabel } from "./CollectionSelector.tsx";
@@ -304,6 +305,12 @@ const notify = (
     { id: state.notification_next_id, message, kind },
   ],
 });
+
+const notInViewNotification: Action = {
+  type: "notification",
+  message: "The playing track isn't in this view",
+  kind: "info",
+};
 
 /** Exported playlists set to update automatically are pushed at most this often. */
 const PLAYLIST_AUTO_SYNC_INTERVAL_MS = 60 * 60 * 1000;
@@ -2099,6 +2106,8 @@ function App() {
       );
       if (index !== undefined && index >= 0) {
         searchGridRef.current?.api.ensureIndexVisible(index, "middle");
+      } else {
+        dispatch(notInViewNotification);
       }
       return;
     }
@@ -2115,10 +2124,13 @@ function App() {
         },
         function (msg: ServerMsg | { type: string }) {
           if ("index" in msg) {
-            gridRef.current?.api?.ensureIndexVisible(
-              msg.index as number,
-              "middle",
-            );
+            const index = msg.index as number;
+            if (index >= 0) {
+              gridRef.current?.api?.ensureIndexVisible(index, "middle");
+            } else {
+              // Filtered out of the current view.
+              dispatch(notInViewNotification);
+            }
           } else {
             logger.warn("failed to get row index");
           }
@@ -2132,6 +2144,12 @@ function App() {
     isSearchGridActive,
     state.search_results,
   ]);
+
+  const scrollActiveGridToTop = useCallback(() => {
+    scrollGridToTop(
+      (isSearchGridActive ? searchGridRef : gridRef).current?.api,
+    );
+  }, [isSearchGridActive]);
 
   const nextTrack = useCallback(
     () => dispatch({ type: "play-next-track" }),
@@ -2298,6 +2316,7 @@ function App() {
     s: () => toggleShuffle(),
     b: () => toggleBackgroundVideo(),
     c: () => centerGridAroundCurrentTrack(),
+    t: () => scrollActiveGridToTop(),
     p: () => togglePlayback(),
     Space: () => togglePlayback(),
     Backspace: () => stopPlayback(),
@@ -2359,6 +2378,7 @@ function App() {
       onLabelClick={handleLabelClick}
       addTrack={addSearchResultTrack}
       downloadAudio={downloadAudio}
+      onShowCurrent={centerGridAroundCurrentTrack}
     />
   ) : !backendReady ? (
     <HStack height="100%" hAlign="center" vAlign="center">
@@ -2418,6 +2438,7 @@ function App() {
       onArtistClick={handleArtistClick}
       onLabelClick={handleLabelClick}
       onShazamSimilar={handleShazamSimilar}
+      onShowCurrent={centerGridAroundCurrentTrack}
       downloadAudio={downloadAudio}
     />
   );

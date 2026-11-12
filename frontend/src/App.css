@@ -78,6 +78,31 @@
   --ag-checkbox-checked-background-color: var(--color-accent);
   --ag-row-hover-color: var(--color-overlay-hover);
   --ag-selected-row-background-color: var(--color-accent-muted);
+  /* For the floating scroll buttons (GridScrollButtons.tsx). */
+  position: relative;
+}
+
+/* "Show playing track" / "Back to top", over the grid's bottom-right corner, clear of its
+   scrollbars. */
+.grid-scroll-buttons {
+  position: absolute;
+  inset-block-end: var(--spacing-6);
+  inset-inline-end: var(--spacing-6);
+  z-index: 1;
+  animation: grid-scroll-buttons-in var(--duration-fast) var(--ease-standard);
+}
+.grid-scroll-buttons .astryx-button {
+  background-color: rgb(from var(--color-background-surface) r g b / 0.6);
+  -webkit-backdrop-filter: blur(var(--spacing-1));
+  backdrop-filter: blur(var(--spacing-1));
+  box-shadow:
+    inset 0 0 0 var(--border-width) var(--color-border),
+    var(--shadow-med);
+}
+@keyframes grid-scroll-buttons-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .grid .ag-cell .astryx-button {
@@ -341,6 +366,7 @@
   .thumbnail-play-button::after {
     transition: none;
   }
+  .grid-scroll-buttons,
   .download-ring-spinning,
   .waveform[data-pending="true"] path {
     animation: none;

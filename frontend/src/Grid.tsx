@@ -68,6 +68,8 @@ import {
 } from "@radix-ui/react-icons";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
+import { GridScrollButtons } from "./GridScrollButtons.tsx";
+import { scrollGridToTop, useGridScrollState } from "./useGridScrollState.ts";
 import { AudioCacheButton } from "./AudioCacheButton.tsx";
 import logger from "./logger.tsx";
 import { MenuCheck } from "./Menu.tsx";
@@ -369,6 +371,8 @@ interface SearchResultsGridProps {
   onLabelClick: (name: string) => void;
   addTrack: (track: ITrack) => void;
   downloadAudio: (id: string) => void;
+  // Scrolls the playing track into view (the floating "show playing track" button).
+  onShowCurrent: () => void;
 }
 
 type SearchResultsGridContext = {
@@ -400,6 +404,7 @@ export const SearchResultsGrid = ({
   isChart = false,
   isSearching,
   onExitSearch,
+  onShowCurrent,
 }: SearchResultsGridProps) => {
   const [colDefs] = useState<ColDef[]>(() => [
     ...(isChart
@@ -593,9 +598,18 @@ export const SearchResultsGrid = ({
 
   const noRowsOverlayParams = useMemo(() => ({ onExitSearch }), [onExitSearch]);
 
+  const { scrolledDown, currentVisible, gridEvents } = useGridScrollState(
+    gridRef,
+    currentId,
+  );
+  // Only offered when the playing track is one of the results.
+  const currentInResults =
+    !!currentId && !!tracks?.some((track) => track.yt_id === currentId);
+
   return (
     <StackItem size="fill" className="grid">
       <AgGridReact<ITrack>
+        {...gridEvents}
         rowData={tracks}
         loading={isSearching && !tracks?.length}
         loadingOverlayComponent={SearchingOverlay}
@@ -612,6 +626,12 @@ export const SearchResultsGrid = ({
         rowHeight={32}
         context={context}
         onSelectionChanged={onSelectionChanged}
+      />
+      <GridScrollButtons
+        showTop={scrolledDown}
+        showCurrent={currentInResults && !currentVisible}
+        onTop={() => scrollGridToTop(gridRef.current?.api)}
+        onShowCurrent={onShowCurrent}
       />
     </StackItem>
   );
@@ -719,6 +739,8 @@ interface TracksGridProps {
   onLabelClick: (name: string) => void;
   onShazamSimilar: (track: ITrack) => void;
   downloadAudio: (id: string) => void;
+  // Scrolls the playing track into view (the floating "show playing track" button).
+  onShowCurrent: () => void;
 }
 
 type TracksGridContext = {
@@ -751,6 +773,7 @@ export const TracksGrid = ({
   onLabelClick,
   onShazamSimilar,
   downloadAudio,
+  onShowCurrent,
 }: TracksGridProps) => {
   const [colDefs] = useState<ColDef[]>([
     {
@@ -989,9 +1012,15 @@ export const TracksGrid = ({
     [onStateUpdate],
   );
 
+  const { scrolledDown, currentVisible, gridEvents } = useGridScrollState(
+    gridRef,
+    currentId,
+  );
+
   return (
     <StackItem size="fill" className="grid">
       <AgGridReact<ITrack>
+        {...gridEvents}
         theme={theme}
         onGridReady={onGridReady}
         ref={gridRef}
@@ -1016,6 +1045,12 @@ export const TracksGrid = ({
         onSelectionChanged={onSelectionChanged}
         onFilterChanged={onFilterChanged}
         onCellKeyDown={onCellKeyDown}
+      />
+      <GridScrollButtons
+        showTop={scrolledDown}
+        showCurrent={!!currentId && !currentVisible}
+        onTop={() => scrollGridToTop(gridRef.current?.api)}
+        onShowCurrent={onShowCurrent}
       />
     </StackItem>
   );
