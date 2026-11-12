@@ -225,6 +225,11 @@ type State = {
   collection_last_update?: number;
 
   current_id?: string;
+  /**
+   * Whether the current track should be playing: false while it is only the
+   * first of a new playlist, so that loading the page doesn't start playback.
+   */
+  current_autoplay: boolean;
   player_id?: string;
   duration?: number;
   current_time?: number;
@@ -377,19 +382,26 @@ const reducer = (state: State, action: Action): State => {
       )
         return state;
       if (!state.current_id && action.ids.length > 0) {
-        return { ...state, playlist: action.ids, current_id: action.ids[0] };
+        // Ready to play, but only once asked to.
+        return {
+          ...state,
+          playlist: action.ids,
+          current_id: action.ids[0],
+          current_autoplay: false,
+        };
       }
       return { ...state, playlist: action.ids };
     }
 
     case "play-id":
-      return { ...state, current_id: action.id };
+      return { ...state, current_id: action.id, current_autoplay: true };
 
     case "play-next-track": {
       if (state.playlist.length > 0) {
         return {
           ...state,
           current_id: nextTrackId(state.playlist, state.current_id),
+          current_autoplay: true,
         };
       }
       return { ...state };
@@ -407,9 +419,14 @@ const reducer = (state: State, action: Action): State => {
               state.playlist[
                 (i + state.playlist.length - 1) % state.playlist.length
               ],
+            current_autoplay: true,
           };
         }
-        return { ...state, current_id: state.playlist[0] };
+        return {
+          ...state,
+          current_id: state.playlist[0],
+          current_autoplay: true,
+        };
       }
       return { ...state };
     }
@@ -920,6 +937,7 @@ const legacyGridState = (): GridState | undefined => {
 function App() {
   const [state, dispatch] = useReducer(reducer, {
     playlist: [],
+    current_autoplay: false,
     player_state: "unstarted",
     player_loading: false,
     should_refresh_grid: false,
@@ -1342,14 +1360,18 @@ function App() {
   }, [state.player_state]);
 
   useEffect(() => {
-    if (
-      state.current_id &&
-      playback &&
-      playback.currentId() !== state.current_id
+    const id = state.current_id;
+    if (!id || !playback) return;
+    if (!state.current_autoplay) {
+      if (playback.currentId() !== id) playback.cue(id);
+    } else if (
+      playback.currentId() !== id ||
+      // Asked to play the cued track (e.g. double-clicked).
+      playback.status() === "unstarted"
     ) {
-      playback.load(state.current_id);
+      playback.load(id);
     }
-  }, [state.current_id, playback]);
+  }, [state.current_id, state.current_autoplay, playback]);
 
   // Have the next tracks ready by the time they're played.
   useEffect(() => {
@@ -1977,7 +1999,8 @@ function App() {
     if (status === "playing" || status === "buffering") {
       pausePlayback();
     }
-    if (status === "paused" || status === "ended") {
+    // Unstarted: a cued track (see `current_autoplay`).
+    if (status === "paused" || status === "ended" || status === "unstarted") {
       startPlayback();
     }
   }, [playback, pausePlayback, startPlayback]);
