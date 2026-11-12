@@ -115,7 +115,7 @@ import SpotifyPlaylistDialog, {
 import AddTracksDialog from "./AddTracksDialog.tsx";
 import NavBarControls from "./NavBarControls.tsx";
 import { DEFAULT_BACKGROUND_PULSE } from "./SettingsMenu.tsx";
-import StereoLogo from "./StereoLogo.tsx";
+import DanceStack from "./DanceStack.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
@@ -2015,6 +2015,10 @@ function App() {
     [setSettings],
   );
 
+  // The header's speakers grow into dance stacks with the volume (DanceStack.tsx):
+  // muted, or where the page can't set the volume (iOS), they're the logo alone.
+  const stackLevel = canSetVolume && !muted ? volume / 100 : 0;
+
   const toggleBackgroundVideo = useCallback(
     () =>
       setSettings({ ...settings, backgroundVideo: !settings.backgroundVideo }),
@@ -2029,14 +2033,6 @@ function App() {
     state.current_id,
     currentAudio.cached,
     requestReply,
-  );
-  const logoRef = useRef<SVGSVGElement>(null);
-  useBeatPulse(
-    logoRef,
-    playback,
-    state.current_id,
-    currentWaveform?.beats,
-    state.player_state === "playing",
   );
   const backgroundRef = useRef<HTMLElement>(null);
   const backgroundPulse = settings.backgroundPulse ?? DEFAULT_BACKGROUND_PULSE;
@@ -2653,7 +2649,7 @@ function App() {
               className="app-header"
             >
               <HStack vAlign="center" gap={2} className="collection-controls">
-                <StereoLogo size={28} ref={logoRef} className="stereo-logo" />
+                <DanceStack level={stackLevel} />
                 <CollectionSelector
                   isValid={state.collection_is_valid ?? true}
                   collections={state.collections ?? []}
@@ -2742,7 +2738,9 @@ function App() {
                   errorMessage={state.search_error_message}
                 />
               </StackItem>
-              <HStack vAlign="center" hAlign="end">
+              <HStack vAlign="center" hAlign="end" className="nav-controls">
+                {/* The other speaker of the stereo pair, behind the controls. */}
+                <DanceStack level={stackLevel} isMirrored />
                 <NavBarControls
                   isCompact={narrow}
                   version={state.backend_version}

@@ -11,12 +11,28 @@
   min-width: 0;
 }
 
-/* The logo thumps with the playing track's beats (`--beat`, from useBeatPulse.ts),
-   growing from where its cabinet stands. */
-.stereo-logo {
+/* The logo, growing into a dance stack with the volume (DanceStack.tsx): it keeps the
+   logo's place in the header and draws the rest over its edges, behind everything but
+   the background artwork. Nothing between it and the app shell is a stacking context,
+   so the negative z-index puts it under all of the app's content. */
+.dance-stack {
   flex-shrink: 0;
-  transform: scale(calc(1 + 0.14 * var(--beat, 0)));
-  transform-origin: 50% 90%;
+  position: relative;
+  z-index: -1;
+  overflow: visible;
+  pointer-events: none;
+}
+/* Its mirror image at the other end of the header, level with it (both groups are
+   centered on the header's first row), taking no space. */
+.nav-controls {
+  position: relative;
+}
+.dance-stack-mirrored {
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-start: 50%;
+  translate: 0 -50%;
+  scale: -1 1;
 }
 
 /* The search grows up to a comfortable query width; the auto margins then take
@@ -335,7 +351,8 @@
   --background-beat: calc(var(--beat-strength, 0) * var(--beat, 0));
   position: fixed;
   inset: 0;
-  z-index: -1;
+  /* Under the dance stack (.dance-stack). */
+  z-index: -2;
   background-size: cover;
   background-position: center;
   filter: blur(var(--spacing-4));
@@ -386,14 +403,14 @@
   }
 }
 
-/* A separate decorative layer leaves Astryx surfaces readable over the artwork. */
+/* A separate decorative layer leaves Astryx surfaces readable over the artwork. The
+   header and content are always see-through, onto the app's own surface without the
+   artwork, so the dance stack behind them shows. */
 .stereo-app:has(.background-player) {
   background-color: transparent;
 }
-.stereo-app:has(.background-player)
-  > .astryx-layout
-  .astryx-layout-content[role="main"],
-.stereo-app:has(.background-player) .astryx-app-shell-header {
+.stereo-app > .astryx-layout .astryx-layout-content[role="main"],
+.stereo-app .astryx-app-shell-header {
   background-color: transparent;
 }
 
