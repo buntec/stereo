@@ -10,16 +10,21 @@ interface BaseMessage {
 
 export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
   url: string,
-  protocols: string[] | undefined,
+  /** The subprotocols to offer, read on every (re)connect. */
+  protocols: () => string[] | undefined,
   onMessage: (msg: TMsgI | TMsgI[]) => void,
   onError: (err: Event) => void,
   onClose: (ev: CloseEvent) => void,
+  /** Called when a connection is ready: on its first message. */
   onOpen?: () => void,
 ) {
   const ws = useRef<WebSocket>(null);
   const queue = useRef<TMsgO[]>([]);
   const heartbeatInterval = useRef<number>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
+  // Ready once the server's first message arrives, not on open: a backend that rejects a
+  // pairing code or token upgrades only to close straight away, sending nothing.
+  const ready = useRef(false);
   const callbacks = useRef<Map<number, Callback<TMsgI | { type: string }>>>(
     new Map(),
   );
@@ -29,7 +34,8 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
     let isUnmounted = false;
 
     function connect() {
-      ws.current = new WebSocket(url, protocols);
+      ws.current = new WebSocket(url, protocols());
+      ready.current = false;
 
       ws.current.onopen = () => {
         logger.info("WebSocket connected");
@@ -41,9 +47,6 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
             );
           }
         }, 10000);
-
-        setIsReady(true);
-        onOpen?.();
       };
 
       // A throwing reply callback must not stop the rest of the batch from being handled.
@@ -67,6 +70,11 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
           logger.warn(`Failed to parse WS message to JSON: ${event.data}`);
           return;
         }
+        if (!ready.current) {
+          ready.current = true;
+          setIsReady(true);
+          onOpen?.();
+        }
         if (Array.isArray(data)) {
           data.forEach(resolveCallback);
         } else {
@@ -79,6 +87,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         logger.error("WebSocket error", err);
         callbacks.current.forEach((cb) => cb({ type: "websocket-error" }));
         callbacks.current.clear();
+        ready.current = false;
         setIsReady(false);
         onError(err);
       };
@@ -92,6 +101,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         }
         callbacks.current.forEach((cb) => cb({ type: "websocket-closed" }));
         callbacks.current.clear();
+        ready.current = false;
         setIsReady(false);
         onClose(event);
         if (!isUnmounted) {
@@ -118,7 +128,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
   }, [url, protocols, onClose, onError, onMessage, onOpen]);
 
   useEffect(() => {
-    if (ws.current?.readyState === WebSocket.OPEN) {
+    if (ready.current && ws.current?.readyState === WebSocket.OPEN) {
       while (queue.current.length > 0) {
         const msg = queue.current.shift();
         ws.current.send(JSON.stringify(msg));
@@ -128,7 +138,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
 
   const sendMsg = useCallback((o: TMsgO) => {
     queue.current.push(o);
-    if (ws.current?.readyState === WebSocket.OPEN) {
+    if (ready.current && ws.current?.readyState === WebSocket.OPEN) {
       while (queue.current.length > 0) {
         const msg = queue.current.shift();
         if (msg) {

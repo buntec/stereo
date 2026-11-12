@@ -56,6 +56,22 @@ pub enum MsgServer {
     Repos {
         repos: Vec<Repo>,
     },
+    /// The tailnet status of a server run with `--tailscale`, sent on connect and on change.
+    Tailscale {
+        status: crate::tailscale::TailscaleStatus,
+    },
+    /// Reply to `CreatePairingCode`: a single-use code that signs a browser on the tailnet in,
+    /// valid for `expires_in` seconds.
+    PairingCode {
+        id: i64,
+        code: String,
+        expires_in: u64,
+    },
+    /// The token to authenticate with from now on, sent to a browser that connected with a
+    /// pairing code.
+    AuthToken {
+        token: String,
+    },
     /// Progress of an audio download for `/audio` (see `audio.rs`), sent to every session.
     AudioDownload {
         yt_id: String,
@@ -580,6 +596,10 @@ pub enum MsgClient {
         id: i64,
         yt_ids: Vec<String>,
     },
+    /// Asks for a pairing code (`MsgServer::PairingCode`), with `--tailscale` only.
+    CreatePairingCode {
+        id: i64,
+    },
     GetGitRemote,
     SetGitRemote {
         url: Option<String>,
@@ -743,6 +763,7 @@ impl MsgClient {
             | Self::GetPathCompletions { id, .. }
             | Self::CollectionContainsIds { id, .. }
             | Self::GetWaveform { id, .. }
+            | Self::CreatePairingCode { id }
             | Self::GetNewReleasesCandidates { id }
             | Self::CreateYtAnonPlaylist { id, .. }
             | Self::GetSpotifySession { id }

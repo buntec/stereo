@@ -919,3 +919,97 @@ test("quick playlist edits each change only their own field", async ({
     ]);
   expect(messages.some((m) => m.type === "save-playlist")).toBe(false);
 });
+
+const pairingCode = "0123456789abcdef0123456789abcdef";
+
+/** Records the subprotocols each `/ws` connection offers (call after `routeWebSocket`). */
+async function recordWsProtocols(page: Page) {
+  await page.addInitScript(() => {
+    const offered: (string | string[] | null)[] = [];
+    Object.assign(window, { offeredWsProtocols: offered });
+    window.WebSocket = class extends window.WebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        if (new URL(url).pathname === "/ws") offered.push(protocols ?? null);
+      }
+    };
+  });
+  return () =>
+    page.evaluate(
+      () =>
+        (window as unknown as { offeredWsProtocols: unknown })
+          .offeredWsProtocols,
+    );
+}
+
+test("a pairing code survives a failed connection and is traded for the token", async ({
+  page,
+}) => {
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket("**/ws", (ws) => {
+    sockets.push(ws);
+    // The first attempt fails as an unreachable backend would, before redeeming the code.
+    if (sockets.length === 1) return void ws.close({ code: 1011 });
+    ws.send(
+      JSON.stringify([
+        { type: "backend-info", version: "test", home_dir: "/audit" },
+        { type: "auth-token", token: "tailnet-token" },
+        { type: "repos", repos: [] },
+      ]),
+    );
+  });
+  const offered = await recordWsProtocols(page);
+  await page.goto(`/#stereo-pair=${pairingCode}`);
+  const pair = [`stereo.pair.${pairingCode}`];
+  await expect.poll(offered, { timeout: 10_000 }).toEqual([pair, pair]);
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("stereo-ws-token")))
+    .toBe("tailnet-token");
+  // Paired: later connections offer the token instead.
+  await sockets[1].close();
+  const auth = `stereo.auth.${Buffer.from("tailnet-token").toString("hex")}`;
+  await expect.poll(offered, { timeout: 10_000 }).toEqual([pair, pair, [auth]]);
+  await expect(page.getByText(/sign-in code has expired/)).toHaveCount(0);
+});
+
+test("a rejected pairing code is explained and not offered again", async ({
+  page,
+}) => {
+  await page.routeWebSocket("**/ws", (ws) => {
+    ws.close({ code: 4401, reason: "Invalid or expired pairing code" });
+  });
+  const offered = await recordWsProtocols(page);
+  await page.goto(`/#stereo-pair=${pairingCode}`);
+  await expect(page.getByText(/sign-in code has expired/)).toBeVisible();
+  // Reconnects keep going, without the code.
+  await expect
+    .poll(async () => ((await offered()) as unknown[]).slice(0, 2), {
+      timeout: 10_000,
+    })
+    .toEqual([[`stereo.pair.${pairingCode}`], null]);
+});
+
+test("a rejected saved token is forgotten and explained", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem("seeded")) {
+      sessionStorage.setItem("seeded", "1");
+      localStorage.setItem("stereo-ws-token", "old-token");
+    }
+  });
+  await page.routeWebSocket("**/ws", (ws) => {
+    ws.close({ code: 4403, reason: "Invalid token" });
+  });
+  const offered = await recordWsProtocols(page);
+  await page.goto("/");
+  await expect(page.getByText(/no longer accepts this browser/)).toBeVisible();
+  expect(
+    await page.evaluate(() => localStorage.getItem("stereo-ws-token")),
+  ).toBeNull();
+  // Reconnects keep going, without the token.
+  const auth = `stereo.auth.${Buffer.from("old-token").toString("hex")}`;
+  await expect
+    .poll(async () => ((await offered()) as unknown[]).slice(0, 2), {
+      timeout: 10_000,
+    })
+    .toEqual([[auth], null]);
+});

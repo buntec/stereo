@@ -11,11 +11,12 @@ use std::{
 use anyhow::Context;
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
         State,
     },
     http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
+    Extension,
 };
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
@@ -32,6 +33,7 @@ use crate::{
     scraper,
     settings::Settings,
     spotify,
+    tailscale::{self, TailscaleStatus},
     utils::{self, PathKind},
     youtube,
 };
@@ -252,10 +254,15 @@ impl SessionState {
     }
 }
 
+/// Marks requests that reached the tailnet listener (see `tailscale.rs`).
+#[derive(Clone, Copy)]
+pub struct Tailnet;
+
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
     State(settings): State<Arc<Settings>>,
+    tailnet: Option<Extension<Tailnet>>,
 ) -> impl IntoResponse {
     let Some(origin) = headers
         .get(header::ORIGIN)
@@ -263,28 +270,123 @@ pub async fn ws_handler(
     else {
         return (StatusCode::FORBIDDEN, "WebSocket Origin header required").into_response();
     };
+    if tailnet.is_some() {
+        return tailnet_ws_handler(ws, &headers, origin, settings);
+    }
     if !websocket_origin_allowed(origin, &settings) {
         tracing::warn!(%origin, "Rejected WebSocket from untrusted origin");
         return (StatusCode::FORBIDDEN, "Untrusted WebSocket origin").into_response();
     }
 
-    let auth_protocol = settings.ws_token.as_deref().map(websocket_auth_protocol);
-    if let Some(expected) = auth_protocol.as_deref() {
-        if !websocket_auth_supplied(&headers, expected) {
+    let offered = websocket_offered_protocol(&headers, AUTH_PROTOCOL);
+    let ws = match settings.ws_token.as_deref().map(websocket_auth_protocol) {
+        Some(expected) if websocket_auth_supplied(&headers, &expected) => ws.protocols([expected]),
+        // A token the browser kept from a run with another one: told apart from an unreachable
+        // server, so that the client forgets it.
+        Some(_) if offered.is_some() => return reject(ws, offered, TOKEN_REJECTED),
+        Some(_) => {
             return (
                 StatusCode::UNAUTHORIZED,
                 "WebSocket authentication required",
             )
-                .into_response();
+                .into_response()
         }
-    }
+        // One kept from a run with a token: not needed, but a handshake that doesn't select the
+        // protocol offered would fail.
+        None => match offered {
+            Some(offered) => ws.protocols([offered]),
+            None => ws,
+        },
+    };
+    ws.on_upgrade(move |socket| handle_socket(socket, settings, None))
+        .into_response()
+}
 
-    let ws = match auth_protocol {
+/// A WebSocket from the tailnet: only from the tailnet origin, with the tailnet token or a pairing
+/// code, which the session then trades for the token.
+fn tailnet_ws_handler(
+    ws: WebSocketUpgrade,
+    headers: &HeaderMap,
+    origin: &str,
+    settings: Arc<Settings>,
+) -> axum::response::Response {
+    let expected = tailscale::origin().and_then(|origin| parse_browser_origin(&origin));
+    if expected.is_none() || parse_browser_origin(origin) != expected {
+        tracing::warn!(%origin, "Rejected tailnet WebSocket from untrusted origin");
+        return (StatusCode::FORBIDDEN, "Untrusted WebSocket origin").into_response();
+    }
+    let Some(token) = tailscale::token() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let auth = websocket_auth_protocol(&token);
+    let (protocol, paired) = if websocket_auth_supplied(headers, &auth) {
+        (auth, None)
+    } else if let Some(pairing) = websocket_offered_protocol(headers, PAIRING_PROTOCOL) {
+        // Used up even if the upgrade then fails: a code never works twice.
+        if !tailscale::redeem_pairing_code(&pairing[PAIRING_PROTOCOL.len()..]) {
+            return reject(ws, Some(pairing), PAIRING_REJECTED);
+        }
+        (pairing, Some(token))
+    } else if let Some(auth) = websocket_offered_protocol(headers, AUTH_PROTOCOL) {
+        return reject(ws, Some(auth), TOKEN_REJECTED);
+    } else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "WebSocket authentication required",
+        )
+            .into_response();
+    };
+    ws.protocols([protocol])
+        .on_upgrade(move |socket| handle_socket(socket, settings, paired))
+        .into_response()
+}
+
+const AUTH_PROTOCOL: &str = "stereo.auth.";
+const PAIRING_PROTOCOL: &str = "stereo.pair.";
+
+/// The close codes for a pairing code that is invalid, expired or used, and for a token that is
+/// not (or no longer) the backend's. Browsers can't read the status of a failed handshake, so a
+/// rejection is told apart from an unreachable server (after which the client offers the same
+/// again) by an upgrade closed with one of these. `App.tsx` matches them.
+const PAIRING_REJECTED: u16 = 4401;
+const TOKEN_REJECTED: u16 = 4403;
+
+/// Upgrade, selecting the `protocol` offered, only to close with `code`.
+fn reject(ws: WebSocketUpgrade, protocol: Option<String>, code: u16) -> axum::response::Response {
+    let ws = match protocol {
         Some(protocol) => ws.protocols([protocol]),
         None => ws,
     };
-    ws.on_upgrade(move |socket| handle_socket(socket, settings))
+    ws.on_upgrade(move |socket| close_with(socket, code))
         .into_response()
+}
+
+async fn close_with(mut socket: WebSocket, code: u16) {
+    let reason = match code {
+        PAIRING_REJECTED => "Invalid or expired pairing code",
+        _ => "Invalid token",
+    };
+    let close = Message::Close(Some(CloseFrame {
+        code,
+        reason: reason.into(),
+    }));
+    if socket.send(close).await.is_ok() {
+        // Wait for the client's close, so that it sees a clean close with the code.
+        let drain = async { while let Some(Ok(_)) = socket.recv().await {} };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), drain).await;
+    }
+}
+
+/// The first subprotocol the client offered that starts with `prefix`.
+fn websocket_offered_protocol(headers: &HeaderMap, prefix: &str) -> Option<String> {
+    headers
+        .get(header::SEC_WEBSOCKET_PROTOCOL)?
+        .to_str()
+        .ok()?
+        .split(',')
+        .map(str::trim)
+        .find(|protocol| protocol.starts_with(prefix))
+        .map(str::to_string)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -353,7 +455,7 @@ fn websocket_auth_protocol(token: &str) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    format!("stereo.auth.{encoded}")
+    format!("{AUTH_PROTOCOL}{encoded}")
 }
 
 fn websocket_auth_supplied(headers: &HeaderMap, expected: &str) -> bool {
@@ -367,7 +469,36 @@ fn websocket_auth_supplied(headers: &HeaderMap, expected: &str) -> bool {
         })
 }
 
-async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
+/// Sends the session the tailnet status, then every change.
+async fn forward_tailscale(
+    mut status: tokio::sync::watch::Receiver<TailscaleStatus>,
+    server_tx: mpsc::Sender<MsgServer>,
+) {
+    loop {
+        let current = status.borrow_and_update().clone();
+        if server_tx
+            .send(MsgServer::Tailscale { status: current })
+            .await
+            .is_err()
+            || status.changed().await.is_err()
+        {
+            break;
+        }
+    }
+}
+
+/// `paired` is the token to hand to a client that connected with a pairing code.
+async fn handle_socket(mut socket: WebSocket, settings: Arc<Settings>, paired: Option<String>) {
+    // First and straight away, not after the send loop's batching delay: the pairing code is
+    // used up already, and a connection lost before the token arrives would lose both.
+    if let Some(token) = paired {
+        // A batch of one, as `send_loop` sends them.
+        let msg =
+            serde_json::to_string(&[MsgServer::AuthToken { token }]).expect("serializing a token");
+        if socket.send(Message::Text(msg)).await.is_err() {
+            return;
+        }
+    }
     let (ws_sink, ws_stream) = socket.split();
     let uid = uuid::Uuid::new_v4();
     tracing::info!("WS connected: {uid}");
@@ -395,6 +526,8 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
             audio_key: audio::key(),
         })
         .await;
+    let tailscale_task = tailscale::subscribe()
+        .map(|status| tokio::spawn(forward_tailscale(status, server_tx.clone())));
     // After BackendInfo, which makes the client forget downloads it knew from a previous connection.
     let downloads_task = audio::subscribe().await.map(|(snapshot, updates)| {
         tokio::spawn(forward_audio_cache(snapshot, updates, server_tx.clone()))
@@ -461,7 +594,7 @@ async fn handle_socket(socket: WebSocket, settings: Arc<Settings>) {
     recv_task.abort();
     moves_task.abort();
     playlist_changes_task.abort();
-    if let Some(task) = downloads_task {
+    for task in [downloads_task, tailscale_task].into_iter().flatten() {
         task.abort();
     }
     send_task.abort();
@@ -2037,6 +2170,17 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             audio::download_in_background(&yt_id)?;
         }
 
+        MsgClient::CreatePairingCode { id } => {
+            let code = tailscale::create_pairing_code().map_err(anyhow::Error::msg)?;
+            let _ = tx
+                .send(MsgServer::PairingCode {
+                    id,
+                    code,
+                    expires_in: tailscale::PAIRING_TTL.as_secs(),
+                })
+                .await;
+        }
+
         MsgClient::GetWaveform { id, yt_id } => {
             let tx = tx.clone();
             tokio::spawn(async move {
@@ -2825,6 +2969,7 @@ mod websocket_security_tests {
             yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
             verbosity: 0,
             dev: false,
+            tailscale: false,
         }
     }
 
@@ -2941,6 +3086,7 @@ mod tests {
             yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
             verbosity: 0,
             dev: false,
+            tailscale: false,
         };
         let router = axum::Router::new()
             .route("/ws", axum::routing::get(ws_handler))
@@ -3042,6 +3188,131 @@ mod tests {
         let rating = db::get_track(&pool, "one").await.unwrap().unwrap().rating;
         pool.close().await;
         rating
+    }
+
+    /// A listener's response to a WebSocket from `origin` offering `protocol`.
+    async fn handshake(port: u16, origin: &str, protocol: Option<&str>) -> Result<Socket, u16> {
+        let mut request = format!("ws://127.0.0.1:{port}/ws")
+            .into_client_request()
+            .unwrap();
+        let headers = request.headers_mut();
+        headers.insert(header::ORIGIN, origin.parse().unwrap());
+        if let Some(protocol) = protocol {
+            headers.insert(header::SEC_WEBSOCKET_PROTOCOL, protocol.parse().unwrap());
+        }
+        match tokio_tungstenite::connect_async(request).await {
+            Ok((socket, _)) => Ok(socket),
+            Err(tungstenite::Error::Http(response)) => Err(response.status().as_u16()),
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tailnet_listener_requires_its_origin_and_token_or_a_pairing_code() {
+        let (origin, token) = tailscale::install_for_tests();
+        let home = tempfile::tempdir().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let settings = Settings {
+            home: Some(home.path().to_path_buf()),
+            host: "127.0.0.1".into(),
+            port: 8005,
+            allowed_origins: vec![],
+            ws_token: None,
+            cache_dir: None,
+            audio_cache_limit_gb: crate::settings::DEFAULT_AUDIO_CACHE_LIMIT_GB,
+            yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
+            verbosity: 0,
+            dev: false,
+            tailscale: true,
+        };
+        let router = axum::Router::new()
+            .route("/ws", axum::routing::get(ws_handler))
+            .with_state(Arc::new(settings))
+            .layer(Extension(Tailnet));
+        tokio::spawn(async move { axum::serve(listener, router).await });
+
+        let auth = websocket_auth_protocol(token);
+        // Local origins aren't trusted here, even with the token: anyone on the tailnet can send them.
+        let local = format!("http://127.0.0.1:{port}");
+        assert_eq!(handshake(port, &local, Some(&auth)).await.err(), Some(403));
+        assert_eq!(handshake(port, origin, None).await.err(), Some(401));
+        // A wrong token: the upgrade is closed with a code saying so, for the client to forget it.
+        let socket = handshake(port, origin, Some("stereo.auth.00"))
+            .await
+            .unwrap();
+        expect_close(socket, TOKEN_REJECTED).await;
+        assert!(handshake(port, origin, Some(&auth)).await.is_ok());
+
+        let code = tailscale::create_pairing_code().unwrap();
+        let pairing = format!("{PAIRING_PROTOCOL}{code}");
+        let socket = handshake(port, origin, Some(&pairing)).await.unwrap();
+        let mut client = Client {
+            socket,
+            pending: VecDeque::new(),
+        };
+        client
+            .expect("the token", |m| {
+                m["type"] == "auth-token" && m["token"] == token
+            })
+            .await;
+        // Used up: the upgrade is closed with a code saying so.
+        let socket = handshake(port, origin, Some(&pairing)).await.unwrap();
+        expect_close(socket, PAIRING_REJECTED).await;
+    }
+
+    /// The first frame closes the socket with `code`, and nothing follows.
+    async fn expect_close(mut socket: Socket, code: u16) {
+        match socket.next().await {
+            Some(Ok(tungstenite::Message::Close(Some(frame)))) => {
+                assert_eq!(u16::from(frame.code), code);
+            }
+            other => panic!("expected a close frame, got {other:?}"),
+        }
+        assert!(!matches!(
+            socket.next().await,
+            Some(Ok(tungstenite::Message::Text(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_a_stale_token_with_a_close_code() {
+        async fn serve(home: &Path, ws_token: Option<&str>) -> u16 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let settings = Settings {
+                home: Some(home.to_path_buf()),
+                host: "127.0.0.1".into(),
+                port,
+                allowed_origins: vec![],
+                ws_token: ws_token.map(str::to_string),
+                cache_dir: None,
+                audio_cache_limit_gb: crate::settings::DEFAULT_AUDIO_CACHE_LIMIT_GB,
+                yt_dlp: crate::settings::DEFAULT_YT_DLP.to_string(),
+                verbosity: 0,
+                dev: false,
+                tailscale: false,
+            };
+            let router = axum::Router::new()
+                .route("/ws", axum::routing::get(ws_handler))
+                .with_state(Arc::new(settings));
+            tokio::spawn(async move { axum::serve(listener, router).await });
+            port
+        }
+        let home = tempfile::tempdir().unwrap();
+        let stale = websocket_auth_protocol("old");
+        // Without a token, one the browser kept is accepted (and must be selected).
+        let port = serve(home.path(), None).await;
+        let origin = format!("http://127.0.0.1:{port}");
+        let socket = handshake(port, &origin, Some(&stale)).await;
+        assert!(socket.is_ok());
+        let port = serve(home.path(), Some("new")).await;
+        let origin = format!("http://127.0.0.1:{port}");
+        let socket = handshake(port, &origin, Some(&stale)).await.unwrap();
+        expect_close(socket, TOKEN_REJECTED).await;
+        assert_eq!(handshake(port, &origin, None).await.err(), Some(401));
+        let current = websocket_auth_protocol("new");
+        assert!(handshake(port, &origin, Some(&current)).await.is_ok());
     }
 
     #[tokio::test]

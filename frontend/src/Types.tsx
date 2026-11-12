@@ -111,6 +111,13 @@ export const isChartSearchKind = (kind: SearchBoxKind) =>
 export const isQuerylessSearchKind = (kind: SearchBoxKind) =>
   kind === "new-releases" || isChartSearchKind(kind);
 
+/** Whether a backend run with `--tailscale` serves its tailnet URL yet. */
+export type TailscaleStatus =
+  | { state: "starting" }
+  | { state: "serving"; url: string }
+  /** The last attempt failed; the backend keeps retrying. */
+  | { state: "error"; message: string };
+
 export type ClientMsg =
   | { type: "set-collection"; path: string }
   | { type: "validate-track"; track: unknown; id?: number }
@@ -120,6 +127,7 @@ export type ClientMsg =
   | { type: "rename-collection"; path: string; name: string }
   | { type: "collection-contains-ids"; yt_ids: string[] }
   | { type: "download-audio"; yt_id: string }
+  | { type: "create-pairing-code" }
   | { type: "get-waveform"; yt_id: string }
   | { type: "get-track-info"; yt_id: string }
   | { type: "import-from"; path: string; keep_user_data: boolean }
@@ -272,6 +280,9 @@ export type ServerMsg =
       home_dir: string;
       audio_key?: string | null;
     }
+  | { type: "tailscale"; status: TailscaleStatus }
+  | { type: "pairing-code"; id: number; code: string; expires_in: number }
+  | { type: "auth-token"; token: string }
   | {
       type: "audio-download";
       yt_id: string;
