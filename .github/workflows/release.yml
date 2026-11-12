@@ -38,7 +38,7 @@ jobs:
 
       - name: Install Rust toolchain
         shell: bash
-        run: rustup show
+        run: rustup update stable
 
       - uses: Swatinem/rust-cache@v2
 
