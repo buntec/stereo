@@ -225,7 +225,7 @@ async function openApp(
     page.locator(".collection-controls").getByRole("button").first(),
   ).toBeVisible();
   await expect(
-    page.getByText("Connecting to Stereo", { exact: true }),
+    page.getByText("Connecting to Stereo…", { exact: true }),
   ).toHaveCount(0);
   return {
     messages,
@@ -240,6 +240,20 @@ async function openApp(
     },
     send: (message: unknown) => socket.send(JSON.stringify(message)),
   };
+}
+
+/**
+ * A notification's text in the toast stack. Astryx also announces it in a live
+ * region, so it's on the page twice.
+ */
+function toastText(
+  page: Page,
+  text: string | RegExp,
+  options?: { exact?: boolean },
+) {
+  return page
+    .getByRole("region", { name: "Notifications" })
+    .getByText(text, options);
 }
 
 /**
@@ -332,14 +346,14 @@ test("notifications stack and a later notification gets its full lifetime", asyn
     { type: "notification", kind: "error", message: "First warning" },
     { type: "notification", kind: "error", message: "Second warning" },
   ]);
-  await expect(page.getByText("First warning")).toBeVisible();
-  await expect(page.getByText("Second warning")).toBeVisible();
+  await expect(toastText(page, "First warning")).toBeVisible();
+  await expect(toastText(page, "Second warning")).toBeVisible();
   send({ type: "notification", kind: "info", message: "First information" });
-  await expect(page.getByText("First information")).toBeVisible();
+  await expect(toastText(page, "First information")).toBeVisible();
   await page.waitForTimeout(4200);
   send({ type: "notification", kind: "info", message: "Later information" });
   await page.waitForTimeout(1200);
-  await expect(page.getByText("Later information")).toBeVisible();
+  await expect(toastText(page, "Later information")).toBeVisible();
 });
 
 for (const width of [390, 768, 1440]) {
@@ -382,7 +396,7 @@ test("first-use and empty collection states offer next actions", async ({
 test("empty collections offer search and import", async ({ page }) => {
   await openApp(page, { empty: true });
   await expect(
-    page.getByRole("heading", { name: "Your collection is ready" }),
+    page.getByRole("heading", { name: "Your collection is empty" }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "Search for music", exact: true })
@@ -425,8 +439,9 @@ test("metadata editing groups identifiers and explains invalid required fields",
   await expect(
     dialog.getByRole("textbox", { name: "Spotify ID", exact: true }),
   ).toBeHidden();
-  await dialog.getByRole("textbox", { name: /^Title/ }).fill("");
-  await expect(dialog.getByText("Enter a track title.")).toBeVisible();
+  const title = dialog.getByRole("textbox", { name: /^Title/ });
+  await title.fill("");
+  await expect(title).toHaveAccessibleDescription(/Required/);
   await expect(
     dialog.getByRole("button", { name: "Save", exact: true }),
   ).toBeDisabled();
@@ -610,15 +625,15 @@ test("skips tracks whose audio can't be downloaded, and stops after three in a r
   const { audioRequests } = await openApp(page, { audio: "fail" });
   await startPlayback(page);
   await expect(
-    page
-      .getByText(
-        "Couldn't download this track's audio, skipping it: yt-dlp failed",
-        { exact: true },
-      )
-      .first(),
+    toastText(
+      page,
+      "Couldn't download this track's audio, skipping it: yt-dlp failed",
+      { exact: true },
+    ).first(),
   ).toBeVisible();
   await expect(
-    page.getByText(
+    toastText(
+      page,
       "Couldn't download the audio of 3 tracks in a row, stopping: yt-dlp failed",
       { exact: true },
     ),
@@ -649,7 +664,7 @@ test("a track paused while it downloads stays paused if the download fails", asy
   for (const route of heldAudio.splice(0))
     await route.fulfill({ status: 502, body: "yt-dlp failed" });
   await expect(
-    page.getByText("Couldn't download this track's audio: yt-dlp failed", {
+    toastText(page, "Couldn't download this track's audio: yt-dlp failed", {
       exact: true,
     }),
   ).toBeVisible();
@@ -664,7 +679,8 @@ test("play retries a track whose download failed", async ({ page }) => {
   });
   await startPlayback(page);
   await expect(
-    page.getByText(
+    toastText(
+      page,
       "Couldn't download the audio of 3 tracks in a row, stopping: yt-dlp failed",
       { exact: true },
     ),
@@ -716,9 +732,7 @@ test("shows the playing track's download progress in its waveform, and each trac
   const rowButton = (index: number) =>
     page.locator(`.ag-row[row-index="${index}"] .audio-cache-button`);
   await expect(waveform).toBeVisible();
-  await expect(rowButton(0)).toHaveAccessibleName(
-    "Not downloaded. Click to download",
-  );
+  await expect(rowButton(0)).toHaveAccessibleName("Download");
 
   // Downloads of other tracks (prefetching) only show in their rows.
   send({
@@ -780,15 +794,11 @@ test("an evicted track stays shown as not downloaded when its buffered audio pla
   await button.click();
   await expect(button).toHaveAccessibleName("Play");
   send({ type: "audio-evicted", yt_ids: ["audit0"] });
-  await expect(rowButton).toHaveAccessibleName(
-    "Not downloaded. Click to download",
-  );
+  await expect(rowButton).toHaveAccessibleName("Download");
   await button.click();
   await expect(button).toHaveAccessibleName("Pause");
   await expect(button).not.toHaveAttribute("aria-busy", "true");
-  await expect(rowButton).toHaveAccessibleName(
-    "Not downloaded. Click to download",
-  );
+  await expect(rowButton).toHaveAccessibleName("Download");
   await rowButton.click();
   await expect
     .poll(() => messages.filter((m) => m.type === "download-audio"))
@@ -886,9 +896,7 @@ test("offers to correct a BPM that deviates from the measured tempo", async ({
   const { messages } = await playWithTempo(page, { bpm: 126.04, steady: true });
   await expect(page.locator(".now-playing-tempo")).toHaveText("126 BPM");
   await expect(
-    page.getByText(
-      "Example track 1 plays at 126 BPM, but its metadata says 130 BPM.",
-    ),
+    toastText(page, "Example track 1 plays at 126 BPM, not 130 BPM"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Set to 126" }).click();
   await expect
@@ -901,14 +909,14 @@ test("offers to correct a BPM that deviates from the measured tempo", async ({
         collection: "/audit/collection.db",
       },
     ]);
-  await expect(page.getByText("but its metadata says")).toHaveCount(0);
+  await expect(toastText(page, "plays at")).toHaveCount(0);
 });
 
 test("a BPM suggestion is withdrawn when the collection is switched", async ({
   page,
 }) => {
   const app = await playWithTempo(page, { bpm: 126.04, steady: true });
-  const toast = page.getByText("plays at 126 BPM, but its metadata says 130");
+  const toast = toastText(page, "plays at 126 BPM, not 130");
   await expect(toast).toBeVisible();
   app.send({
     type: "collection-info",
@@ -935,9 +943,7 @@ test("a BPM suggestion is based on the metadata stored in the collection", async
       app.send({ type: "track-info", track: { ...app.tracks[0], bpm: 65 } }),
   );
   await expect(
-    page.getByText(
-      "Example track 1 plays at 126 BPM, but its metadata says 130 BPM.",
-    ),
+    toastText(page, "Example track 1 plays at 126 BPM, not 130 BPM"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Set to 126" }).click();
   await expect
@@ -954,7 +960,7 @@ test("a track gets a BPM suggestion once it is added to the collection", async (
   await expect
     .poll(() => app.messages.some((m) => m.type === "get-collection-track"))
     .toBe(true);
-  const toast = page.getByText("plays at 126 BPM, but its metadata says 130");
+  const toast = toastText(page, "plays at 126 BPM, not 130");
   await page.waitForTimeout(500);
   await expect(toast).toHaveCount(0);
   app.absent.delete("audit0");
@@ -964,7 +970,7 @@ test("a track gets a BPM suggestion once it is added to the collection", async (
 
 test("a dismissed BPM suggestion isn't offered again", async ({ page }) => {
   await playWithTempo(page, { bpm: 124.4, steady: true });
-  const toast = page.getByText("plays at 124.4 BPM, but its metadata says 130");
+  const toast = toastText(page, "plays at 124.4 BPM, not 130");
   await expect(toast).toBeVisible();
   await page.getByRole("button", { name: /dismiss|close/i }).click();
   await expect(toast).toHaveCount(0);
@@ -978,7 +984,7 @@ test("half time isn't taken for wrong metadata", async ({ page }) => {
   // Shown at the metadata's octave.
   await expect(page.locator(".now-playing-tempo")).toHaveText("130 BPM");
   await page.waitForTimeout(500);
-  await expect(page.getByText("but its metadata says")).toHaveCount(0);
+  await expect(toastText(page, "plays at")).toHaveCount(0);
 });
 
 test("a varying tempo is shown as approximate and not suggested", async ({
@@ -987,7 +993,7 @@ test("a varying tempo is shown as approximate and not suggested", async ({
   await playWithTempo(page, { bpm: 126.3, steady: false });
   await expect(page.locator(".now-playing-tempo")).toHaveText("~126 BPM");
   await page.waitForTimeout(500);
-  await expect(page.getByText("but its metadata says")).toHaveCount(0);
+  await expect(toastText(page, "plays at")).toHaveCount(0);
 });
 
 test("a track without a waveform gets one once its audio is downloaded again", async ({
@@ -1188,7 +1194,7 @@ test("a pairing code survives a failed connection and is traded for the token", 
   await sockets[1].close();
   const auth = `stereo.auth.${Buffer.from("tailnet-token").toString("hex")}`;
   await expect.poll(offered, { timeout: 10_000 }).toEqual([pair, pair, [auth]]);
-  await expect(page.getByText(/sign-in code has expired/)).toHaveCount(0);
+  await expect(toastText(page, /Sign-in code expired/)).toHaveCount(0);
 });
 
 test("a rejected pairing code is explained and not offered again", async ({
@@ -1199,7 +1205,7 @@ test("a rejected pairing code is explained and not offered again", async ({
   });
   const offered = await recordWsProtocols(page);
   await page.goto(`/#stereo-pair=${pairingCode}`);
-  await expect(page.getByText(/sign-in code has expired/)).toBeVisible();
+  await expect(toastText(page, /Sign-in code expired/)).toBeVisible();
   // Reconnects keep going, without the code.
   await expect
     .poll(async () => ((await offered()) as unknown[]).slice(0, 2), {
@@ -1220,7 +1226,7 @@ test("a rejected saved token is forgotten and explained", async ({ page }) => {
   });
   const offered = await recordWsProtocols(page);
   await page.goto("/");
-  await expect(page.getByText(/no longer accepts this browser/)).toBeVisible();
+  await expect(toastText(page, /Saved sign-in no longer valid/)).toBeVisible();
   expect(
     await page.evaluate(() => localStorage.getItem("stereo-ws-token")),
   ).toBeNull();
