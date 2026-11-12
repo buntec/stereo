@@ -24,10 +24,4 @@ export const stereoTheme: DefinedTheme = defineTheme({
   name: "stereo",
   extends: neutralTheme,
   tokens: fontTokens,
-  components: {
-    // Menus mark selected options with a trailing check (MenuCheck in
-    // Menu.tsx) instead of radio circles and checkbox squares.
-    "dropdown-menu-radio": { base: { display: "none" } },
-    "dropdown-menu-checkbox": { base: { display: "none" } },
-  },
 });

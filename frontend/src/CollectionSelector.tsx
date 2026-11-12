@@ -15,7 +15,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@radix-ui/react-icons";
-import { MenuCheck, MenuHeading } from "./Menu.tsx";
+import { MenuHeading } from "./Menu.tsx";
 import NewCollectionDialog from "./NewCollectionDialog.tsx";
 import RenameCollectionDialog from "./RenameCollectionDialog.tsx";
 import CloneRepoDialog from "./CloneRepoDialog.tsx";
@@ -121,9 +121,6 @@ function CollectionSelector({
               key={c.path}
               value={c.path}
               label={collectionLabel(c.path)}
-              endContent={
-                <MenuCheck isChecked={c.path === selectedCollection} />
-              }
             />
           ))}
         </DropdownMenuRadioGroup>
@@ -167,9 +164,6 @@ function CollectionSelector({
               value={r.path}
               label={basename(r.path)}
               description={r.remote ?? "No remote"}
-              endContent={
-                <MenuCheck isChecked={r.path === selectedRepo?.path} />
-              }
             />
           ))}
         </DropdownMenuRadioGroup>

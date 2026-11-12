@@ -72,7 +72,6 @@ import { GridScrollButtons } from "./GridScrollButtons.tsx";
 import { scrollGridToTop, useGridScrollState } from "./useGridScrollState.ts";
 import { AudioCacheButton } from "./AudioCacheButton.tsx";
 import logger from "./logger.tsx";
-import { MenuCheck } from "./Menu.tsx";
 import ShazamIcon from "./ShazamIcon.tsx";
 import YouTubeIcon from "./YouTubeIcon.tsx";
 
@@ -709,7 +708,6 @@ export const ColumnsMenu = ({ gridRef, onReset }: ColumnsMenuProps) => {
           label={c.headerName}
           value={c.visible}
           onChange={(checked) => toggleColumn(c.colId, checked)}
-          endContent={<MenuCheck isChecked={c.visible} />}
         />
       ))}
       <Divider />
