@@ -23,8 +23,8 @@ use tokio::sync::{broadcast, mpsc};
 use crate::{
     audio, beatport, db, git,
     message::{
-        MsgClient, MsgServer, PlaylistSync, PlaylistSyncState, PlaylistTargetStatus, PlaylistView,
-        SearchKind,
+        MsgClient, MsgServer, PlaylistEdit, PlaylistSync, PlaylistSyncState, PlaylistTargetStatus,
+        PlaylistView, SearchKind,
     },
     models::{Collection, Track},
     playlist_sync::{self, InFlight, Outcome},
@@ -827,11 +827,25 @@ async fn send_playlists(tx: &mpsc::Sender<MsgServer>, repo: &Path, data_home: &P
 }
 
 /// Changes `repo`'s playlists with `f` under the repo lock, then schedules their sync and sends
-/// them to every session. The caller must not hold the repo lock.
+/// them to every session. The caller must not hold the repo lock, and `repo` must be the
+/// session's current repo.
 async fn modify_playlists<T>(
     tx: &mpsc::Sender<MsgServer>,
     session_id: uuid::Uuid,
     data_home: &Path,
+    repo: &Path,
+    f: impl FnOnce(&mut Vec<Playlist>) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let out = update_playlists_file(tx, session_id, repo, f).await?;
+    send_playlists(tx, repo, data_home).await;
+    Ok(out)
+}
+
+/// [`modify_playlists`] without sending the playlists to this session, for background tasks: the
+/// session may have switched to another repo since, so they post `PlaylistsChanged` to it instead.
+async fn update_playlists_file<T>(
+    tx: &mpsc::Sender<MsgServer>,
+    session_id: uuid::Uuid,
     repo: &Path,
     f: impl FnOnce(&mut Vec<Playlist>) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
@@ -843,9 +857,17 @@ async fn modify_playlists<T>(
         out
     };
     schedule_git_sync(tx, repo.to_path_buf(), playlists::playlists_path(repo)).await;
-    send_playlists(tx, repo, data_home).await;
     announce_playlists_changed(session_id, repo.to_path_buf());
     Ok(out)
+}
+
+/// Syncs set the remote playlist ids, which the client's copy of a target may not have yet, so a
+/// target the client sends keeps the stored one's.
+fn keep_remote(old: Option<&ExportTarget>, new: Option<ExportTarget>) -> Option<ExportTarget> {
+    new.map(|target| ExportTarget {
+        auto_sync: target.auto_sync,
+        playlist_id: old.and_then(|old| old.playlist_id.clone()),
+    })
 }
 
 /// Points the playlists of the collection `from` at its new name `to`, returning whether there
@@ -1762,47 +1784,19 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             let collection = playlists::collection_name(&repo, &input.collection)
                 .context("Not a collection of this repo")?;
             let playlist_id = modify_playlists(tx, session_id, data_home, &repo, |list| {
-                // Syncs set the remote playlist ids, which the client's copy may not have yet.
-                let keep_remote = |old: Option<&ExportTarget>, new: Option<ExportTarget>| {
-                    new.map(|target| ExportTarget {
-                        auto_sync: target.auto_sync,
-                        playlist_id: old.and_then(|old| old.playlist_id.clone()),
-                    })
-                };
-                let now = playlists::now_ms();
-                let limit = input.limit.filter(|n| *n > 0);
-                match &input.id {
-                    Some(playlist_id) => {
-                        let playlist = list
-                            .iter_mut()
-                            .find(|p| &p.id == playlist_id)
-                            .context("That playlist was deleted")?;
-                        playlist.name = name;
-                        playlist.collection = collection;
-                        playlist.filter_model = input.filter_model;
-                        playlist.sort_model = input.sort_model;
-                        playlist.limit = limit;
-                        playlist.spotify = keep_remote(playlist.spotify.as_ref(), input.spotify);
-                        playlist.youtube = keep_remote(playlist.youtube.as_ref(), input.youtube);
-                        playlist.updated_at = now;
-                        Ok(playlist.id.clone())
-                    }
-                    None => {
-                        let playlist_id = uuid::Uuid::new_v4().to_string();
-                        list.push(Playlist {
-                            id: playlist_id.clone(),
-                            name,
-                            collection,
-                            filter_model: input.filter_model,
-                            sort_model: input.sort_model,
-                            limit,
-                            spotify: keep_remote(None, input.spotify),
-                            youtube: keep_remote(None, input.youtube),
-                            updated_at: now,
-                        });
-                        Ok(playlist_id)
-                    }
-                }
+                let playlist_id = uuid::Uuid::new_v4().to_string();
+                list.push(Playlist {
+                    id: playlist_id.clone(),
+                    name,
+                    collection,
+                    filter_model: input.filter_model,
+                    sort_model: input.sort_model,
+                    limit: input.limit.filter(|n| *n > 0),
+                    spotify: keep_remote(None, input.spotify),
+                    youtube: keep_remote(None, input.youtube),
+                    updated_at: playlists::now_ms(),
+                });
+                Ok(playlist_id)
             })
             .await?;
             let _ = tx
@@ -1810,14 +1804,66 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 .await;
         }
 
-        MsgClient::DeletePlaylist { playlist_id } => {
+        MsgClient::EditPlaylist { playlist_id, edit } => {
             let repo = state.repo.clone().context("No repo selected")?;
-            let remaining = modify_playlists(tx, session_id, data_home, &repo, |list| {
-                list.retain(|p| p.id != playlist_id);
-                Ok(list.iter().map(|p| p.id.clone()).collect())
+            // Validated before taking the lock.
+            let edit = match edit {
+                PlaylistEdit::Rename { name } => {
+                    let name = name.trim().to_string();
+                    anyhow::ensure!(!name.is_empty(), "A playlist needs a name");
+                    PlaylistEdit::Rename { name }
+                }
+                PlaylistEdit::SetView {
+                    collection,
+                    filter_model,
+                    sort_model,
+                } => PlaylistEdit::SetView {
+                    collection: playlists::collection_name(&repo, &collection)
+                        .context("Not a collection of this repo")?,
+                    filter_model,
+                    sort_model,
+                },
+                edit => edit,
+            };
+            modify_playlists(tx, session_id, data_home, &repo, |list| {
+                let playlist = list
+                    .iter_mut()
+                    .find(|p| p.id == playlist_id)
+                    .context("That playlist was deleted")?;
+                match edit {
+                    PlaylistEdit::Rename { name } => playlist.name = name,
+                    PlaylistEdit::SetLimit { limit } => playlist.limit = limit.filter(|n| *n > 0),
+                    PlaylistEdit::SetView {
+                        collection,
+                        filter_model,
+                        sort_model,
+                    } => {
+                        playlist.collection = collection;
+                        playlist.filter_model = filter_model;
+                        playlist.sort_model = sort_model;
+                    }
+                    PlaylistEdit::SetExport { service, target } => {
+                        let target = keep_remote(playlist.target(service), target);
+                        match service {
+                            Service::Spotify => playlist.spotify = target,
+                            Service::YouTube => playlist.youtube = target,
+                        }
+                    }
+                }
+                playlist.updated_at = playlists::now_ms();
+                Ok(())
             })
             .await?;
-            if let Err(e) = SyncRecords::retain(data_home, &remaining).await {
+        }
+
+        MsgClient::DeletePlaylist { playlist_id } => {
+            let repo = state.repo.clone().context("No repo selected")?;
+            modify_playlists(tx, session_id, data_home, &repo, |list| {
+                list.retain(|p| p.id != playlist_id);
+                Ok(())
+            })
+            .await?;
+            if let Err(e) = SyncRecords::remove(data_home, &playlist_id).await {
                 tracing::warn!("Could not forget the sync state of a deleted playlist: {e:#}");
             }
         }
@@ -1828,12 +1874,16 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         } => {
             let repo = state.repo.clone().context("No repo selected")?;
             modify_playlists(tx, session_id, data_home, &repo, |list| {
-                let target = list
+                let playlist = list
                     .iter_mut()
                     .find(|p| p.id == playlist_id)
-                    .and_then(|p| p.target_mut(service))
-                    .context("That playlist isn't exported there")?;
-                target.playlist_id = None;
+                    .context("That playlist was deleted")?;
+                playlist
+                    .target_mut(service)
+                    .context("That playlist isn't exported there")?
+                    .playlist_id = None;
+                // An edit like any other, so that a merge with an older edit keeps it.
+                playlist.updated_at = playlists::now_ms();
                 Ok(())
             })
             .await?;
@@ -1859,7 +1909,10 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             };
             let client = Arc::clone(client);
             let tx = tx.clone();
+            let events = events.clone();
             let data_home = data_home.to_path_buf();
+            // The session may switch to another repo while this runs, so it only touches the
+            // session through `PlaylistsChanged`, which checks that the repo is still current.
             tokio::spawn(async move {
                 let _in_flight = in_flight;
                 let status = |state| sync_status(&playlist.id, service, state);
@@ -1873,42 +1926,54 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                         ..status(PlaylistSyncState::Running)
                     }));
                 };
+                // Saved in the playlist right away, so that the next attempt reuses it if the
+                // upload fails.
+                let on_created = async |remote_id: String| {
+                    let saved = update_playlists_file(&tx, session_id, &repo, |list| {
+                        if let Some(target) = list
+                            .iter_mut()
+                            .find(|p| p.id == playlist.id)
+                            .and_then(|p| p.target_mut(service))
+                        {
+                            target.playlist_id.get_or_insert(remote_id);
+                        }
+                        Ok(())
+                    })
+                    .await;
+                    if let Err(e) = saved {
+                        tracing::error!("Could not save the new remote playlist: {e:#}");
+                    }
+                };
                 let result = playlist_sync::run(
-                    &client, &data_home, &repo, &playlist, service, force, progress,
+                    &client, &data_home, &repo, &playlist, service, force, progress, on_created,
                 )
                 .await;
+                let schedule_sp_ids_sync = async |written: bool| {
+                    if written {
+                        schedule_git_sync(&tx, repo.clone(), repo.join(&playlist.collection)).await;
+                    }
+                };
                 let msg = match result {
                     Ok(Outcome::Synced {
-                        created,
                         sp_ids_written,
                         matched,
                         total,
                     }) => {
-                        if let Some(remote_id) = created {
-                            let saved =
-                                modify_playlists(&tx, session_id, &data_home, &repo, |list| {
-                                    if let Some(target) = list
-                                        .iter_mut()
-                                        .find(|p| p.id == playlist.id)
-                                        .and_then(|p| p.target_mut(service))
-                                    {
-                                        target.playlist_id.get_or_insert(remote_id);
-                                    }
-                                    Ok(())
-                                })
-                                .await;
-                            if let Err(e) = saved {
-                                tracing::error!("Could not save the new remote playlist: {e:#}");
-                            }
-                        }
-                        if sp_ids_written {
-                            schedule_git_sync(&tx, repo.clone(), repo.join(&playlist.collection))
-                                .await;
-                        }
+                        schedule_sp_ids_sync(sp_ids_written).await;
                         PlaylistSync {
                             matched: Some(matched),
                             total: Some(total),
                             ..status(PlaylistSyncState::Synced)
+                        }
+                    }
+                    Ok(Outcome::LookupFailed {
+                        sp_ids_written,
+                        error,
+                    }) => {
+                        schedule_sp_ids_sync(sp_ids_written).await;
+                        PlaylistSync {
+                            error: Some(error),
+                            ..status(PlaylistSyncState::Failed)
                         }
                     }
                     Ok(Outcome::Unchanged) => status(PlaylistSyncState::Unchanged),
@@ -1920,9 +1985,11 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 };
                 let throttled = msg.state == PlaylistSyncState::Throttled;
                 let _ = tx.send(MsgServer::PlaylistSync(msg)).await;
-                // With the new sync time and error from the sync records.
+                // With the new sync time and error from the sync records, and any new remote
+                // playlist.
                 if !throttled {
-                    send_playlists(&tx, &repo, &data_home).await;
+                    let event = InternalEvent::PlaylistsChanged { repo };
+                    let _ = events.send(SessionEvent::Internal(event)).await;
                 }
             });
         }

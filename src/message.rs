@@ -324,13 +324,10 @@ pub struct PlaylistTargetStatus {
     pub error: Option<String>,
 }
 
-/// A playlist to save (`SavePlaylist`). The remote playlist ids of its targets are ignored:
-/// syncs set those, and `UnlinkPlaylist` clears them.
+/// A new playlist (`SavePlaylist`). The remote playlist ids of its targets are ignored: syncs set
+/// those, and `UnlinkPlaylist` clears them.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlaylistInput {
-    /// `None` for a new playlist.
-    #[serde(default)]
-    pub id: Option<String>,
     pub name: String,
     /// The collection's full path, as in `SetCollection`.
     pub collection: String,
@@ -344,6 +341,34 @@ pub struct PlaylistInput {
     pub spotify: Option<ExportTarget>,
     #[serde(default)]
     pub youtube: Option<ExportTarget>,
+}
+
+/// One change to an existing playlist (`EditPlaylist`). Each changes only its own fields of the
+/// playlist as the server has it, so that quick edits in a row can't undo each other.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum PlaylistEdit {
+    Rename {
+        name: String,
+    },
+    SetLimit {
+        limit: Option<i64>,
+    },
+    /// Replaces the collection, filters and sorting.
+    SetView {
+        /// The collection's full path, as in `SetCollection`.
+        collection: String,
+        #[serde(default)]
+        filter_model: FilterModelMap,
+        #[serde(default)]
+        sort_model: Vec<SortModelItem>,
+    },
+    /// Turns the export to `service` on or off (`None`), or changes its settings. The remote
+    /// playlist id of the target is ignored: an export that stays on keeps its remote playlist.
+    SetExport {
+        service: Service,
+        target: Option<ExportTarget>,
+    },
 }
 
 /// A browser profile logged in to YouTube.
@@ -670,10 +695,15 @@ pub enum MsgClient {
         id: i64,
     },
     ListPlaylists,
-    /// Creates or updates a dynamic playlist of the current repo.
+    /// Creates a dynamic playlist in the current repo.
     SavePlaylist {
         id: i64,
         playlist: PlaylistInput,
+    },
+    /// Changes a dynamic playlist of the current repo.
+    EditPlaylist {
+        playlist_id: String,
+        edit: PlaylistEdit,
     },
     DeletePlaylist {
         playlist_id: String,

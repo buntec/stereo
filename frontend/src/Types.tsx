@@ -229,6 +229,7 @@ export type ClientMsg =
   | { type: "cancel-youtube-playlist"; id: number }
   | { type: "list-playlists" }
   | { type: "save-playlist"; id?: number; playlist: PlaylistInput }
+  | { type: "edit-playlist"; playlist_id: string; edit: PlaylistEdit }
   | { type: "delete-playlist"; playlist_id: string }
   | { type: "unlink-playlist"; playlist_id: string; service: PlaylistService }
   | {
@@ -475,6 +476,7 @@ export interface IPlaylist {
   youtube_status: PlaylistTargetStatus | null;
 }
 
+/** A new playlist, for `save-playlist`. */
 export type PlaylistInput = Pick<
   IPlaylist,
   | "name"
@@ -484,7 +486,25 @@ export type PlaylistInput = Pick<
   | "limit"
   | "spotify"
   | "youtube"
-> & { id?: string };
+>;
+
+/**
+ * One change to an existing playlist, for `edit-playlist`. Each changes only its own fields of
+ * the server's copy, so that quick edits in a row (before the server's reply) can't undo each
+ * other.
+ */
+export type PlaylistEdit =
+  | { kind: "rename"; name: string }
+  | { kind: "set-limit"; limit: number | null }
+  | ({ kind: "set-view" } & Pick<
+      IPlaylist,
+      "collection" | "filter_model" | "sort_model"
+    >)
+  | {
+      kind: "set-export";
+      service: PlaylistService;
+      target: PlaylistTarget | null;
+    };
 
 export type PlaylistSyncState =
   | "running"

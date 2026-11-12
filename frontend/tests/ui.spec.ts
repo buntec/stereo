@@ -870,3 +870,52 @@ test("media session offers track skipping rather than ±10s seeking", async ({
     ]),
   );
 });
+
+test("quick playlist edits each change only their own field", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  send({
+    type: "playlists",
+    playlists: [
+      {
+        id: "p1",
+        name: "Warmup",
+        collection: "/audit/collection.db",
+        filter_model: {},
+        sort_model: [],
+        limit: null,
+        spotify: null,
+        youtube: null,
+        updated_at: 1,
+        spotify_status: null,
+        youtube_status: null,
+      },
+    ],
+  });
+  await page.getByRole("button", { name: "Playlists", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Manage playlists/ }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Name").fill("Peak time");
+  // The mock never answers, as if the rename's reply hadn't arrived yet.
+  await dialog.getByRole("switch", { name: "Export to Spotify" }).click();
+  await expect
+    .poll(() => messages.filter((m) => m.type === "edit-playlist"))
+    .toEqual([
+      {
+        type: "edit-playlist",
+        playlist_id: "p1",
+        edit: { kind: "rename", name: "Peak time" },
+      },
+      {
+        type: "edit-playlist",
+        playlist_id: "p1",
+        edit: {
+          kind: "set-export",
+          service: "spotify",
+          target: { auto_sync: true },
+        },
+      },
+    ]);
+  expect(messages.some((m) => m.type === "save-playlist")).toBe(false);
+});

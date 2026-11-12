@@ -16,12 +16,12 @@ import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { LinkBreak2Icon, TrashIcon, UpdateIcon } from "@radix-ui/react-icons";
 import { collectionLabel } from "./CollectionSelector.tsx";
-import { describeView, playlistInput } from "./playlists.ts";
+import { describeView } from "./playlists.ts";
 import {
   playlistSyncKey,
   type ICollection,
   type IPlaylist,
-  type PlaylistInput,
+  type PlaylistEdit,
   type PlaylistService,
   type PlaylistSyncStatus,
   type PlaylistTarget,
@@ -154,7 +154,7 @@ type DetailsProps = {
   collections: ICollection[];
   syncStatus: Record<string, PlaylistSyncStatus>;
   existingNames: string[];
-  onSave: (input: PlaylistInput) => void;
+  onEdit: (edit: PlaylistEdit) => void;
   onSync: (service: PlaylistService) => void;
   onUnlink: (service: PlaylistService) => void;
   onOpen: () => void;
@@ -166,7 +166,7 @@ function PlaylistDetails({
   collections,
   syncStatus,
   existingNames,
-  onSave,
+  onEdit,
   onSync,
   onUnlink,
   onOpen,
@@ -185,7 +185,7 @@ function PlaylistDetails({
     trimmed !== playlist.name && existingNames.includes(trimmed);
   const commitName = () => {
     if (trimmed && trimmed !== playlist.name && !nameTaken) {
-      onSave({ ...playlistInput(playlist), name: trimmed });
+      onEdit({ kind: "rename", name: trimmed });
     } else {
       setName(playlist.name);
     }
@@ -249,7 +249,7 @@ function PlaylistDetails({
         isIntegerOnly
         hasClear
         onChange={(limit: number | null) =>
-          onSave({ ...playlistInput(playlist), limit: limit || null })
+          onEdit({ kind: "set-limit", limit: limit || null })
         }
       />
       {(["spotify", "youtube"] as const).map((service) => (
@@ -260,7 +260,7 @@ function PlaylistDetails({
             playlist={playlist}
             live={syncStatus[playlistSyncKey(playlist.id, service)]}
             onChange={(target) =>
-              onSave({ ...playlistInput(playlist), [service]: target })
+              onEdit({ kind: "set-export", service, target })
             }
             onSync={() => onSync(service)}
             onUnlink={() => onUnlink(service)}
@@ -279,7 +279,7 @@ type PlaylistsDialogProps = {
   initialId?: string;
   collections: ICollection[];
   syncStatus: Record<string, PlaylistSyncStatus>;
-  onSave: (input: PlaylistInput) => void;
+  onEdit: (playlist: IPlaylist, edit: PlaylistEdit) => void;
   onDelete: (playlist: IPlaylist) => void;
   onSync: (playlist: IPlaylist, service: PlaylistService) => void;
   onUnlink: (playlist: IPlaylist, service: PlaylistService) => void;
@@ -296,7 +296,7 @@ function PlaylistsDialog({
   initialId,
   collections,
   syncStatus,
-  onSave,
+  onEdit,
   onDelete,
   onSync,
   onUnlink,
@@ -366,7 +366,7 @@ function PlaylistsDialog({
                       existingNames={playlists
                         .filter((p) => p.id !== selected.id)
                         .map((p) => p.name)}
-                      onSave={onSave}
+                      onEdit={(edit) => onEdit(selected, edit)}
                       onSync={(service) => onSync(selected, service)}
                       onUnlink={(service) => onUnlink(selected, service)}
                       onOpen={() => {

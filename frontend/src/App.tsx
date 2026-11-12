@@ -59,6 +59,7 @@ import type {
   Settings,
   AppNotification,
   IPlaylist,
+  PlaylistEdit,
   PlaylistInput,
   PlaylistService,
   PlaylistSyncStatus,
@@ -122,7 +123,7 @@ import { useTrackSelection } from "./TrackSelection.tsx";
 import PlaylistMenu from "./PlaylistMenu.tsx";
 import SavePlaylistDialog from "./SavePlaylistDialog.tsx";
 import PlaylistsDialog from "./PlaylistsDialog.tsx";
-import { playlistInput, sameView } from "./playlists.ts";
+import { sameView } from "./playlists.ts";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
@@ -2029,6 +2030,12 @@ function App() {
     [requestReply],
   );
 
+  const editPlaylist = useCallback(
+    (p: IPlaylist, edit: PlaylistEdit) =>
+      sendMsg({ type: "edit-playlist", playlist_id: p.id, edit }),
+    [sendMsg],
+  );
+
   const syncPlaylist = useCallback(
     (p: IPlaylist, service: PlaylistService) => {
       dispatch({ type: "start-playlist-sync", playlist_id: p.id, service });
@@ -2695,8 +2702,8 @@ function App() {
                             onSaveAs={() => setSavePlaylistOpen(true)}
                             onSaveChanges={() => {
                               if (activePlaylist) {
-                                savePlaylist({
-                                  ...playlistInput(activePlaylist),
+                                editPlaylist(activePlaylist, {
+                                  kind: "set-view",
                                   ...currentView,
                                 });
                               }
@@ -3076,7 +3083,7 @@ function App() {
             initialId={activePlaylist?.id}
             collections={state.collections ?? []}
             syncStatus={state.playlist_sync}
-            onSave={(input) => savePlaylist(input)}
+            onEdit={editPlaylist}
             onDelete={(p) => {
               sendMsg({ type: "delete-playlist", playlist_id: p.id });
               if (p.id === activePlaylistId) setActivePlaylistId(undefined);
@@ -3088,7 +3095,7 @@ function App() {
             onOpen={applyPlaylist}
             onReplaceWithView={
               state.collection
-                ? (p) => savePlaylist({ ...playlistInput(p), ...currentView })
+                ? (p) => editPlaylist(p, { kind: "set-view", ...currentView })
                 : undefined
             }
           />

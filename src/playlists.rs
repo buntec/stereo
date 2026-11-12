@@ -7,7 +7,7 @@
 //! state in the data dir ([`SyncRecords`]), so that routine syncs don't produce commits.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -200,9 +200,18 @@ pub fn merge(base: &[Playlist], local: &[Playlist], remote: &[Playlist]) -> Vec<
                             (l, r)
                         };
                         // A remote playlist that the other side's sync created would otherwise
-                        // be forgotten, and the next sync would create another one.
+                        // be forgotten, and the next sync would create another one. One the
+                        // other side merely still has from the base is not new to the winner,
+                        // which no longer has it because it was unlinked there.
+                        let remote_id = |p: Option<&Playlist>, service| {
+                            p.and_then(|p| p.target(service))
+                                .and_then(|t| t.playlist_id.clone())
+                        };
                         for service in [Service::Spotify, Service::YouTube] {
-                            let theirs = other.target(service).and_then(|t| t.playlist_id.clone());
+                            let theirs = remote_id(Some(&other), service);
+                            if theirs == remote_id(base.as_ref(), service) {
+                                continue;
+                            }
                             if let Some(target) = winner.target_mut(service) {
                                 if target.playlist_id.is_none() {
                                     target.playlist_id = theirs;
@@ -308,15 +317,13 @@ impl SyncRecords {
         Self::write_all(data_home, &records).await
     }
 
-    /// Forgets the records of playlists that no longer exist in `keep`.
-    pub async fn retain(data_home: &Path, keep: &BTreeSet<String>) -> anyhow::Result<()> {
+    /// Forgets the records of a deleted playlist. The file holds the records of every repo's
+    /// playlists, so only this one's go.
+    pub async fn remove(data_home: &Path, playlist_id: &str) -> anyhow::Result<()> {
         let _guard = SYNC_RECORDS_LOCK.lock().await;
         let mut records = Self::read_all(data_home).await;
         let before = records.len();
-        records.retain(|key, _| {
-            key.split_once('/')
-                .is_some_and(|(playlist_id, _)| keep.contains(playlist_id))
-        });
+        records.retain(|key, _| key.split_once('/').is_none_or(|(id, _)| id != playlist_id));
         if records.len() != before {
             Self::write_all(data_home, &records).await?;
         }
@@ -422,6 +429,58 @@ mod tests {
             merged[0].spotify.as_ref().unwrap().playlist_id.as_deref(),
             Some("created-here")
         );
+    }
+
+    #[test]
+    fn merge_keeps_an_unlink_on_the_winning_side() {
+        let target = |id: Option<&str>| {
+            Some(ExportTarget {
+                auto_sync: true,
+                playlist_id: id.map(str::to_string),
+            })
+        };
+        let mut base = playlist("a", "A", 1);
+        base.spotify = target(Some("old"));
+        let mut local = base.clone();
+        local.spotify = target(None);
+        local.name = "A unlinked".into();
+        local.updated_at = 3;
+        let mut remote = base.clone();
+        remote.name = "A edited".into();
+        remote.updated_at = 2;
+        let merged = merge(std::slice::from_ref(&base), &[local], &[remote]);
+        assert_eq!(merged[0].name, "A unlinked");
+        assert_eq!(merged[0].spotify.as_ref().unwrap().playlist_id, None);
+
+        // A playlist the other side created after the base is still taken over.
+        let mut remote = base.clone();
+        remote.spotify = target(Some("new"));
+        remote.updated_at = 2;
+        let mut local = base.clone();
+        local.spotify = target(None);
+        local.updated_at = 3;
+        let merged = merge(&[base], &[local], &[remote]);
+        assert_eq!(
+            merged[0].spotify.as_ref().unwrap().playlist_id.as_deref(),
+            Some("new")
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_sync_records_keeps_other_playlists() {
+        let dir = tempfile::tempdir().unwrap();
+        for id in ["a", "b"] {
+            for service in [Service::Spotify, Service::YouTube] {
+                SyncRecords::update(dir.path(), id, service, |r| r.hash = Some(id.into()))
+                    .await
+                    .unwrap();
+            }
+        }
+        SyncRecords::remove(dir.path(), "a").await.unwrap();
+        let records = SyncRecords::all(dir.path()).await;
+        let mut keys: Vec<_> = records.keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["b/spotify", "b/youtube"]);
     }
 
     #[test]
