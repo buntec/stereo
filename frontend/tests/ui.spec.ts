@@ -1,6 +1,7 @@
 import {
   test,
   expect,
+  type Locator,
   type Page,
   type Route,
   type WebSocketRoute,
@@ -361,22 +362,119 @@ for (const width of [390, 768, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     await openApp(page);
     await expect(page.getByRole("main")).toHaveCount(1);
+    const expectOnScreen = async (control: Locator) => {
+      await expect(control).toBeInViewport();
+      const box = await control.boundingBox();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    };
     for (const control of [
       page.locator(".collection-controls").getByRole("button").first(),
       page.getByRole("button", { name: /^YouTube:/ }),
       page.getByRole("button", { name: /^Spotify:/ }),
       page.getByRole("button", { name: /^Beatport:/ }),
-      page.getByRole("radiogroup", { name: "Appearance" }),
       page.getByRole("button", { name: "Search", exact: true }),
       page.getByRole("button", { name: "Toggle shuffle play", exact: true }),
     ]) {
-      await expect(control).toBeInViewport();
-      const box = await control.boundingBox();
-      expect(box!.x).toBeGreaterThanOrEqual(0);
-      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+      await expectOnScreen(control);
     }
     const grid = await page.locator(".grid").boundingBox();
     expect(grid!.height).toBeGreaterThan(300);
+    // Up to 48rem the appearance switch moves from the nav bar into Settings.
+    const appearance = page.getByRole("radiogroup", { name: "Appearance" });
+    if (width <= 768) {
+      await expect(appearance).toHaveCount(0);
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+    }
+    await expectOnScreen(appearance);
+    const dark = appearance.getByRole("radio", { name: "Dark" });
+    await dark.click();
+    await expect(dark).toBeChecked();
+  });
+}
+
+test("column customizations survive crossing the compact breakpoint", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 844 });
+  await openApp(page);
+  const header = (colId: string) =>
+    page.locator(`.ag-header-cell[col-id="${colId}"]`);
+  const resize = async (colId: string, by: number) => {
+    const handle = header(colId).locator(".ag-header-cell-resize");
+    const box = (await handle.boundingBox())!;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + box.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + by, y, { steps: 5 });
+    await page.mouse.up();
+  };
+  const widthOf = async (colId: string) =>
+    Math.round((await header(colId).boundingBox())!.width);
+
+  // The grid state the app saves (and restores on reload): off-screen columns aren't
+  // rendered, so their widths and visibility are read from there.
+  const saved = async () => {
+    const state = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("stereo_app_grid_state_v2") ?? "{}"),
+    );
+    const sizing = (colId: string) =>
+      state.columnSizing?.columnSizingModel?.find(
+        (s: { colId: string }) => s.colId === colId,
+      );
+    return {
+      title: sizing("title"),
+      plays: sizing("play_count"),
+      hidden: state.columnVisibility?.hiddenColIds ?? [],
+    };
+  };
+
+  // Plays first: a wider Title pushes it off-screen.
+  await resize("play_count", 70);
+  await resize("title", 100);
+  await page.getByRole("button", { name: "View", exact: true }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Spotify ID" }).click();
+  await page.keyboard.press("Escape");
+  await expect.poll(async () => (await saved()).hidden).not.toContain("sp_id");
+  const before = await saved();
+  expect(before.title.flex).toBeUndefined();
+  expect(before.title.width).toBeGreaterThan(200);
+  expect(before.plays.width).toBe(160);
+
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    // The compact layout narrows the controls column...
+    await expect
+      .poll(async () => widthOf("yt_id"))
+      .toBe(width === 390 ? 120 : 136);
+    // ...and leaves the user's settings alone.
+    expect(await saved()).toEqual(before);
+  }
+});
+
+for (const width of [320, 390]) {
+  test(`a sync conflict's Resolve action stays readable at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { send } = await openApp(page);
+    send({
+      type: "git-sync-status",
+      state: "conflict-requires-attention",
+      message: "Local and upstream changes conflict",
+      retryable: false,
+    });
+    const resolve = page
+      .locator(".collection-controls")
+      .getByRole("button", { name: "Resolve", exact: true });
+    await expect(resolve).toBeInViewport();
+    const box = (await resolve.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    // Its label fits: the button is as wide as its content needs.
+    expect(
+      await resolve.evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    expect(box.width).toBeGreaterThan(60);
   });
 }
 

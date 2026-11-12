@@ -13,6 +13,7 @@ type ExportDropDownProps = {
   exportAllToYTSavedPlaylist: () => void;
   exportSelectionToSpotifyPlaylist: () => void;
   exportAllToSpotifyPlaylist: () => void;
+  isIconOnly?: boolean;
 };
 
 function ExportDropDown({
@@ -25,6 +26,7 @@ function ExportDropDown({
   exportAllToYTSavedPlaylist,
   exportSelectionToSpotifyPlaylist,
   exportAllToSpotifyPlaylist,
+  isIconOnly = false,
 }: ExportDropDownProps) {
   const hasSelection = selectionCount > 0;
 
@@ -34,7 +36,7 @@ function ExportDropDown({
       button={{
         label: "Export tracks",
         icon: <Share2Icon />,
-        isIconOnly: false,
+        isIconOnly,
         variant: "ghost",
         tooltip: "Export tracks",
       }}

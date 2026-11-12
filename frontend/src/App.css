@@ -56,8 +56,26 @@
     order: 1;
     flex-basis: 100%;
   }
+  /* The collection menu shrinks to stay beside the logo... */
   .collection-controls {
     flex: 1;
+    flex-wrap: nowrap;
+  }
+  /* ...but an actionable sync status (see GitSyncStatus.tsx) gets a line of its own,
+     where only its text truncates, never its Retry/Resolve button. */
+  .collection-controls:has(.git-sync-status) {
+    flex-wrap: wrap;
+  }
+  .git-sync-status {
+    flex-basis: 100%;
+  }
+  .git-sync-status > :not(:first-child) {
+    flex-shrink: 0;
+  }
+  /* Half the cell padding, which the compact grid columns' widths count on
+     (COMPACT_CONTROLS_WIDTH in Grid.tsx). */
+  .grid {
+    --ag-cell-horizontal-padding: var(--spacing-2);
   }
 }
 

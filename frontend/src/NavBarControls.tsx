@@ -40,6 +40,9 @@ type NavBarControlsProps = {
   spotifyBackfillMatched?: number;
   spotifyBackfillTotal?: number;
   onSpotifyBackfill: () => void;
+  // Narrow screens: the version and the appearance switch move into the settings
+  // popover, leaving the row to the collection selector.
+  isCompact?: boolean;
 };
 
 const appearanceOptions: {
@@ -105,6 +108,7 @@ function NavBarControls({
   spotifyBackfillMatched,
   spotifyBackfillTotal,
   onSpotifyBackfill,
+  isCompact = false,
 }: NavBarControlsProps) {
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
@@ -150,14 +154,34 @@ function NavBarControls({
     open(true);
   };
 
+  const versionText = (
+    <Text type="supporting" color="secondary">
+      v{version}
+    </Text>
+  );
+  const appearanceControl = (
+    <SegmentedControl
+      label="Appearance"
+      size="sm"
+      value={appearance}
+      onChange={(v) => setAppearance(v as AppearanceType)}
+    >
+      {appearanceOptions.map(({ value, label, icon }) => (
+        <SegmentedControlItem
+          key={value}
+          value={value}
+          label={label}
+          icon={icon}
+          isLabelHidden
+        />
+      ))}
+    </SegmentedControl>
+  );
+
   return (
     <>
-      <HStack vAlign="center" gap={2}>
-        {version && (
-          <Text type="supporting" color="secondary">
-            v{version}
-          </Text>
-        )}
+      <HStack vAlign="center" gap={isCompact ? 1 : 2}>
+        {version && !isCompact && versionText}
         <HStack vAlign="center">
           <AccountButton
             label="YouTube"
@@ -179,26 +203,13 @@ function NavBarControls({
           />
           <TailscaleButton status={tailscale} requestReply={requestReply} />
         </HStack>
-        <SegmentedControl
-          label="Appearance"
-          size="sm"
-          value={appearance}
-          onChange={(v) => setAppearance(v as AppearanceType)}
-        >
-          {appearanceOptions.map(({ value, label, icon }) => (
-            <SegmentedControlItem
-              key={value}
-              value={value}
-              label={label}
-              icon={icon}
-              isLabelHidden
-            />
-          ))}
-        </SegmentedControl>
+        {!isCompact && appearanceControl}
         <SettingsMenu
           backgroundShown={backgroundShown}
           backgroundPulse={backgroundPulse}
           setBackgroundPulse={setBackgroundPulse}
+          header={isCompact ? appearanceControl : undefined}
+          footer={isCompact && version ? versionText : undefined}
         />
       </HStack>
 

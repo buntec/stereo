@@ -40,7 +40,12 @@ export default function GitSyncStatus({
 
   return (
     <>
-      <HStack gap={1} vAlign="center" style={{ minWidth: 0 }}>
+      <HStack
+        gap={1}
+        vAlign="center"
+        style={{ minWidth: 0 }}
+        className="git-sync-status"
+      >
         <Tooltip content={message ?? label}>
           <Text type="supporting" color="secondary" maxLines={1}>
             {label}
