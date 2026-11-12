@@ -26,7 +26,8 @@ export function useLocalStorage<T>(key: string, initialValue: T | (() => T)) {
       initialValue instanceof Function ? initialValue() : initialValue;
     try {
       const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initial();
+      // "undefined": an unset value, as stored by earlier versions.
+      return item && item !== "undefined" ? JSON.parse(item) : initial();
     } catch (error) {
       console.error(`Error reading local storage at "${key}":`, error);
       return initial();
@@ -36,7 +37,10 @@ export function useLocalStorage<T>(key: string, initialValue: T | (() => T)) {
   useEffect(() => {
     if (setStoredValue !== undefined) {
       try {
-        window.localStorage.setItem(key, JSON.stringify(storedValue));
+        // JSON has no undefined (`JSON.stringify` returns undefined, which
+        // `setItem` would store as "undefined"): an unset value is no entry.
+        if (storedValue === undefined) window.localStorage.removeItem(key);
+        else window.localStorage.setItem(key, JSON.stringify(storedValue));
       } catch (error) {
         console.error(`Error setting local storage at "${key}":`, error);
       }
