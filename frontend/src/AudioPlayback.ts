@@ -179,10 +179,20 @@ export const useAudioPlayback = (
     if (!ready) return null;
     return {
       load: (id) => loadRef.current(id),
+      cue: (id) => {
+        idRef.current = id;
+        wantsPlayRef.current = false;
+        // Nothing is downloaded until the track is played.
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+      },
       play: () => {
-        // A failed source stays failed: retry it with the current key.
         const id = idRef.current;
-        if (audio.error && id) loadRef.current(id);
+        if (!id) return;
+        // A cued track isn't loaded yet, and a failed source stays failed:
+        // (re)load it with the current key.
+        if (!audio.hasAttribute("src") || audio.error) loadRef.current(id);
         else playAudio();
       },
       pause: () => {

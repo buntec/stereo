@@ -209,6 +209,16 @@ async function openApp(
   };
 }
 
+/**
+ * Plays the collection's first track, which loading the page only selects.
+ */
+async function startPlayback(page: Page) {
+  await expect(page.locator('.ag-row[row-index="0"]')).toBeVisible();
+  const button = page.locator(".play-pause-button");
+  await expect(button).toHaveAccessibleName("Play");
+  await button.click();
+}
+
 /** A mono 8 kHz WAV file of silence. */
 function silentWav(seconds: number): Buffer {
   const rate = 8000;
@@ -479,6 +489,7 @@ test("waveform arrow keys seek five seconds instead of triggering global shortcu
   page,
 }) => {
   await openApp(page, { audio: "ok", audioSeconds: 240 });
+  await startPlayback(page);
   const slider = page.getByRole("slider", {
     name: "Playback position",
     exact: true,
@@ -517,10 +528,29 @@ test("connecting YouTube asks which login to use when several are logged in", as
   ]);
 });
 
+test("loading the page selects the first track without playing it", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, { audio: "ok" });
+  await expect(page.locator('.ag-row[row-index="0"]')).toBeVisible();
+  // Give a wrongly started track time to be requested.
+  await page.waitForTimeout(500);
+  expect(audioRequests).toEqual([]);
+  await expect(page.locator(".play-pause-button")).toHaveAccessibleName("Play");
+  await page.keyboard.press("p");
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/audit0?key=test-key");
+  await expect(page.locator(".play-pause-button")).toHaveAccessibleName(
+    "Pause",
+  );
+});
+
 test("plays downloaded audio, prefetching and advancing on its own", async ({
   page,
 }) => {
   const { audioRequests } = await openApp(page, { audio: "ok" });
+  await startPlayback(page);
   await expect
     .poll(() => audioRequests)
     .toContain("GET /audio/audit0?key=test-key");
@@ -545,6 +575,7 @@ test("skips tracks whose audio can't be downloaded, and stops after three in a r
   page,
 }) => {
   const { audioRequests } = await openApp(page, { audio: "fail" });
+  await startPlayback(page);
   await expect(
     page
       .getByText(
@@ -576,6 +607,7 @@ test("a track paused while it downloads stays paused if the download fails", asy
   page,
 }) => {
   const { audioRequests, heldAudio, setAudio } = await openApp(page);
+  await startPlayback(page);
   await expect.poll(() => heldAudio.length).toBeGreaterThan(0);
   const button = page.locator(".play-pause-button");
   await button.click();
@@ -597,6 +629,7 @@ test("play retries a track whose download failed", async ({ page }) => {
     audio: "fail",
     audioSeconds: 240,
   });
+  await startPlayback(page);
   await expect(
     page.getByText(
       "Couldn't download the audio of 3 tracks in a row, stopping: yt-dlp failed",
@@ -642,6 +675,7 @@ test("shows the playing track's download progress in its waveform, and each trac
   page,
 }) => {
   const { send, audioRequests } = await openApp(page);
+  await startPlayback(page);
   await expect
     .poll(() => audioRequests)
     .toContain("GET /audio/audit0?key=test-key");
@@ -704,6 +738,7 @@ test("an evicted track stays shown as not downloaded when its buffered audio pla
     audio: "ok",
     audioSeconds: 240,
   });
+  await startPlayback(page);
   const button = page.locator(".play-pause-button");
   const rowButton = page.locator('.ag-row[row-index="0"] .audio-cache-button');
   await expect(button).toHaveAccessibleName("Pause");
@@ -732,6 +767,7 @@ test("the logo pulses with the playing track's beats", async ({ page }) => {
     audio: "ok",
     audioSeconds: 240,
   });
+  await startPlayback(page);
   const button = page.locator(".play-pause-button");
   await expect(button).toHaveAccessibleName("Pause");
   send({ type: "audio-download", yt_id: "audit0", status: "done" });
@@ -807,6 +843,7 @@ test("the play button shows that playback is loading and can cancel it", async (
   page,
 }) => {
   const { audioRequests } = await openApp(page);
+  await startPlayback(page);
   await expect
     .poll(() => audioRequests)
     .toContain("GET /audio/audit0?key=test-key");
@@ -852,6 +889,7 @@ test("media session offers track skipping rather than ±10s seeking", async ({
     } as unknown as typeof Audio;
   });
   await openApp(page, { audio: "ok", audioSeconds: 240 });
+  await startPlayback(page);
   const calls = () =>
     page.evaluate((): string[] => Reflect.get(window, "__mediaSessionCalls"));
   await expect.poll(calls).toContain("playing");

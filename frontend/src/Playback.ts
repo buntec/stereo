@@ -16,6 +16,12 @@ export type PlaybackStatus =
 export interface PlaybackEngine {
   /** Loads the track and starts playing it. */
   load(id: string): void;
+  /**
+   * Makes the track the current one without loading or playing it: `play`
+   * starts it. Stops whatever was playing.
+   */
+  cue(id: string): void;
+  /** Plays the current track, loading a cued one. */
   play(): void;
   pause(): void;
   stop(): void;
