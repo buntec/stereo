@@ -449,3 +449,12 @@
   min-width: var(--spacing-12);
   min-height: var(--spacing-12);
 }
+
+/* Kbd in a tooltip: Astryx paints its key text with --color-text-primary, which is the
+   inverted tooltip's background, so the key vanished. Take the tooltip's text color
+   instead, with the keycap and its bottom edge as tints of it. */
+.astryx-tooltip .astryx-kbd kbd {
+  color: inherit;
+  background-color: color-mix(in srgb, currentColor 18%, transparent);
+  border-bottom-color: color-mix(in srgb, currentColor 35%, transparent);
+}
