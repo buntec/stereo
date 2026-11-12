@@ -69,7 +69,7 @@ function PlaylistMenu({
         <>
           <MenuHeading>Playlists</MenuHeading>
           <DropdownMenuRadioGroup
-            aria-label="Playlists"
+            label="Playlists"
             value={active?.id}
             onChange={(id) => {
               const playlist = playlists.find((p) => p.id === id);

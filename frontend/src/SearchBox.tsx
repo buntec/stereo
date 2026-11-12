@@ -143,7 +143,7 @@ function SearchBox({
             value={searchKind}
             onChange={(v) => setSearchKind(toSearchKind(v))}
             // Size to its label instead of splitting the group evenly.
-            style={{ flex: "none", width: "auto" }}
+            controlStyle={{ flex: "none", width: "auto" }}
           />
           {searchKind === "new-releases" ? (
             <Selector
@@ -203,7 +203,7 @@ function SearchBox({
       >
         <MenuHeading>Result limit</MenuHeading>
         <DropdownMenuRadioGroup
-          aria-label="Result limit"
+          label="Result limit"
           value={`${searchLimit}`}
           onChange={(v) => setSearchLimit(parseInt(v))}
           hasCloseOnSelect={false}

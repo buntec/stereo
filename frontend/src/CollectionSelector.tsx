@@ -112,7 +112,7 @@ function CollectionSelector({
       >
         <MenuHeading>Collections</MenuHeading>
         <DropdownMenuRadioGroup
-          aria-label="Collections"
+          label="Collections"
           value={selectedCollection}
           onChange={setValue}
         >
@@ -154,7 +154,7 @@ function CollectionSelector({
 
         <MenuHeading>Repository</MenuHeading>
         <DropdownMenuRadioGroup
-          aria-label="Repository"
+          label="Repository"
           value={selectedRepo?.path}
           onChange={setRepoPath}
         >
