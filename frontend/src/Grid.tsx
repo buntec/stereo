@@ -75,6 +75,7 @@ import { scrollGridToTop, useGridScrollState } from "./useGridScrollState.ts";
 import { AudioCacheButton } from "./AudioCacheButton.tsx";
 import logger from "./logger.tsx";
 import ShazamIcon from "./ShazamIcon.tsx";
+import SpotifyIcon from "./SpotifyIcon.tsx";
 import YouTubeIcon from "./YouTubeIcon.tsx";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -212,6 +213,13 @@ const openInYouTube = (id: string) =>
     "noopener,noreferrer",
   );
 
+const openInSpotify = (id: string) =>
+  window.open(
+    `https://open.spotify.com/track/${encodeURIComponent(id)}`,
+    "_blank",
+    "noopener,noreferrer",
+  );
+
 // The track's YouTube thumbnail with a play triangle on it, which plays the track.
 const ThumbnailPlayButton = ({
   track,
@@ -315,6 +323,15 @@ const PlayControlRenderer: React.FC<
             icon: <YouTubeIcon size={15} />,
             onClick: () => openInYouTube(data.yt_id),
           },
+          ...(data.sp_id
+            ? [
+                {
+                  label: "Open in Spotify",
+                  icon: <SpotifyIcon size={15} />,
+                  onClick: () => openInSpotify(data.sp_id!),
+                },
+              ]
+            : []),
         ]}
       />
       <EditTrackDialog
