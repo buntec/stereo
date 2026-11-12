@@ -47,6 +47,20 @@
       #status.error {
         color: var(--error);
       }
+      form {
+        display: flex;
+        gap: 8px;
+        width: 100%;
+      }
+      input {
+        flex: 1;
+        min-width: 0;
+        padding: 6px 8px;
+        font: inherit;
+      }
+      button {
+        font: inherit;
+      }
       pre {
         margin: 0;
         max-width: 100%;
@@ -65,26 +79,55 @@
     <main>
       <img src="logo.svg" width="72" height="72" alt="" />
       <div id="status">Starting Stereo…</div>
+      <!-- Submitted as `?stereo-token=…`, which the app intercepts (`submitted_token`). -->
+      <form id="token-form" hidden>
+        <input
+          id="token"
+          name="stereo-token"
+          type="password"
+          autocomplete="off"
+          required
+          aria-label="WebSocket token"
+        />
+        <button type="submit">Connect</button>
+      </form>
       <pre id="details" hidden></pre>
     </main>
     <script>
       // The desktop app comes back here with `#{"message":…,"details":…}` when Stereo's backend
-      // can't be started or stops (see src-tauri/src/lib.rs).
-      if (location.hash.length > 1) {
+      // can't be started or stops, and with `#{"message":…,"token":true}` when it wants a token
+      // (see src-tauri/src/lib.rs). Coming back to this page only changes its fragment.
+      const form = document.getElementById("token-form");
+      form.addEventListener("submit", () => {
+        form.querySelector("button").disabled = true;
+      });
+      const render = () => {
+        if (location.hash.length <= 1) return;
         try {
-          const { message, details } = JSON.parse(
+          const { message, details, token, attempt } = JSON.parse(
             decodeURIComponent(location.hash.slice(1)),
           );
           const status = document.getElementById("status");
-          status.textContent = `${message} Quit and reopen Stereo to try again.`;
-          status.className = "error";
+          status.textContent = token
+            ? message
+            : `${message} Quit and reopen Stereo to try again.`;
+          status.className = token && !attempt ? "" : "error";
           const pre = document.getElementById("details");
           pre.textContent = details ?? "";
           pre.hidden = !details;
+          form.hidden = !token;
+          form.querySelector("button").disabled = false;
+          if (token) {
+            const input = document.getElementById("token");
+            input.value = "";
+            input.focus();
+          }
         } catch {
           // Not an error, then.
         }
-      }
+      };
+      render();
+      window.addEventListener("hashchange", render);
     </script>
   </body>
 </html>

@@ -23,6 +23,17 @@ other `STEREO_*` variables (apps opened from the Finder or Dock don't see them).
 A port that stays the same keeps the page's origin, and with it what the UI keeps in
 localStorage (grid state, settings), across launches.
 
+**Quitting** sends the backend `SIGTERM`, as Ctrl-C would, and waits up to 20 s for it to exit
+(with `--tailscale` it removes its `tailscale serve` route first) before killing what is left of
+its process group, such as yt-dlp downloads.
+
+**WebSocket token.** A backend with `--ws-token` (`STEREO_WS_TOKEN`) wants it from the UI too, and
+the webview's storage doesn't share the token a browser kept. The app checks, with a WebSocket
+handshake, whether the backend wants one, and if so passes the UI the first it accepts of: the
+app's own `STEREO_WS_TOKEN` (which its bundled backend inherits), the token last entered in the
+app, and on macOS the launchd service's (from its plist). Failing those, the start page asks for
+it; the app checks it and keeps it in its config directory.
+
 **PATH.** Apps opened from the Finder or Dock get a minimal `PATH`, without e.g. Homebrew's
 yt-dlp and Deno, so on macOS the backend gets the `PATH` of the user's login shell.
 

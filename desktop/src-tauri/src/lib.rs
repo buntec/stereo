@@ -33,6 +33,9 @@ fn preferred_port() -> u16 {
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 /// How many of the backend's last stderr lines an error page shows.
 const STDERR_LINES: usize = 30;
+/// How long quitting waits for the backend to stop on its own: more than the 15 s it gives itself
+/// to remove its `--tailscale` route.
+const STOP_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The bundled backend, while it runs.
 #[derive(Default)]
@@ -42,6 +45,11 @@ struct Backend {
     quitting: std::sync::atomic::AtomicBool,
 }
 
+/// While the start page asks for the WebSocket token: the port of the backend that wants it, the
+/// start page, and how many tokens it rejected.
+#[derive(Default)]
+struct TokenPrompt(Mutex<Option<(u16, Url, u32)>>);
+
 /// What listens on a loopback port.
 #[derive(Debug, PartialEq)]
 enum Probe {
@@ -50,13 +58,17 @@ enum Probe {
     Taken,
 }
 
+/// The addresses `stereo` may listen on: it binds `localhost`, which may be either address family.
+fn loopback_addrs(port: u16) -> Vec<std::net::SocketAddr> {
+    ("localhost", port)
+        .to_socket_addrs()
+        .map(Iterator::collect)
+        .unwrap_or_default()
+}
+
 fn probe(port: u16) -> Probe {
-    // `stereo` binds `localhost`, which may be either address family.
-    let Ok(addrs) = ("localhost", port).to_socket_addrs() else {
-        return Probe::Free;
-    };
     let mut taken = false;
-    for addr in addrs {
+    for addr in loopback_addrs(port) {
         let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(300)) else {
             continue;
         };
@@ -96,12 +108,246 @@ fn unused_loopback_port() -> std::io::Result<u16> {
     Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
 
-/// The UI's URL on `port`. `localhost`, like the backend's bind address and the URL the CLI
-/// prints, so that it's the same origin a browser tab would have.
-fn ui_url(port: u16) -> Url {
-    format!("http://localhost:{port}/")
+/// What a backend makes of a WebSocket token (`--ws-token`).
+#[derive(Debug, PartialEq)]
+enum Auth {
+    /// Offered none, and it needs none.
+    NotRequired,
+    /// Offered none, but it needs one.
+    Required,
+    Accepted,
+    Rejected,
+}
+
+/// Opens a WebSocket to the backend on `port` as the UI would, offering `token`, and closes it
+/// again. `None` if the backend doesn't answer as Stereo does.
+fn websocket_auth(port: u16, token: Option<&str>) -> Option<Auth> {
+    let mut stream = loopback_addrs(port)
+        .iter()
+        .find_map(|addr| TcpStream::connect_timeout(addr, Duration::from_millis(300)).ok())?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let mut request = format!(
+        "GET /ws HTTP/1.1\r\nHost: localhost:{port}\r\nOrigin: http://localhost:{port}\r\n\
+         Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+    );
+    if let Some(token) = token {
+        request.push_str(&format!(
+            "Sec-WebSocket-Protocol: {}\r\n",
+            websocket_auth_protocol(token)
+        ));
+    }
+    request.push_str("\r\n");
+    stream.write_all(request.as_bytes()).ok()?;
+
+    // The response's head, a byte at a time so as not to read into the first frame.
+    let mut head = Vec::new();
+    let mut byte = [0];
+    while !head.ends_with(b"\r\n\r\n") {
+        if head.len() > 16 * 1024 {
+            return None;
+        }
+        stream.read_exact(&mut byte).ok()?;
+        head.push(byte[0]);
+    }
+    let head = String::from_utf8_lossy(&head);
+    match (head.split(' ').nth(1)?, token) {
+        ("401", None) => Some(Auth::Required),
+        ("101", None) => Some(Auth::NotRequired),
+        // A rejected token is upgraded only to be closed at once (`TOKEN_REJECTED` in
+        // `server.rs`), an accepted one starts a session, whose messages follow.
+        ("101", Some(_)) => match stream.read_exact(&mut byte) {
+            Ok(()) if byte[0] & 0x0f == 0x8 => Some(Auth::Rejected),
+            _ => Some(Auth::Accepted),
+        },
+        _ => None,
+    }
+}
+
+/// The WebSocket subprotocol that carries `token`, as `App.tsx` offers it.
+fn websocket_auth_protocol(token: &str) -> String {
+    let hex = token
+        .bytes()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("stereo.auth.{hex}")
+}
+
+/// The UI's URL on `port`, with the WebSocket `token` in its fragment for the UI to pick up (and
+/// keep). `localhost`, like the backend's bind address and the URL the CLI prints, so that it's
+/// the same origin a browser tab would have.
+fn ui_url(port: u16, token: Option<&str>) -> Url {
+    let mut url: Url = format!("http://localhost:{port}/")
         .parse()
-        .expect("a valid URL")
+        .expect("a valid URL");
+    if let Some(token) = token {
+        url.set_fragment(Some(&format!("stereo-token={}", percent_encode(token))));
+    }
+    url
+}
+
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}
+
+/// Where the app keeps a token entered on the start page.
+fn saved_token_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    Some(app.path().app_config_dir().ok()?.join("ws-token"))
+}
+
+fn save_token(app: &AppHandle, token: &str) {
+    let Some(path) = saved_token_path(app) else {
+        return;
+    };
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let saved = std::fs::create_dir_all(path.parent().expect("a file in a directory"))
+        .and_then(|()| options.open(&path))
+        .and_then(|mut file| file.write_all(token.as_bytes()));
+    if let Err(error) = saved {
+        eprintln!("could not save the WebSocket token: {error}");
+    }
+}
+
+/// The token of the launchd service `stereo install` sets up, which keeps it in its plist.
+#[cfg(target_os = "macos")]
+fn launchd_token() -> Option<String> {
+    let plist = std::path::Path::new(&std::env::var_os("HOME")?)
+        .join("Library/LaunchAgents/com.stereo.plist");
+    let output = std::process::Command::new("/usr/bin/plutil")
+        .args([
+            "-extract",
+            "EnvironmentVariables.STEREO_WS_TOKEN",
+            "raw",
+            "-o",
+            "-",
+        ])
+        .arg(plist)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let token = String::from_utf8(output.stdout).ok()?;
+    let token = token.trim_end_matches('\n');
+    (output.status.success() && !token.is_empty()).then(|| token.to_string())
+}
+
+/// The WebSocket tokens the app knows of: the one its backend inherits, the one entered last on
+/// the start page, and the launchd service's.
+fn known_tokens(app: &AppHandle) -> Vec<String> {
+    let mut tokens = Vec::new();
+    tokens.extend(std::env::var("STEREO_WS_TOKEN").ok());
+    tokens.extend(saved_token_path(app).and_then(|path| std::fs::read_to_string(path).ok()));
+    #[cfg(target_os = "macos")]
+    tokens.extend(launchd_token());
+    tokens.retain(|token| !token.is_empty());
+    tokens
+}
+
+/// Opens the UI of the backend on `port`, with a token it accepts when it wants one; failing
+/// that, the start page asks for it. The webview keeps no token of its own the app could use: its
+/// storage is not the browser's.
+fn open_ui(app: &AppHandle, window: &WebviewWindow, start_page: &Url, port: u16) {
+    let token = match websocket_auth(port, None) {
+        Some(Auth::Required) => {
+            let accepted = known_tokens(app)
+                .into_iter()
+                .find(|token| websocket_auth(port, Some(token)) == Some(Auth::Accepted));
+            if accepted.is_none() {
+                return ask_for_token(app, window, start_page, port, false);
+            }
+            accepted
+        }
+        _ => None,
+    };
+    if let Err(error) = window.navigate(ui_url(port, token.as_deref())) {
+        let message = "Could not open Stereo.";
+        show_error(window, start_page, message, &error.to_string());
+    }
+}
+
+/// Shows the start page with a form for the WebSocket token of the backend on `port`, which it
+/// submits as `?stereo-token=…` for `on_navigation` to hand to `submit_token`.
+fn ask_for_token(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    start_page: &Url,
+    port: u16,
+    rejected: bool,
+) {
+    let rejections = {
+        let state = app.state::<TokenPrompt>();
+        let mut prompt = state.0.lock().unwrap();
+        let rejections = prompt.as_ref().map_or(0, |(_, _, n)| *n) + u32::from(rejected);
+        *prompt = Some((port, start_page.clone(), rejections));
+        rejections
+    };
+    let message = if rejected {
+        "Stereo did not accept that token. Try again:".to_string()
+    } else {
+        format!(
+            "The Stereo running at http://localhost:{port} wants its WebSocket token \
+             (--ws-token, or STEREO_WS_TOKEN):"
+        )
+    };
+    let page = serde_json::json!({ "message": message, "token": true, "attempt": rejections });
+    let mut url = start_page.clone();
+    url.set_fragment(Some(&page.to_string()));
+    if let Err(error) = window.navigate(url) {
+        eprintln!("could not show the start page: {error}");
+    }
+}
+
+/// The token submitted by the start page's form, if `url` is that submission.
+fn submitted_token(app: &AppHandle, url: &Url) -> Option<String> {
+    let prompt = app.state::<TokenPrompt>();
+    let prompt = prompt.0.lock().unwrap();
+    let (_, start_page, _) = prompt.as_ref()?;
+    let same_page = url.scheme() == start_page.scheme()
+        && url.host_str() == start_page.host_str()
+        && url.path() == start_page.path();
+    if !same_page {
+        return None;
+    }
+    url.query_pairs()
+        .find(|(key, _)| key == "stereo-token")
+        .map(|(_, token)| token.trim().to_string())
+}
+
+/// Opens the UI with a token entered on the start page, or asks again if the backend rejects it.
+fn submit_token(app: &AppHandle, token: &str) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Some((port, start_page, _)) = app.state::<TokenPrompt>().0.lock().unwrap().clone() else {
+        return;
+    };
+    match websocket_auth(port, Some(token)) {
+        Some(Auth::Accepted) => {
+            app.state::<TokenPrompt>().0.lock().unwrap().take();
+            save_token(app, token);
+            if let Err(error) = window.navigate(ui_url(port, Some(token))) {
+                let message = "Could not open Stereo.";
+                show_error(&window, &start_page, message, &error.to_string());
+            }
+        }
+        Some(_) => ask_for_token(app, &window, &start_page, port, true),
+        None => {
+            app.state::<TokenPrompt>().0.lock().unwrap().take();
+            let message = format!("Stereo at http://localhost:{port} stopped answering.");
+            show_error(&window, &start_page, &message, "");
+        }
+    }
 }
 
 /// Stereo's own pages, and the app's bundled start page; anything else opens in the browser.
@@ -187,7 +433,8 @@ fn start_backend(
         .sidecar("stereo")
         .map_err(|error| format!("Could not find Stereo's backend: {error}"))?
         .args(["--port", &port.to_string(), "--exit-with-stdin"])
-        // Also ends the yt-dlp downloads it started when the app quits.
+        // Also ends the yt-dlp downloads it started when the app quits (`stop_backend`), or when
+        // it exits by itself and the event loop below drops its child.
         .set_process_group(true)
         .kill_on_drop(true);
     #[cfg(target_os = "macos")]
@@ -237,10 +484,7 @@ fn start_backend(
 fn connect(app: AppHandle, window: WebviewWindow, start_page: Url) {
     let preferred = preferred_port();
     let port = match probe(preferred) {
-        Probe::Stereo => {
-            let _ = window.navigate(ui_url(preferred));
-            return;
-        }
+        Probe::Stereo => return open_ui(&app, &window, &start_page, preferred),
         Probe::Free => preferred,
         // Rather than fail: Stereo works on any port, only localStorage starts out empty.
         Probe::Taken => match unused_loopback_port() {
@@ -282,10 +526,7 @@ fn connect(app: AppHandle, window: WebviewWindow, start_page: Url) {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    if let Err(error) = window.navigate(ui_url(port)) {
-        let message = "Could not open Stereo.";
-        return show_error(&window, &start_page, message, &error.to_string());
-    }
+    open_ui(&app, &window, &start_page, port);
 
     // A backend that goes away later leaves the UI reconnecting forever: say so instead.
     loop {
@@ -305,12 +546,41 @@ fn connect(app: AppHandle, window: WebviewWindow, start_page: Url) {
     }
 }
 
+/// Stops the backend as Ctrl-C would, giving it time to remove its `--tailscale` route, then ends
+/// what is left of its process group (yt-dlp downloads). `CommandChild::kill`, like dropping it,
+/// sends `SIGKILL` to the whole group at once, which would leave the route behind.
+fn stop_backend(child: CommandChild) {
+    #[cfg(unix)]
+    {
+        // Gone once the shell plugin's waiter has reaped it. (Its `Terminated` event can come
+        // later: it waits for the pipes to close, which yt-dlp downloads may hold open.)
+        let pid = child.pid() as libc::pid_t;
+        let running = || unsafe { libc::kill(pid, 0) } == 0;
+        // Only to the backend itself: its group also holds the `tailscale` CLI it cleans up with.
+        if running() && unsafe { libc::kill(pid, libc::SIGTERM) } == 0 {
+            let deadline = Instant::now() + STOP_TIMEOUT;
+            while running() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+    let _ = child.kill();
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_opener::init())
+        // Its script would cancel `target="_blank"` link clicks for an IPC command the page may
+        // not call: such links open in the browser through `on_new_window` instead.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .manage(Backend::default())
+        .manage(TokenPrompt::default())
         .setup(|app| {
+            let handle = app.handle().clone();
             let window =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Stereo")
@@ -320,7 +590,12 @@ pub fn run() {
                     .initialization_script("window.__STEREO_DESKTOP__ = true;")
                     // Links to other sites open in the default browser, as do new windows
                     // (`window.open`, `target="_blank"`).
-                    .on_navigation(|url| {
+                    .on_navigation(move |url| {
+                        if let Some(token) = submitted_token(&handle, url) {
+                            let app = handle.clone();
+                            std::thread::spawn(move || submit_token(&app, &token));
+                            return false;
+                        }
                         let allowed = is_app_url(url);
                         if !allowed {
                             open_in_browser(url);
@@ -347,9 +622,8 @@ pub fn run() {
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 let child = backend.child.lock().unwrap().take();
                 if let Some(child) = child {
-                    // Like Ctrl-C would: the backend keeps nothing it needs to save first, and
-                    // changes not yet synced with git are picked up by its next start.
-                    let _ = child.kill();
+                    // Changes not yet synced with git are picked up by its next start.
+                    stop_backend(child);
                 }
             }
         });
@@ -370,6 +644,16 @@ mod tests {
         assert!(!looks_like_stereo(
             "HTTP/1.1 200 OK\r\n\r\n<title>Something else</title>"
         ));
+    }
+
+    #[test]
+    fn puts_the_token_in_the_ui_urls_fragment() {
+        assert_eq!(ui_url(8005, None).as_str(), "http://localhost:8005/");
+        assert_eq!(
+            ui_url(8005, Some("a b&c=d#é")).as_str(),
+            "http://localhost:8005/#stereo-token=a%20b%26c%3Dd%23%C3%A9"
+        );
+        assert_eq!(websocket_auth_protocol("ab"), "stereo.auth.6162");
     }
 
     #[test]
