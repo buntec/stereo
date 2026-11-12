@@ -786,6 +786,14 @@ async fn lock_current_repo(state: &SessionState) -> Option<tokio::sync::OwnedMut
     }
 }
 
+/// Whether `collection`, a path from the client's view, is the open collection.
+fn is_open_collection(state: &SessionState, collection: &str) -> bool {
+    state
+        .collection
+        .as_ref()
+        .is_some_and(|c| c.path == Path::new(collection))
+}
+
 fn sync_key(repo: &Path) -> PathBuf {
     std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf())
 }
@@ -1445,11 +1453,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         MsgClient::DeleteTracks { ids, collection } => {
             // The ids were chosen in the client's view of a collection, which may since have been
             // switched; deleting them from another collection could remove the wrong tracks.
-            let is_open = state
-                .collection
-                .as_ref()
-                .is_some_and(|c| c.path == std::path::Path::new(&collection));
-            if !is_open {
+            if !is_open_collection(state, &collection) {
                 notify(
                     tx,
                     &format!(
@@ -2210,6 +2214,20 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 .await;
         }
 
+        MsgClient::GetCollectionTrack {
+            id,
+            yt_id,
+            collection,
+        } => {
+            let track = match state.pool() {
+                Some(pool) if is_open_collection(state, &collection) => {
+                    db::get_track(pool, &yt_id).await?
+                }
+                _ => None,
+            };
+            let _ = tx.send(MsgServer::CollectionTrack { id, track }).await;
+        }
+
         MsgClient::SearchCancelAll {} => {
             if let Some(task) = state.search_task.take() {
                 task.abort();
@@ -2472,7 +2490,18 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             }
         }
 
-        MsgClient::UpdateBpm { yt_id, bpm } => {
+        MsgClient::UpdateBpm {
+            yt_id,
+            bpm,
+            collection,
+        } => {
+            // The BPM was checked against the client's view of a collection, which may since have
+            // been switched; the track may be in the new one too, with other metadata.
+            anyhow::ensure!(
+                is_open_collection(state, &collection),
+                "BPM not updated: {} is no longer the open collection",
+                utils::collection_label(&collection)
+            );
             let _repo_guard = lock_current_repo(state).await;
             let pool = state.pool().context("No collection open")?;
             anyhow::ensure!(
@@ -3358,13 +3387,37 @@ mod tests {
     #[tokio::test]
     async fn updates_the_bpm_of_a_collection_track() {
         let home = tempfile::tempdir().unwrap();
-        let (repo, port) = start_backend(home.path(), &["c"]).await;
-        let path = repo.join("c.db");
+        let (repo, port) = start_backend(home.path(), &["c", "d"]).await;
+        let (path, other) = (repo.join("c.db"), repo.join("d.db"));
         let mut client = Client::connect(port).await;
         client.open(&repo, &path).await;
 
         client
-            .send(json!({ "type": "update-bpm", "yt_id": "one", "bpm": 126 }))
+            .send(json!({
+                "type": "get-collection-track", "id": 7, "yt_id": "one", "collection": path
+            }))
+            .await;
+        client
+            .expect("stored track", |m| {
+                m["type"] == "collection-track" && m["id"] == 7 && m["track"]["yt_id"] == "one"
+            })
+            .await;
+        // Not the open collection: nothing to check against.
+        client
+            .send(json!({
+                "type": "get-collection-track", "id": 8, "yt_id": "one", "collection": other
+            }))
+            .await;
+        client
+            .expect("no track", |m| {
+                m["type"] == "collection-track" && m["id"] == 8 && m["track"].is_null()
+            })
+            .await;
+
+        client
+            .send(json!({
+                "type": "update-bpm", "yt_id": "one", "bpm": 126, "collection": path
+            }))
             .await;
         client
             .expect("track update", |m| {
@@ -3377,7 +3430,9 @@ mod tests {
         assert_eq!(track.bpm, Some(126));
 
         client
-            .send(json!({ "type": "update-bpm", "yt_id": "missing", "bpm": 126 }))
+            .send(json!({
+                "type": "update-bpm", "yt_id": "missing", "bpm": 126, "collection": path
+            }))
             .await;
         client
             .expect("error", |m| {
@@ -3388,6 +3443,28 @@ mod tests {
                         .is_some_and(|s| s.contains("isn't in the open collection"))
             })
             .await;
+
+        // Checked against `d`, which has since been switched from: `c` keeps its BPM.
+        client
+            .send(json!({
+                "type": "update-bpm", "yt_id": "one", "bpm": 90, "collection": other
+            }))
+            .await;
+        client
+            .expect("error", |m| {
+                m["type"] == "notification"
+                    && m["kind"] == "error"
+                    && m["message"]
+                        .as_str()
+                        .is_some_and(|s| s.contains("no longer the open collection"))
+            })
+            .await;
+        for db_path in [&path, &other] {
+            let pool = db::open_pool(db_path).await.unwrap();
+            let track = db::get_track(&pool, "one").await.unwrap().unwrap();
+            pool.close().await;
+            assert_ne!(track.bpm, Some(90));
+        }
     }
 
     #[tokio::test]

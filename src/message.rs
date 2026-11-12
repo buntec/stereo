@@ -148,6 +148,12 @@ pub enum MsgServer {
         id: i64,
         contained: Vec<String>,
     },
+    /// Reply to `GetCollectionTrack`: the track as stored in the collection, `None` if it isn't in
+    /// it or the collection isn't the open one.
+    CollectionTrack {
+        id: i64,
+        track: Option<Track>,
+    },
     ImportFromValid {
         path: String,
         is_valid: bool,
@@ -502,6 +508,8 @@ pub enum MsgClient {
     UpdateBpm {
         yt_id: String,
         bpm: Option<i64>,
+        /// The collection the BPM was checked against; refused unless it is the open one.
+        collection: String,
     },
     IncPlayCount {
         yt_id: String,
@@ -590,6 +598,12 @@ pub enum MsgClient {
     CollectionContainsIds {
         id: i64,
         yt_ids: Vec<String>,
+    },
+    /// The track with `yt_id` as stored in `collection`, if that is the open collection.
+    GetCollectionTrack {
+        id: i64,
+        yt_id: String,
+        collection: String,
     },
     CheckImportFrom {
         path: String,
@@ -768,6 +782,7 @@ impl MsgClient {
             Self::SetCollection { id, .. }
             | Self::GetPathCompletions { id, .. }
             | Self::CollectionContainsIds { id, .. }
+            | Self::GetCollectionTrack { id, .. }
             | Self::GetWaveform { id, .. }
             | Self::CreatePairingCode { id }
             | Self::GetNewReleasesCandidates { id }

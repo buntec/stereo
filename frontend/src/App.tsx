@@ -3170,6 +3170,8 @@ function App() {
             track={playingTrack}
             tempo={playingTempo}
             isPlaying={state.player_state === "playing"}
+            collection={state.collection?.path}
+            collectionVersion={state.collection_last_update}
             requestReply={requestReply}
             sendMsg={sendMsg}
           />
