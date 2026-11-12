@@ -12,6 +12,7 @@
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions, TryLockError},
+    io::{Read, Seek, Write},
     net::SocketAddr,
     path::{Path, PathBuf},
     process::Stdio,
@@ -21,6 +22,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tokio::{
+    io::AsyncReadExt,
     process::Command,
     sync::{watch, Mutex},
 };
@@ -38,6 +40,9 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY: Duration = Duration::from_secs(10);
 // While serving, how often to check that the route still works.
 const CHECK: Duration = Duration::from_secs(30);
+// Every how many checks to also check Tailscale's own state (and the tailnet name, which rarely
+// changes) rather than only the route: every 5 minutes.
+const STATUS_EVERY: u32 = 10;
 
 /// How long a pairing code stays valid, and how many may be pending at once.
 pub const PAIRING_TTL: Duration = Duration::from_secs(120);
@@ -188,10 +193,10 @@ fn url(status: &[u8], port: u16) -> Result<(String, String), String> {
 /// stereo using that port (the OS releases the lock when the process ends, even in a crash) and
 /// holding the proxy target of the route it created, if any.
 ///
-/// The files are emptied rather than deleted, so a lock is always on the file at its path.
+/// The files are emptied rather than deleted, so a lock is always on the file at its path. They
+/// are read and written through the locked handle: on Windows the lock blocks every other one.
 struct Lease {
-    path: PathBuf,
-    _file: File,
+    file: File,
 }
 
 impl Lease {
@@ -206,7 +211,7 @@ impl Lease {
             .truncate(false)
             .open(&path)?;
         match file.try_lock() {
-            Ok(()) => Ok(Some(Self { path, _file: file })),
+            Ok(()) => Ok(Some(Self { file })),
             Err(TryLockError::WouldBlock) => Ok(None),
             Err(TryLockError::Error(error)) => Err(error),
         }
@@ -214,7 +219,10 @@ impl Lease {
 
     /// The proxy target of the route recorded.
     fn proxy(&self) -> Option<String> {
-        let text = std::fs::read_to_string(&self.path).ok()?;
+        let mut file = &self.file;
+        let mut text = String::new();
+        file.rewind().ok()?;
+        file.read_to_string(&mut text).ok()?;
         Some(text.trim())
             .filter(|t| !t.is_empty())
             .map(str::to_string)
@@ -222,7 +230,12 @@ impl Lease {
 
     fn record(&self, proxy: Option<&str>) {
         let text = proxy.map(|proxy| format!("{proxy}\n")).unwrap_or_default();
-        if let Err(error) = std::fs::write(&self.path, text) {
+        let mut file = &self.file;
+        let result = file
+            .set_len(0)
+            .and_then(|()| file.rewind())
+            .and_then(|()| file.write_all(text.as_bytes()));
+        if let Err(error) = result {
             tracing::warn!("could not record the tailscale serve route: {error}");
         }
     }
@@ -234,6 +247,8 @@ struct State {
     // This process may have created the route.
     owned: bool,
     host: Option<String>,
+    /// Checks of the route since Tailscale's status was last read, while all succeed.
+    checks: Option<u32>,
     /// This process's lease on `port`, once acquired; held until it exits.
     lease: Option<Lease>,
 }
@@ -295,19 +310,47 @@ impl Tailscale {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true);
-            match tokio::time::timeout(TIMEOUT, command.output()).await {
-                Err(_) => return Err(format!("`tailscale {}` timed out", args.join(" "))),
-                Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Ok(Err(e)) => return Err(e.to_string()),
-                Ok(Ok(output)) if output.status.success() => return Ok(output.stdout),
-                Ok(Ok(output)) => {
-                    let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    if error.is_empty() {
-                        return Err(format!("`tailscale {}` failed", args.join(" ")));
-                    }
-                    return Err(error);
-                }
-            }
+            let mut child = match command.spawn() {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e.to_string()),
+                Ok(child) => child,
+            };
+            let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+            // Read as it comes, so that a command that times out still says why: `serve` waits
+            // after printing where to enable Serve for the tailnet.
+            let run = async {
+                let (out, err) = (child.stdout.take(), child.stderr.take());
+                let (_, _, status) = tokio::join!(
+                    async {
+                        if let Some(mut out) = out {
+                            out.read_to_end(&mut stdout).await.ok();
+                        }
+                    },
+                    async {
+                        if let Some(mut err) = err {
+                            err.read_to_end(&mut stderr).await.ok();
+                        }
+                    },
+                    child.wait(),
+                );
+                status
+            };
+            let status = tokio::time::timeout(TIMEOUT, run).await;
+            let printed = |output: &[u8]| String::from_utf8_lossy(output).trim().to_string();
+            let said = [printed(&stderr), printed(&stdout)]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let command = format!("`tailscale {}`", args.join(" "));
+            return match status {
+                Err(_) if said.is_empty() => Err(format!("{command} timed out")),
+                Err(_) => Err(format!("{command} timed out: {said}")),
+                Ok(Err(e)) => Err(e.to_string()),
+                Ok(Ok(status)) if status.success() => Ok(stdout),
+                Ok(Ok(_)) if stderr.trim_ascii().is_empty() => Err(format!("{command} failed")),
+                Ok(Ok(_)) => Err(printed(&stderr)),
+            };
         }
         Err("the tailscale CLI is not installed".into())
     }
@@ -371,6 +414,20 @@ impl Tailscale {
         if state.stopped {
             return Ok(None);
         }
+        let checks = state.checks.take();
+        let result = self.setup(&mut state, checks).await;
+        if result.is_ok() {
+            state.checks = Some(checks.map_or(0, |n| (n + 1) % STATUS_EVERY));
+        }
+        result
+    }
+
+    /// `attempt`, `checks` (if any) since the status was last read.
+    async fn setup(
+        &self,
+        state: &mut State,
+        checks: Option<u32>,
+    ) -> Result<Option<String>, String> {
         if let (None, Some(dir)) = (&state.lease, &self.leases) {
             match Lease::acquire(dir, self.port) {
                 Ok(Some(lease)) => state.lease = Some(lease),
@@ -383,9 +440,17 @@ impl Tailscale {
                 Err(error) => return Err(format!("could not lock the tailscale serve route: {error}")),
             }
         }
-        let (host, url) = url(&self.cli(&["status", "--json"]).await?, self.port)?;
-        state.host = Some(host.clone());
-        *self.origin.lock().unwrap() = Some(url.clone());
+        let known = state.host.clone().zip(self.origin.lock().unwrap().clone());
+        let (host, url) = match known {
+            // Serving so far: the route alone is checked, mostly.
+            Some(known) if checks.is_some_and(|n| n + 1 < STATUS_EVERY) => known,
+            _ => {
+                let (host, url) = url(&self.cli(&["status", "--json"]).await?, self.port)?;
+                state.host = Some(host.clone());
+                *self.origin.lock().unwrap() = Some(url.clone());
+                (host, url)
+            }
+        };
         let config = self.serve_config().await?;
         // Each start listens on a new port, so an earlier stereo's route is recognized by the lease,
         // which only this process holds now.
@@ -400,8 +465,9 @@ impl Tailscale {
             }
             Route::Proxy(target) => return Err(self.taken(&host, &format!("a proxy to {target}"))),
             Route::Taken(what) => return Err(self.taken(&host, &what)),
-            Route::Free => self.remove_abandoned(&config, &host).await?,
+            Route::Free => {}
         }
+        self.remove_abandoned(&config, &host).await?;
         // Before the command: the daemon may keep the route even if it fails.
         state.owned = true;
         if let Some(lease) = &state.lease {
@@ -912,6 +978,45 @@ esac
         assert!(cli.calls().contains("serve --https=9005 --set-path=/ off"));
         assert_eq!(cli.routes(), ["8005 / http://127.0.0.1:9001", api]);
         assert_eq!(cli.recorded(9005), "");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn taking_over_its_route_also_removes_those_left_on_other_ports() {
+        let cli = fake::Cli::new(&[
+            "8005 / http://127.0.0.1:9000",
+            "9005 / http://127.0.0.1:9001",
+        ]);
+        cli.record(8005, "http://127.0.0.1:9000");
+        cli.record(9005, "http://127.0.0.1:9001");
+        let tailscale = cli.tailscale(8005, 9002);
+        assert!(tailscale.attempt().await.unwrap().is_some());
+        assert_eq!(cli.routes(), ["8005 / http://127.0.0.1:9002"]);
+        assert_eq!(cli.recorded(9005), "");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn checks_the_tailscale_status_only_every_few_checks() {
+        let cli = fake::Cli::new(&[]);
+        let tailscale = cli.tailscale(8005, 9000);
+        let status_reads = || {
+            cli.calls()
+                .lines()
+                .filter(|l| *l == "status --json")
+                .count()
+        };
+        for _ in 0..STATUS_EVERY * 2 {
+            assert!(tailscale.attempt().await.unwrap().is_some());
+        }
+        assert_eq!(status_reads(), 2);
+        // After a failure, the next check reads it again.
+        cli.set_routes(&["8005 / http://127.0.0.1:3000"]);
+        assert!(tailscale.attempt().await.is_err());
+        cli.set_routes(&[]);
+        let before = status_reads();
+        assert!(tailscale.attempt().await.unwrap().is_some());
+        assert_eq!(status_reads(), before + 1);
     }
 
     #[cfg(unix)]

@@ -988,3 +988,28 @@ test("a rejected pairing code is explained and not offered again", async ({
     })
     .toEqual([[`stereo.pair.${pairingCode}`], null]);
 });
+
+test("a rejected saved token is forgotten and explained", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem("seeded")) {
+      sessionStorage.setItem("seeded", "1");
+      localStorage.setItem("stereo-ws-token", "old-token");
+    }
+  });
+  await page.routeWebSocket("**/ws", (ws) => {
+    ws.close({ code: 4403, reason: "Invalid token" });
+  });
+  const offered = await recordWsProtocols(page);
+  await page.goto("/");
+  await expect(page.getByText(/no longer accepts this browser/)).toBeVisible();
+  expect(
+    await page.evaluate(() => localStorage.getItem("stereo-ws-token")),
+  ).toBeNull();
+  // Reconnects keep going, without the token.
+  const auth = `stereo.auth.${Buffer.from("old-token").toString("hex")}`;
+  await expect
+    .poll(async () => ((await offered()) as unknown[]).slice(0, 2), {
+      timeout: 10_000,
+    })
+    .toEqual([[auth], null]);
+});

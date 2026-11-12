@@ -324,14 +324,46 @@ async fn main() -> anyhow::Result<()> {
             None => std::future::pending().await,
         }
     };
-    tokio::select! {
-        result = axum::serve(listener, router) => result?,
-        result = tailnet => result??,
-        _ = shutdown_signal() => {}
+    // Only --tailscale has something to clean up on a signal, its route; without it, signals keep
+    // their default and end the process at once.
+    let tailscale_on = settings.tailscale;
+    let signal = async {
+        if tailscale_on {
+            shutdown_signal().await
+        } else {
+            std::future::pending().await
+        }
+    };
+    let result: anyhow::Result<()> = tokio::select! {
+        result = axum::serve(listener, router) => result.map_err(Into::into),
+        result = tailnet => result.map_err(Into::into).and_then(|r| r.map_err(Into::into)),
+        () = signal => {
+            remove_tailnet_route().await;
+            // As the signal would have, without waiting for blocking tasks as the runtime drops.
+            std::process::exit(0);
+        }
+    };
+    if tailscale_on {
+        remove_tailnet_route().await;
     }
-    tailscale::shutdown().await;
+    result
+}
 
-    Ok(())
+/// Shutdown waits this long at most for the tailnet route's removal: less than launchd's 20 s
+/// before it kills the process.
+const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Remove the tailnet route, without hanging on a stuck `tailscale` CLI: within
+/// `CLEANUP_TIMEOUT`, and another Ctrl-C (or SIGTERM) gives up at once. A route left behind is
+/// taken over by the next start (see `tailscale.rs`).
+async fn remove_tailnet_route() {
+    tokio::select! {
+        () = tailscale::shutdown() => {}
+        () = shutdown_signal() => eprintln!("left the tailscale serve route in place"),
+        () = tokio::time::sleep(CLEANUP_TIMEOUT) => {
+            eprintln!("timed out removing the tailscale serve route");
+        }
+    }
 }
 
 async fn shutdown_signal() {

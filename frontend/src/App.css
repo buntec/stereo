@@ -50,11 +50,18 @@
   color: var(--stereo-brand-beatport);
 }
 
-/* The Tailscale button's QR code, on white in both themes (see TailscaleButton.tsx). */
+/* The Tailscale button's QR code: black on white in both themes, as many scanners reject
+   inverted codes (see TailscaleButton.tsx). */
 .tailscale-qr {
-  inline-size: 12rem;
-  block-size: 12rem;
+  inline-size: calc(var(--spacing-12) * 4);
+  block-size: calc(var(--spacing-12) * 4);
   border-radius: var(--radius-element);
+}
+.tailscale-qr-light {
+  fill: var(--color-on-dark);
+}
+.tailscale-qr-dark {
+  fill: var(--color-on-light);
 }
 
 @media (max-width: 48rem) {

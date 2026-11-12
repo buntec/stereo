@@ -136,8 +136,10 @@ const wsTokenFromFragment = urlFragment.get("stereo-token");
 // on every attempt until the token arrives or the backend rejects it, so a connection that fails
 // for another reason (network, backend restarting) doesn't lose it.
 let pairingCode = urlFragment.get("stereo-pair");
-/** The close code of a rejected pairing code (`PAIRING_REJECTED` in `server.rs`). */
+/** The close codes of a rejected pairing code and token (`PAIRING_REJECTED`/`TOKEN_REJECTED` in
+ * `server.rs`). */
 const PAIRING_REJECTED = 4401;
+const TOKEN_REJECTED = 4403;
 if (wsTokenFromFragment || pairingCode) {
   window.history.replaceState(
     null,
@@ -147,7 +149,8 @@ if (wsTokenFromFragment || pairingCode) {
 }
 
 // Kept in localStorage, so a phone stays signed in when the app is reopened, e.g. from the home
-// screen. Older versions kept it in sessionStorage.
+// screen. Older versions kept it in sessionStorage. Forgotten once the backend rejects it, e.g.
+// after a restart with another --ws-token (or none, which accepts it).
 const storedWsToken = () => {
   try {
     return (
@@ -164,6 +167,15 @@ const rememberWsToken = (token: string) => {
     window.localStorage.setItem(WS_TOKEN_KEY, token);
   } catch {
     // Still used for this page's reconnects.
+  }
+};
+const forgetWsToken = () => {
+  wsToken = null;
+  try {
+    window.localStorage.removeItem(WS_TOKEN_KEY);
+    window.sessionStorage.removeItem(WS_TOKEN_KEY);
+  } catch {
+    // Not stored, then.
   }
 };
 let wsToken = wsTokenFromFragment ?? storedWsToken();
@@ -668,7 +680,6 @@ const reducer = (state: State, action: Action): State => {
     case "clone-repo-reply":
     case "new-releases-candidates":
     case "pairing-code":
-    case "auth-token":
     case "error-reply": // the server also sends a notification with the reason
       return { ...state };
 
@@ -1010,6 +1021,16 @@ function App() {
           type: "notification",
           message:
             "This sign-in code has expired or was already used. Scan a new one from Stereo's Tailscale button.",
+          kind: "error",
+        });
+        return;
+      }
+      if (wsToken && ev.code === TOKEN_REJECTED) {
+        forgetWsToken();
+        dispatch({
+          type: "notification",
+          message:
+            "Stereo no longer accepts this browser's saved sign-in. On a phone, scan a new code from Stereo's Tailscale button; otherwise open Stereo's link with its current token.",
           kind: "error",
         });
         return;

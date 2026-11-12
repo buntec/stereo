@@ -32,7 +32,7 @@ function TailscaleGlyph(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-// Black modules on white whatever the theme: many scanners reject inverted codes.
+// Black modules on white whatever the theme (see `.tailscale-qr` in App.css).
 function QrCode({ text }: { text: string }) {
   const { size, path } = useMemo(() => {
     const { data, size } = encode(text, { ecc: "M", border: 2 });
@@ -52,8 +52,8 @@ function QrCode({ text }: { text: string }) {
       role="img"
       aria-label="QR code of a sign-in link"
     >
-      <rect width={size} height={size} fill="white" />
-      <path d={path} fill="black" />
+      <rect className="tailscale-qr-light" width={size} height={size} />
+      <path className="tailscale-qr-dark" d={path} />
     </svg>
   );
 }
