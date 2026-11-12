@@ -1,7 +1,8 @@
 # Stereo 📻
 
 Curate and play music in your browser.
-No account, login or subscription required!
+Find tracks by their metadata (artist, label, BPM, key, release date), organize them into
+collections, and keep those collections in sync across your machines with git.
 
 Works across platforms in any reasonably modern browser.
 Tested with Firefox and Chrome.
@@ -38,11 +39,15 @@ More precisely, it's a SQLite database containing track meta data only - no audi
 
 ## Playback
 
-Playback needs [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [Deno](https://deno.com), which
-yt-dlp needs for YouTube (e.g. `brew install yt-dlp deno`). Stereo downloads each track's audio
-from YouTube when it is first played and plays it in the browser, which keeps going in the
-background and with a phone's screen locked. Upcoming tracks are downloaded ahead of time; a
-track that can't be downloaded is skipped.
+Stereo doesn't include or host any audio. Playback relies on
+[yt-dlp](https://github.com/yt-dlp/yt-dlp), which you install separately (e.g.
+`brew install yt-dlp`), and you're responsible for using it in line with YouTube's terms and
+the law where you live (see [Disclaimer](#disclaimer)). Without yt-dlp, Stereo still works for
+curating collections, but won't play anything.
+
+Stereo downloads each track's audio from YouTube when it is first played and plays it in the
+browser, which keeps going in the background and with a phone's screen locked. Upcoming tracks
+are downloaded ahead of time; a track that can't be downloaded is skipped.
 
 Downloads are cached in `~/Library/Caches/stereo/audio` on macOS (`~/.cache/stereo/audio`
 elsewhere, or `--cache-dir`), up to 10 GB by default (`--audio-cache-limit-gb`); the least
@@ -66,6 +71,34 @@ to the browser's cookie store.
 Stereo only remembers which browser profile holds the login and reads its YouTube
 cookies afresh for every export, so logging out of YouTube there disconnects stereo too.
 The API is undocumented, so exports may break until stereo is updated.
+
+## Where the metadata comes from
+
+Searches query Beatport, SoundCloud, Traxsource, Volumo and Spotify for track metadata,
+and match the results against YouTube search results. Shazam is used for "similar songs".
+Most of these services have no public API, so Stereo uses the same endpoints as their
+websites. That means a search can break whenever a site changes, and heavy use may get
+rate-limited or blocked.
+
+To get past Beatport's bot protection, Stereo reuses the Cloudflare cookie of your own
+browser: visit beatport.com in that browser once if Beatport searches fail. Like the
+YouTube connection above, it reads the browser's cookie store locally (on macOS, the first
+read asks for keychain access). Cookies are never sent anywhere except to the site they
+belong to.
+
+# Disclaimer
+
+Stereo is a personal, non-commercial hobby project. It isn't affiliated with, endorsed by
+or sponsored by YouTube, Google, Beatport, SoundCloud, Spotify, Shazam, Apple, Traxsource
+or Volumo; all trademarks belong to their owners.
+
+Stereo is meant to run locally, for your own use. Don't run it as a public service.
+Downloading content from YouTube or using the other services through unofficial endpoints
+may violate their terms of service, and depending on where you live, copyright or other
+law. It's up to you to make sure your use is allowed, and to support the artists you
+listen to. Using these services this way may also get your accounts with them restricted.
+
+The software is provided as is, without warranty of any kind; see [LICENSE](LICENSE).
 
 # Development
 
