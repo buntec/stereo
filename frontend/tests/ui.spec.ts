@@ -252,17 +252,24 @@ test("focused controls retain Space; global shortcuts work on the page", async (
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("rating supports arrow keys and an explicit clear action", async ({
+test("rating changes on click and has an explicit clear action", async ({
   page,
 }) => {
   const { messages } = await openApp(page);
   const row = page.locator('.ag-row[row-index="0"]');
-  const group = row.getByRole("radiogroup");
-  await group.getByRole("radio", { name: "4 of 5 stars" }).focus();
-  await page.keyboard.press("ArrowRight");
+  const group = row.getByRole("group", { name: "Rating for Example track 1" });
   await expect(
-    group.getByRole("radio", { name: "5 of 5 stars" }),
-  ).toHaveAttribute("aria-checked", "true");
+    group.getByRole("button", { name: "4 of 5 stars" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await group.getByRole("button", { name: "5 of 5 stars" }).click();
+  await expect(
+    group.getByRole("button", { name: "5 of 5 stars" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(
+    messages.some(
+      (message) => message.type === "update-rating" && message.rating === 5,
+    ),
+  ).toBe(true);
   await row.getByRole("button", { name: "Clear rating" }).click();
   await expect
     .poll(() =>
@@ -365,9 +372,9 @@ test("metadata editing groups identifiers and explains invalid required fields",
 }) => {
   await openApp(page);
   await page
-    .getByRole("button", { name: "Edit track", exact: true })
-    .first()
+    .getByRole("button", { name: "Options for Example track 1", exact: true })
     .click();
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(
     dialog.getByRole("button", { name: "Fill missing metadata" }),
