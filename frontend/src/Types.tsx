@@ -1,11 +1,7 @@
 import type { PlaybackStatus } from "./Playback.ts";
 
 export type AudioDownloadStatus =
-  | "queued"
-  | "preparing"
-  | "downloading"
-  | "done"
-  | "failed";
+  "queued" | "preparing" | "downloading" | "done" | "failed";
 
 /** An audio download that hasn't finished yet, or that failed. */
 export type AudioDownload = {
@@ -27,12 +23,7 @@ export type Tempo = {
 };
 
 export type TrackSource =
-  | "beatport"
-  | "soundcloud"
-  | "volumo"
-  | "traxsource"
-  | "spotify"
-  | "shazam";
+  "beatport" | "soundcloud" | "volumo" | "traxsource" | "spotify" | "shazam";
 
 export interface ITrack {
   title: string;
@@ -106,10 +97,7 @@ export type GitSyncState =
 
 export type SearchKind = "fuzzy" | "by-label" | "by-artist";
 export type SearchBoxKind =
-  | SearchKind
-  | "new-releases"
-  | "beatport-top-100"
-  | "traxsource-top-100";
+  SearchKind | "new-releases" | "beatport-top-100" | "traxsource-top-100";
 
 /// Chart search kinds, which come from a single store and ignore the search sources.
 export const isChartSearchKind = (kind: SearchBoxKind) =>
@@ -542,12 +530,7 @@ export type PlaylistEdit =
     };
 
 export type PlaylistSyncState =
-  | "running"
-  | "synced"
-  | "unchanged"
-  | "throttled"
-  | "busy"
-  | "failed";
+  "running" | "synced" | "unchanged" | "throttled" | "busy" | "failed";
 
 export type PlaylistSyncStatus = {
   playlist_id: string;

@@ -497,8 +497,10 @@ impl AudioCache {
             return None;
         }
         let beats = beats
-            .chunks_exact(BEAT_LEN)
-            .map(|b| (u32::from_le_bytes([b[0], b[1], b[2], b[3]]), b[4]))
+            .as_chunks::<BEAT_LEN>()
+            .0
+            .iter()
+            .map(|&[a, b, c, d, strength]| (u32::from_le_bytes([a, b, c, d]), strength))
             .collect();
         Some(waveform::Analysis { peaks, beats })
     }

@@ -495,7 +495,7 @@ async fn handle_socket(mut socket: WebSocket, settings: Arc<Settings>, paired: O
         // A batch of one, as `send_loop` sends them.
         let msg =
             serde_json::to_string(&[MsgServer::AuthToken { token }]).expect("serializing a token");
-        if socket.send(Message::Text(msg)).await.is_err() {
+        if socket.send(Message::Text(msg.into())).await.is_err() {
             return;
         }
     }
@@ -663,7 +663,7 @@ async fn send_loop(
                         payload_bytes = json.len(),
                         "WebSocket messages sent"
                     );
-                    if sink.send(Message::Text(json)).await.is_err() {
+                    if sink.send(Message::Text(json.into())).await.is_err() {
                         break;
                     }
                 }
@@ -3162,7 +3162,7 @@ mod tests {
 
         async fn send(&mut self, msg: Value) {
             self.socket
-                .send(tungstenite::Message::Text(msg.to_string()))
+                .send(tungstenite::Message::Text(msg.to_string().into()))
                 .await
                 .unwrap();
         }

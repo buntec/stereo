@@ -124,7 +124,7 @@ import NewReleasesDialog, {
   type NewReleasesOverrides,
 } from "./NewReleasesDialog.tsx";
 import GitSyncStatus from "./GitSyncStatus.tsx";
-import { useTrackSelection } from "./TrackSelection.tsx";
+import { useTrackSelection } from "./TrackSelection.ts";
 import PlaylistMenu from "./PlaylistMenu.tsx";
 import SavePlaylistDialog from "./SavePlaylistDialog.tsx";
 import PlaylistsDialog from "./PlaylistsDialog.tsx";
@@ -1102,8 +1102,12 @@ function App() {
   const openCollectionPath = state.collection?.path;
   useEffect(() => {
     deselectTracks();
-    setFilteredRowCount(undefined);
   }, [openCollectionPath, deselectTracks]);
+  const [rowCountPath, setRowCountPath] = useState(openCollectionPath);
+  if (rowCountPath !== openCollectionPath) {
+    setRowCountPath(openCollectionPath);
+    setFilteredRowCount(undefined);
+  }
 
   const updatePlaylist = useCallback(
     (shuffle: boolean) => {
@@ -1680,7 +1684,8 @@ function App() {
     conflicts: ITrack[];
     nonConflicting: ITrack[];
   } | null>(null);
-  const addTracksPendingId = useRef(0);
+  // Remounts the dialog for each new batch of conflicts.
+  const [addTracksPendingId, setAddTracksPendingId] = useState(0);
 
   const exportSelectionToSpotifyPlaylist = useCallback(() => {
     getSelectedTracks((selectedRows) => {
@@ -1868,7 +1873,7 @@ function App() {
         }
         return true;
       } else {
-        addTracksPendingId.current += 1;
+        setAddTracksPendingId((n) => n + 1);
         setAddTracksPending({ conflicts, nonConflicting });
         return false;
       }
@@ -2159,7 +2164,9 @@ function App() {
   // to update automatically is offered to the server about every few minutes, which pushes it
   // at most once an hour and only if its tracks changed.
   const playlistsRef = useRef(playlists);
-  playlistsRef.current = playlists;
+  useEffect(() => {
+    playlistsRef.current = playlists;
+  });
   const autoSyncPlaylists = useCallback(() => {
     if (!backendReady || document.visibilityState !== "visible") return;
     const now = Date.now();
@@ -3293,7 +3300,7 @@ function App() {
             onAction={confirmDelete}
           />
           <AddTracksDialog
-            key={addTracksPendingId.current}
+            key={addTracksPendingId}
             open={addTracksPending !== null}
             conflicts={addTracksPending?.conflicts ?? []}
             onOpenChange={(open) => {

@@ -10,22 +10,22 @@ path = "src/main.rs"
 
 [dependencies]
 # Web framework
-axum = { version = "0.7", features = ["ws", "macros"] }
+axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.5", features = ["fs"] }
-tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.7", features = ["fs"] }
+tower = { version = "0.5", features = ["util"] }
 futures = "0.3"
 
 # HTTP client with Chrome TLS fingerprint impersonation to bypass Beatport bot-detection.
-wreq = { version = "6.0.0-rc.29", features = ["json", "gzip", "brotli", "stream", "query", "form"] }
-wreq-util = "3.0.0-rc.12"
+wreq = { version = "6.0.0-rc.31", features = ["json", "gzip", "brotli", "stream", "query", "form"] }
+wreq-util = "3.0.0-rc.14"
 
 # Embed frontend assets into the binary at compile time
 rust-embed = "8"
 axum-embed = "0.1"
 
 # HTML parsing (replaces BeautifulSoup4)
-scraper = "0.19"
+scraper = "0.29"
 
 # SQLite (replaces aiosqlite)
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls"] }
@@ -48,9 +48,9 @@ url = "2"
 # Spotify integration: TOTP for the anonymous web-player token, regex/base64 for
 # extracting persisted-query hashes and decoding the app server config out of Spotify's
 # obfuscated JS/HTML.
-totp-rs = "5"
+totp-rs = "6"
 regex = "1"
-base64 = "0.22"
+base64 = "0.23"
 # Reads Spotify session cookies directly from installed browsers, as an alternative to
 # manually pasting the Cookie header.
 rookie = "0.5"
@@ -58,7 +58,7 @@ rookie = "0.5"
 # first), for importing Beatport's Cloudflare clearance from the profile that earned it.
 glob = "0.3"
 # Signs YouTube API requests (SAPISIDHASH) the way YouTube's web client does.
-sha1 = "0.10"
+sha1 = "0.11"
 # Applies a browser cookie database's write-ahead log to a copy before rookie reads it (rookie opens
 # databases as immutable, which skips the WAL). The version rookie already uses.
 rusqlite = "0.31"
@@ -76,4 +76,4 @@ opt-level = 3
 
 [dev-dependencies]
 # WebSocket client for end-to-end session tests (the version axum already uses).
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.29"

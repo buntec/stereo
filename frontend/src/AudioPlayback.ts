@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type {
   PlaybackEngine,
   PlaybackEvents,
@@ -7,6 +7,12 @@ import type {
 
 /** After this many tracks in a row fail to download, stop instead of skipping on. */
 const MAX_CONSECUTIVE_FAILURES = 3;
+
+// One element for the whole session: iOS lets an element that is already
+// playing switch tracks while locked, but won't start a new one. Kept outside
+// React state, since playback sets its `src` and `currentTime`.
+const audio = new Audio();
+audio.preload = "auto";
 
 const audioUrl = (id: string, key: string) =>
   `/audio/${encodeURIComponent(id)}?key=${encodeURIComponent(key)}`;
@@ -36,14 +42,6 @@ export const useAudioPlayback = (
    */
   const wantsPlayRef = useRef(false);
   const loadRef = useRef<(id: string) => void>(() => {});
-
-  // One element for the whole session: iOS lets an element that is already
-  // playing switch tracks while locked, but won't start a new one.
-  const [audio] = useState(() => {
-    const element = new Audio();
-    element.preload = "auto";
-    return element;
-  });
 
   useEffect(() => {
     eventsRef.current = events;
@@ -163,7 +161,7 @@ export const useAudioPlayback = (
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("error", onError);
     };
-  }, [audio]);
+  }, []);
 
   useEffect(
     () => () => {
@@ -171,7 +169,7 @@ export const useAudioPlayback = (
       audio.removeAttribute("src");
       audio.load();
     },
-    [audio],
+    [],
   );
 
   const ready = audioKey !== undefined;
@@ -239,5 +237,5 @@ export const useAudioPlayback = (
       },
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, audio]);
+  }, [ready]);
 };
