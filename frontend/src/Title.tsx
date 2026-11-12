@@ -11,6 +11,7 @@ export default function Title({
   releaseDate,
   onArtistClick,
   onLabelClick,
+  extra,
 }: {
   title: string;
   artists?: string[];
@@ -19,6 +20,8 @@ export default function Title({
   releaseDate?: string;
   onArtistClick?: (name: string) => void;
   onLabelClick?: (name: string) => void;
+  /** Shown after the other metadata, e.g. the measured tempo. */
+  extra?: ReactNode;
 }) {
   const textType = "supporting";
   const searchable = (name: string, onClick?: (name: string) => void) =>
@@ -47,6 +50,7 @@ export default function Title({
   }
   if (label) groups.push(searchable(label, onLabelClick));
   if (releaseDate) groups.push(<Text type={textType}>{releaseDate}</Text>);
+  if (extra) groups.push(extra);
 
   return (
     <VStack gap={0} width="100%" hAlign="start" className="now-playing-title">

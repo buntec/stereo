@@ -40,6 +40,8 @@ async function openApp(
   const tracks = options.empty ? [] : structuredClone(exampleTracks);
   const collection = { path: "/audit/collection.db", size: tracks.length };
   const messages: Record<string, unknown>[] = [];
+  /** Ids the collection answers `get-collection-track` as not containing. */
+  const absent = new Set<string>();
   await page.route("https://www.youtube.com/**", (route) => route.abort());
   await page.route("https://i.ytimg.com/**", (route) => route.abort());
   const audioRequests: string[] = [];
@@ -174,6 +176,34 @@ async function openApp(
           if (track) track.rating = message.rating;
           break;
         }
+        case "update-bpm": {
+          const track = tracks.find((track) => track.yt_id === message.yt_id);
+          if (track) {
+            track.bpm = message.bpm;
+            send({ type: "track-update", track });
+          }
+          break;
+        }
+        case "get-collection-track":
+          send({
+            type: "collection-track",
+            id: message.id,
+            track:
+              (message.collection === collection.path &&
+                !absent.has(message.yt_id) &&
+                tracks.find((track) => track.yt_id === message.yt_id)) ||
+              null,
+          });
+          break;
+        case "collection-contains-ids":
+          send({
+            type: "collection-contains-ids-response",
+            id: message.id,
+            contained: message.yt_ids.filter((id: string) =>
+              tracks.some((track) => track.yt_id === id),
+            ),
+          });
+          break;
       }
     });
     setTimeout(
@@ -199,6 +229,9 @@ async function openApp(
   ).toHaveCount(0);
   return {
     messages,
+    tracks,
+    collection,
+    absent,
     audioRequests,
     heldAudio,
     /** Changes how further audio requests are answered (not "off"). */
@@ -814,6 +847,147 @@ test("the logo pulses with the playing track's beats", async ({ page }) => {
   await button.click();
   await expect(button).toHaveAccessibleName("Pause");
   expect(Math.max(...(await pulses()))).toBe(0);
+});
+
+/**
+ * Plays the first track (130 BPM in its metadata) and replies to its waveform
+ * request with `tempo`, after calling `before`.
+ */
+async function playWithTempo(
+  page: Page,
+  tempo: { bpm: number; steady: boolean },
+  before?: (app: Awaited<ReturnType<typeof openApp>>) => void,
+) {
+  const app = await openApp(page, { audio: "ok", audioSeconds: 240 });
+  await startPlayback(page);
+  before?.(app);
+  await expect(page.locator(".play-pause-button")).toHaveAccessibleName(
+    "Pause",
+  );
+  app.send({ type: "audio-download", yt_id: "audit0", status: "done" });
+  await expect
+    .poll(() => app.messages.some((m) => m.type === "get-waveform"))
+    .toBe(true);
+  const request = app.messages.find((m) => m.type === "get-waveform")!;
+  app.send({
+    type: "waveform",
+    id: request.id,
+    yt_id: "audit0",
+    peaks: new Array(1000).fill(128),
+    beats: [],
+    tempo,
+  });
+  return app;
+}
+
+test("offers to correct a BPM that deviates from the measured tempo", async ({
+  page,
+}) => {
+  const { messages } = await playWithTempo(page, { bpm: 126.04, steady: true });
+  await expect(page.locator(".now-playing-tempo")).toHaveText("126 BPM");
+  await expect(
+    page.getByText(
+      "Example track 1 plays at 126 BPM, but its metadata says 130 BPM.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Set to 126" }).click();
+  await expect
+    .poll(() => messages.filter((m) => m.type === "update-bpm"))
+    .toEqual([
+      {
+        type: "update-bpm",
+        yt_id: "audit0",
+        bpm: 126,
+        collection: "/audit/collection.db",
+      },
+    ]);
+  await expect(page.getByText("but its metadata says")).toHaveCount(0);
+});
+
+test("a BPM suggestion is withdrawn when the collection is switched", async ({
+  page,
+}) => {
+  const app = await playWithTempo(page, { bpm: 126.04, steady: true });
+  const toast = page.getByText("plays at 126 BPM, but its metadata says 130");
+  await expect(toast).toBeVisible();
+  app.send({
+    type: "collection-info",
+    collection: { path: "/audit/second.db", size: app.tracks.length },
+  });
+  await expect(toast).toHaveCount(0);
+  expect(app.messages.filter((m) => m.type === "update-bpm")).toEqual([]);
+  // Not dismissed: offered again back in the collection it was checked against.
+  expect(
+    await page.evaluate(() => localStorage.getItem("stereo-bpm-dismissed")),
+  ).toBeNull();
+  app.send({ type: "collection-info", collection: app.collection });
+  await expect(toast).toBeVisible();
+});
+
+test("a BPM suggestion is based on the metadata stored in the collection", async ({
+  page,
+}) => {
+  const { messages } = await playWithTempo(
+    page,
+    { bpm: 126.04, steady: true },
+    // The playing track's metadata, e.g. a search result's, has half its stored BPM.
+    (app) =>
+      app.send({ type: "track-info", track: { ...app.tracks[0], bpm: 65 } }),
+  );
+  await expect(
+    page.getByText(
+      "Example track 1 plays at 126 BPM, but its metadata says 130 BPM.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Set to 126" }).click();
+  await expect
+    .poll(() => messages.filter((m) => m.type === "update-bpm"))
+    .toMatchObject([{ yt_id: "audit0", bpm: 126 }]);
+});
+
+test("a track gets a BPM suggestion once it is added to the collection", async ({
+  page,
+}) => {
+  const app = await playWithTempo(page, { bpm: 126.04, steady: true }, (app) =>
+    app.absent.add("audit0"),
+  );
+  await expect
+    .poll(() => app.messages.some((m) => m.type === "get-collection-track"))
+    .toBe(true);
+  const toast = page.getByText("plays at 126 BPM, but its metadata says 130");
+  await page.waitForTimeout(500);
+  await expect(toast).toHaveCount(0);
+  app.absent.delete("audit0");
+  app.send({ type: "collection-info", collection: app.collection });
+  await expect(toast).toBeVisible();
+});
+
+test("a dismissed BPM suggestion isn't offered again", async ({ page }) => {
+  await playWithTempo(page, { bpm: 124.4, steady: true });
+  const toast = page.getByText("plays at 124.4 BPM, but its metadata says 130");
+  await expect(toast).toBeVisible();
+  await page.getByRole("button", { name: /dismiss|close/i }).click();
+  await expect(toast).toHaveCount(0);
+  expect(
+    await page.evaluate(() => localStorage.getItem("stereo-bpm-dismissed")),
+  ).toBe(JSON.stringify(["audit0:124"]));
+});
+
+test("half time isn't taken for wrong metadata", async ({ page }) => {
+  await playWithTempo(page, { bpm: 65, steady: true });
+  // Shown at the metadata's octave.
+  await expect(page.locator(".now-playing-tempo")).toHaveText("130 BPM");
+  await page.waitForTimeout(500);
+  await expect(page.getByText("but its metadata says")).toHaveCount(0);
+});
+
+test("a varying tempo is shown as approximate and not suggested", async ({
+  page,
+}) => {
+  await playWithTempo(page, { bpm: 126.3, steady: false });
+  await expect(page.locator(".now-playing-tempo")).toHaveText("~126 BPM");
+  await page.waitForTimeout(500);
+  await expect(page.getByText("but its metadata says")).toHaveCount(0);
 });
 
 test("a track without a waveform gets one once its audio is downloaded again", async ({

@@ -339,6 +339,95 @@ fn strengths(beats: &[usize], contrasts: &[f64], energy: &[f64]) -> Vec<u8> {
         .collect()
 }
 
+/// A track's tempo, measured from its beats.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct Tempo {
+    /// Beats per minute, to within a tenth or so over a whole track. As ambiguous as the beats
+    /// between the beat and half or double time.
+    pub bpm: f64,
+    /// Whether the beats keep to that one tempo throughout, as most dance music does, rather than
+    /// drifting or changing.
+    pub steady: bool,
+}
+
+/// Beats needed for a tempo.
+const MIN_TEMPO_BEATS: usize = 16;
+/// How far from the beats' median interval the tempo is searched, as a fraction of it.
+const TEMPO_SEARCH: f64 = 0.04;
+/// The beats' coherence at their tempo from which it counts as steady: 1 for beats exactly on the
+/// grid, about 0.97 with 10ms of jitter at 120 BPM, and little for a tempo that changes.
+const STEADY_COHERENCE: f64 = 0.8;
+
+/// The tempo of `beats` (in order of time): the one whose grid fits the whole track's beats best.
+///
+/// A fit over every beat is far more precise than the tracker's beat period (whole envelope
+/// samples, about 2.7 BPM apart at 128 BPM), and it ignores the tracker's small drifts. The fit
+/// is the tempo that maximizes the beats' phase coherence, weighted by their strength, so that the
+/// weak beats extrapolated through a breakdown hardly count. It uses twice the beats' phase, which
+/// a beat sequence shifted by half a beat (onto off-beat hi-hats, say) leaves unchanged.
+pub fn tempo(beats: &[Beat]) -> Option<Tempo> {
+    if beats.len() < MIN_TEMPO_BEATS {
+        return None;
+    }
+    let mut intervals: Vec<f64> = beats
+        .windows(2)
+        .map(|w| f64::from(w[1].0.saturating_sub(w[0].0)))
+        .collect();
+    intervals.sort_by(f64::total_cmp);
+    let median = intervals[intervals.len() / 2];
+    if median <= 0.0 {
+        return None;
+    }
+    let points: Vec<(f64, f64)> = beats
+        .iter()
+        .map(|&(ms, strength)| (f64::from(ms) / 1000.0, f64::from(strength) + 1.0))
+        .collect();
+    let total: f64 = points.iter().map(|&(_, weight)| weight).sum();
+    let coherence = |bpm: f64| {
+        let frequency = 2.0 * std::f64::consts::TAU * bpm / 60.0;
+        let (cos, sin) = points.iter().fold((0.0, 0.0), |(c, s), &(t, weight)| {
+            let (sin, cos) = (frequency * t).sin_cos();
+            (c + weight * cos, s + weight * sin)
+        });
+        cos.hypot(sin) / total
+    };
+
+    // The coherence peak is about one beat in the beats spanned wide: the search steps through it
+    // finely enough not to miss it, then refines the best step.
+    let center = 60_000.0 / median;
+    let span = f64::from(beats[beats.len() - 1].0 - beats[0].0) / median;
+    let step = center / span.max(1.0) / 8.0;
+    let steps = (TEMPO_SEARCH * center / step).ceil() as i64;
+    let mut best = (center, coherence(center));
+    for i in -steps..=steps {
+        let bpm = center + i as f64 * step;
+        let value = coherence(bpm);
+        if value > best.1 {
+            best = (bpm, value);
+        }
+    }
+    let fine = step / 16.0;
+    for i in -16..=16 {
+        let bpm = best.0 + i as f64 * fine;
+        let value = coherence(bpm);
+        if value > best.1 {
+            best = (bpm, value);
+        }
+    }
+    // Between the fine steps, with a parabola through the neighbors.
+    let (left, right) = (coherence(best.0 - fine), coherence(best.0 + fine));
+    let curvature = left - 2.0 * best.1 + right;
+    let shift = if curvature < 0.0 {
+        (0.5 * (left - right) / curvature).clamp(-0.5, 0.5)
+    } else {
+        0.0
+    };
+    Some(Tempo {
+        bpm: best.0 + shift * fine,
+        steady: best.1 >= STEADY_COHERENCE,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,5 +576,74 @@ mod tests {
     fn silence_and_short_audio_have_no_beats() {
         assert!(beats_of(&vec![0.0; RATE as usize * 20], 0.0).is_empty());
         assert!(beats_of(&kicks(128.0, 0.0, 2.0), 0.0).is_empty());
+    }
+
+    /// Beats at `bpm` from `first` seconds for `count` beats, at strength 255.
+    fn grid(bpm: f64, first: f64, count: usize) -> Vec<Beat> {
+        (0..count)
+            .map(|i| {
+                (
+                    ((first + i as f64 * 60.0 / bpm) * 1000.0).round() as u32,
+                    255,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn measures_the_tempo_to_a_fraction_of_a_bpm() {
+        for bpm in [93.7, 124.0, 126.4, 174.0] {
+            let tempo = tempo(&grid(bpm, 0.3, 600)).unwrap();
+            assert!(tempo.steady);
+            assert!(
+                (tempo.bpm - bpm).abs() < 0.02,
+                "{bpm} BPM measured as {}",
+                tempo.bpm
+            );
+        }
+    }
+
+    #[test]
+    fn the_tempo_of_kicks() {
+        let beats = beats_of(&kicks(126.0, 0.25, 60.0), 0.0);
+        let tempo = tempo(&beats).unwrap();
+        assert!(tempo.steady);
+        assert!((tempo.bpm - 126.0).abs() < 0.1, "measured {}", tempo.bpm);
+    }
+
+    #[test]
+    fn jitter_gaps_and_half_beat_slips_keep_the_tempo() {
+        // A breakdown where the beats are weak and slip onto the off-beat, a missing beat, and
+        // up to 10ms of jitter.
+        let mut beats = grid(125.0, 0.5, 400);
+        for (i, beat) in beats.iter_mut().enumerate() {
+            beat.0 = (beat.0 as i64 + [0, 7, -5, 10, -9, 3][i % 6]) as u32;
+            if (200..240).contains(&i) {
+                beat.0 += 240;
+                beat.1 = 40;
+            }
+        }
+        beats.remove(100);
+        let tempo = tempo(&beats).unwrap();
+        assert!(tempo.steady);
+        assert!((tempo.bpm - 125.0).abs() < 0.05, "measured {}", tempo.bpm);
+    }
+
+    #[test]
+    fn a_changing_tempo_is_not_steady() {
+        // From 120 to 128 BPM over five minutes.
+        let mut beats = Vec::new();
+        let mut t: f64 = 0.5;
+        while t < 300.0 {
+            beats.push(((t * 1000.0).round() as u32, 255));
+            t += 60.0 / (120.0 + 8.0 * t / 300.0);
+        }
+        assert!(!tempo(&beats).unwrap().steady);
+    }
+
+    #[test]
+    fn few_beats_have_no_tempo() {
+        assert_eq!(tempo(&[]), None);
+        assert_eq!(tempo(&grid(120.0, 0.0, 10)), None);
     }
 }

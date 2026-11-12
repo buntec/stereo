@@ -90,14 +90,15 @@ pub enum MsgServer {
     AudioEvicted {
         yt_ids: Vec<String>,
     },
-    /// Reply to `GetWaveform`: loudness values (0–255) evenly spread over the track, and its beats
-    /// as `[milliseconds, strength (0–255)]`; both `None` if the track isn't downloaded or its audio
-    /// can't be decoded.
+    /// Reply to `GetWaveform`: loudness values (0–255) evenly spread over the track, its beats
+    /// as `[milliseconds, strength (0–255)]` and the tempo they keep (`None` without enough beats);
+    /// all `None` if the track isn't downloaded or its audio can't be decoded.
     Waveform {
         id: i64,
         yt_id: String,
         peaks: Option<Vec<u8>>,
         beats: Option<Vec<crate::beats::Beat>>,
+        tempo: Option<crate::beats::Tempo>,
     },
     /// Generic failure reply to a request/reply message (see `MsgClient::request_id`).
     ErrorReply {
@@ -146,6 +147,12 @@ pub enum MsgServer {
     CollectionContainsIdsResponse {
         id: i64,
         contained: Vec<String>,
+    },
+    /// Reply to `GetCollectionTrack`: the track as stored in the collection, `None` if it isn't in
+    /// it or the collection isn't the open one.
+    CollectionTrack {
+        id: i64,
+        track: Option<Track>,
     },
     ImportFromValid {
         path: String,
@@ -497,6 +504,13 @@ pub enum MsgClient {
         yt_id: String,
         rating: Option<i64>,
     },
+    /// Sets the BPM of a track in the open collection, e.g. to the tempo measured from its audio.
+    UpdateBpm {
+        yt_id: String,
+        bpm: Option<i64>,
+        /// The collection the BPM was checked against; refused unless it is the open one.
+        collection: String,
+    },
     IncPlayCount {
         yt_id: String,
     },
@@ -584,6 +598,12 @@ pub enum MsgClient {
     CollectionContainsIds {
         id: i64,
         yt_ids: Vec<String>,
+    },
+    /// The track with `yt_id` as stored in `collection`, if that is the open collection.
+    GetCollectionTrack {
+        id: i64,
+        yt_id: String,
+        collection: String,
     },
     CheckImportFrom {
         path: String,
@@ -762,6 +782,7 @@ impl MsgClient {
             Self::SetCollection { id, .. }
             | Self::GetPathCompletions { id, .. }
             | Self::CollectionContainsIds { id, .. }
+            | Self::GetCollectionTrack { id, .. }
             | Self::GetWaveform { id, .. }
             | Self::CreatePairingCode { id }
             | Self::GetNewReleasesCandidates { id }
@@ -798,6 +819,10 @@ mod tests {
             yt_id: "dQw4w9WgXcQ".into(),
             peaks: Some(vec![0, 255]),
             beats: Some(vec![(250, 200), (719, 255)]),
+            tempo: Some(crate::beats::Tempo {
+                bpm: 124.5,
+                steady: true,
+            }),
         };
         assert_eq!(
             serde_json::to_value(&msg).unwrap(),
@@ -807,6 +832,7 @@ mod tests {
                 "yt_id": "dQw4w9WgXcQ",
                 "peaks": [0, 255],
                 "beats": [[250, 200], [719, 255]],
+                "tempo": {"bpm": 124.5, "steady": true},
             })
         );
     }

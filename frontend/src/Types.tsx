@@ -18,6 +18,14 @@ export type AudioDownload = {
 /** A beat of a track: its time and its strength (0–255) relative to the track's strong beats. */
 export type Beat = [ms: number, strength: number];
 
+/** A track's tempo, measured from its beats. */
+export type Tempo = {
+  /** As ambiguous as the beats between the beat and half or double time. */
+  bpm: number;
+  /** Whether the beats keep to that one tempo throughout, rather than drifting or changing. */
+  steady: boolean;
+};
+
 export type TrackSource =
   | "beatport"
   | "soundcloud"
@@ -126,6 +134,7 @@ export type ClientMsg =
   | { type: "delete-collection"; path: string }
   | { type: "rename-collection"; path: string; name: string }
   | { type: "collection-contains-ids"; yt_ids: string[] }
+  | { type: "get-collection-track"; yt_id: string; collection: string }
   | { type: "download-audio"; yt_id: string }
   | { type: "create-pairing-code" }
   | { type: "get-waveform"; yt_id: string }
@@ -136,6 +145,13 @@ export type ClientMsg =
   | { type: "create-yt-anon-playlist"; id?: number; yt_ids: string[] }
   | { type: "search-cancel-all" }
   | { type: "update-rating"; yt_id: string; rating: number | null }
+  | {
+      type: "update-bpm";
+      yt_id: string;
+      bpm: number | null;
+      /** The collection the BPM was checked against; refused unless it is the open one. */
+      collection: string;
+    }
   | { type: "update-track"; old: ITrack; new: ITrack }
   | { type: "delete-tracks"; ids: string[]; collection: string }
   | {
@@ -303,6 +319,8 @@ export type ServerMsg =
       peaks?: number[] | null;
       /** The track's beats, as `[milliseconds, strength (0–255)]`. */
       beats?: Beat[] | null;
+      /** The tempo of the beats, if there are enough of them. */
+      tempo?: Tempo | null;
     }
   | { type: "yt-anon-playlist"; id: number; url: string }
   | { type: "track-info"; track: ITrack }
@@ -332,6 +350,12 @@ export type ServerMsg =
       type: "collection-contains-ids-response";
       id: number;
       contained: string[];
+    }
+  | {
+      /** The track as stored in the collection; null if it isn't in it or that isn't open. */
+      type: "collection-track";
+      id: number;
+      track: ITrack | null;
     }
   | { type: "git-remote"; url: string | null }
   | {
