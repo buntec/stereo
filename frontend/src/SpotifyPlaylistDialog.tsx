@@ -12,8 +12,7 @@ import type { RequestReply } from "./Types";
 const PLAYLIST_LOOKUP_DEBOUNCE_MS = 500;
 
 export type SpotifyPlaylistTarget =
-  | { mode: "new"; name: string }
-  | { mode: "existing"; url: string };
+  { mode: "new"; name: string } | { mode: "existing"; url: string };
 
 type SpotifyPlaylistDialogProps = {
   open: boolean;

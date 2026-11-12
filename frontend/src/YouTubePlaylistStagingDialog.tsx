@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
@@ -19,10 +19,11 @@ function StagedTrackRow({
   onChange,
 }: StagedTrackRowProps) {
   const [value, setValue] = useState(track);
-
-  useEffect(() => {
+  const [prevTrack, setPrevTrack] = useState(track);
+  if (track !== prevTrack) {
+    setPrevTrack(track);
     setValue(track);
-  }, [track]);
+  }
 
   const isValid = Boolean(value.yt_id.trim() && value.title.trim());
 

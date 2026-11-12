@@ -197,10 +197,16 @@ function NewReleasesDialog({
 
   // Fetch fresh candidates each time the dialog opens, since ratings may have changed. The
   // overrides are only read here, so they're deliberately left out of the deps.
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) {
+      setCandidates(undefined);
+      setError(undefined);
+    }
+  }
   useEffect(() => {
     if (!isOpen) return;
-    setCandidates(undefined);
-    setError(undefined);
     requestReply(
       { type: "get-new-releases-candidates" },
       (r: ServerMsg | { type: string }) => {

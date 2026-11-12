@@ -19,7 +19,7 @@ use chrono::NaiveDate;
 use regex::Regex;
 use serde_json::Value;
 use tokio::sync::RwLock;
-use totp_rs::{Algorithm, TOTP};
+use totp_rs::{Algorithm, Builder};
 use wreq::{header::HeaderMap, Client};
 
 use crate::{models::Track, utils};
@@ -100,10 +100,16 @@ async fn generate_totp(client: &Client) -> anyhow::Result<(String, u64)> {
         .map(|(t, &e)| (e ^ (((t % 33) as u8) + 9)).to_string())
         .collect();
 
-    let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, transformed.into_bytes())
+    let totp = Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(transformed.into_bytes())
+        .build()
         .context("could not construct TOTP")?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    Ok((totp.generate(now), version))
+    Ok((totp.generate(now).to_string(), version))
 }
 
 // ── App-level (anonymous) auth: access token, client token, persisted-query hashes ──────────

@@ -287,7 +287,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut router = Router::new()
         .route("/ws", get(server::ws_handler))
-        .route("/audio/:id", get(audio::handler))
+        .route("/audio/{id}", get(audio::handler))
         .with_state(settings.clone());
 
     if !settings.dev {

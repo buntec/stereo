@@ -7,11 +7,7 @@
  */
 
 export type PlaybackStatus =
-  | "unstarted"
-  | "buffering"
-  | "playing"
-  | "paused"
-  | "ended";
+  "unstarted" | "buffering" | "playing" | "paused" | "ended";
 
 export interface PlaybackEngine {
   /** Loads the track and starts playing it. */
