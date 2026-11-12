@@ -29,6 +29,10 @@ type EditTrackDialogProps = {
   resetValue: () => void;
   commit: () => void;
   requestReply: RequestReply;
+  // Open state, when the parent opens the dialog itself (e.g. from a menu). Without it
+  // the dialog renders its own edit button. The parent resets the value when opening.
+  isOpen?: boolean;
+  onOpenChange?: (isOpen: boolean) => void;
 };
 
 export function EditTrackDialog({
@@ -38,8 +42,16 @@ export function EditTrackDialog({
   resetValue,
   commit,
   requestReply,
+  isOpen,
+  onOpenChange,
 }: EditTrackDialogProps) {
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const isControlled = isOpen !== undefined;
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const dialogOpen = isControlled ? isOpen : uncontrolledOpen;
+  const setDialogOpen = (open: boolean) => {
+    if (!isControlled) setUncontrolledOpen(open);
+    onOpenChange?.(open);
+  };
   const [isFixingUp, setIsFixingUp] = useState(false);
 
   // Partial release dates (YYYY, YYYY-MM) need a free-form field. Once the dialog has
@@ -49,6 +61,13 @@ export function EditTrackDialog({
   const hasPartialDate =
     !!value.release_date && !isCalendarDate(value.release_date);
   if (hasPartialDate && !freeformDate) setFreeformDate(true);
+
+  // Reset on every opening, also when the parent opens the dialog.
+  const [wasOpen, setWasOpen] = useState(dialogOpen);
+  if (dialogOpen !== wasOpen) {
+    setWasOpen(dialogOpen);
+    if (dialogOpen) setFreeformDate(hasPartialDate);
+  }
 
   const [spotifyIdStatus, setSpotifyIdStatus] =
     useState<SpotifyIdStatus>("idle");
@@ -88,18 +107,19 @@ export function EditTrackDialog({
 
   return (
     <>
-      <IconButton
-        variant="ghost"
-        size="sm"
-        label="Edit track"
-        tooltip="Edit track"
-        icon={<Pencil1Icon />}
-        onClick={() => {
-          resetValue();
-          setFreeformDate(false);
-          setDialogOpen(true);
-        }}
-      />
+      {!isControlled && (
+        <IconButton
+          variant="ghost"
+          size="sm"
+          label="Edit track"
+          tooltip="Edit track"
+          icon={<Pencil1Icon />}
+          onClick={() => {
+            resetValue();
+            setDialogOpen(true);
+          }}
+        />
+      )}
 
       <Dialog isOpen={dialogOpen} onOpenChange={setDialogOpen} purpose="form">
         <Layout
