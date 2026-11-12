@@ -35,15 +35,17 @@ export const beatPulse = (beats: Beat[], ms: number): number => {
 /**
  * Pulses the element of `ref` with the beats of the playing track `id`: sets
  * its `--beat` CSS property to the pulse (0–1) on every animation frame, from
- * the playback position. Nothing while paused, in the background (no animation
- * frames) or for those who prefer reduced motion.
+ * the playback position. Nothing unless `active` (playing, and the element is
+ * shown: the effect starts when `active` turns true, so an element that mounts
+ * later must turn it true with it), in the background (no animation frames) or
+ * for those who prefer reduced motion.
  */
 export function useBeatPulse(
   ref: RefObject<Element | null>,
   playback: PlaybackEngine | null,
   id: string | undefined,
   beats: Beat[] | undefined,
-  playing: boolean,
+  active: boolean,
 ) {
   const still = useSyncExternalStore(
     subscribeReducedMotion,
@@ -53,7 +55,7 @@ export function useBeatPulse(
     const element = ref.current;
     if (!(element instanceof HTMLElement || element instanceof SVGElement))
       return;
-    if (!playback || !id || !beats?.length || !playing || still) return;
+    if (!playback || !id || !beats?.length || !active || still) return;
     let frame = requestAnimationFrame(function tick() {
       // The beats are those of `id`; the engine may already be loading another track.
       const pulse =
@@ -67,5 +69,5 @@ export function useBeatPulse(
       cancelAnimationFrame(frame);
       element.style.removeProperty("--beat");
     };
-  }, [ref, playback, id, beats, playing, still]);
+  }, [ref, playback, id, beats, active, still]);
 }

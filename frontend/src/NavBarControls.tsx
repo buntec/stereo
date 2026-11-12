@@ -11,6 +11,7 @@ import SpotifyIcon from "./SpotifyIcon.tsx";
 import YouTubeIcon from "./YouTubeIcon.tsx";
 import BeatportIcon from "./BeatportIcon.tsx";
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
+import SettingsMenu from "./SettingsMenu.tsx";
 import BeatportSessionDialog from "./BeatportSessionDialog.tsx";
 import YouTubeSessionDialog from "./YouTubeSessionDialog.tsx";
 import {
@@ -24,6 +25,9 @@ type NavBarControlsProps = {
   version?: string;
   appearance: AppearanceType;
   setAppearance: (appearance: AppearanceType) => void;
+  backgroundShown: boolean;
+  backgroundPulse: number;
+  setBackgroundPulse: (pulse: number) => void;
   isConnected: boolean;
   requestReply: RequestReply;
   collectionOpen: boolean;
@@ -79,6 +83,9 @@ function NavBarControls({
   version,
   appearance,
   setAppearance,
+  backgroundShown,
+  backgroundPulse,
+  setBackgroundPulse,
   isConnected,
   requestReply,
   collectionOpen,
@@ -179,6 +186,11 @@ function NavBarControls({
             />
           ))}
         </SegmentedControl>
+        <SettingsMenu
+          backgroundShown={backgroundShown}
+          backgroundPulse={backgroundPulse}
+          setBackgroundPulse={setBackgroundPulse}
+        />
       </HStack>
 
       <SpotifySessionDialog

@@ -1,6 +1,13 @@
 import "./App.css";
 
-import { useState, useReducer, useEffect, useRef, useCallback } from "react";
+import {
+  useState,
+  useReducer,
+  useEffect,
+  useRef,
+  useCallback,
+  type CSSProperties,
+} from "react";
 
 import { AgGridReact } from "ag-grid-react";
 import { type GridState, type StateUpdatedEvent } from "ag-grid-community";
@@ -90,6 +97,7 @@ import SpotifyPlaylistDialog, {
 } from "./SpotifyPlaylistDialog.tsx";
 import AddTracksDialog from "./AddTracksDialog.tsx";
 import NavBarControls from "./NavBarControls.tsx";
+import { DEFAULT_BACKGROUND_PULSE } from "./SettingsMenu.tsx";
 import StereoLogo from "./StereoLogo.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
@@ -140,6 +148,7 @@ const defaultSettings: Settings = {
   repoPath: "",
   collectionPath: "",
   backgroundVideo: true,
+  backgroundPulse: DEFAULT_BACKGROUND_PULSE,
   shufflePlay: false,
 };
 
@@ -1802,6 +1811,17 @@ function App() {
     currentWaveform?.beats,
     state.player_state === "playing",
   );
+  const backgroundRef = useRef<HTMLElement>(null);
+  const backgroundPulse = settings.backgroundPulse ?? DEFAULT_BACKGROUND_PULSE;
+  useBeatPulse(
+    backgroundRef,
+    playback,
+    state.current_id,
+    currentWaveform?.beats,
+    state.player_state === "playing" &&
+      settings.backgroundVideo &&
+      backgroundPulse > 0,
+  );
 
   const hasSearchInput =
     isQuerylessSearchKind(state.search_kind) || !!state.search_box_input;
@@ -2317,6 +2337,11 @@ function App() {
                   setAppearance={(appearance) =>
                     setSettings({ ...settings, appearance })
                   }
+                  backgroundShown={settings.backgroundVideo}
+                  backgroundPulse={backgroundPulse}
+                  setBackgroundPulse={(backgroundPulse) =>
+                    setSettings((s) => ({ ...s, backgroundPulse }))
+                  }
                   isConnected={backendReady}
                   requestReply={requestReply}
                   collectionOpen={!!state.collection}
@@ -2695,11 +2720,15 @@ function App() {
           />
           {state.current_id && settings.backgroundVideo ? (
             <VStack
+              ref={backgroundRef}
               className="background-player"
-              style={{
-                // 16:9 without the letterboxing of the larger thumbnails; blurred anyway.
-                backgroundImage: `url(https://i.ytimg.com/vi/${encodeURIComponent(state.current_id)}/mqdefault.jpg)`,
-              }}
+              style={
+                {
+                  "--beat-strength": backgroundPulse / 100,
+                  // 16:9 without the letterboxing of the larger thumbnails; blurred anyway.
+                  backgroundImage: `url(https://i.ytimg.com/vi/${encodeURIComponent(state.current_id)}/mqdefault.jpg)`,
+                } as CSSProperties
+              }
             />
           ) : null}
           <Notification
