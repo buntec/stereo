@@ -6,6 +6,7 @@ import {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
   type CSSProperties,
 } from "react";
 
@@ -57,8 +58,18 @@ import type {
   ServerMsg,
   Settings,
   AppNotification,
+  IPlaylist,
+  PlaylistEdit,
+  PlaylistInput,
+  PlaylistService,
+  PlaylistSyncStatus,
+  SortModelItem,
 } from "./Types.tsx";
-import { isChartSearchKind, isQuerylessSearchKind } from "./Types.tsx";
+import {
+  isChartSearchKind,
+  isQuerylessSearchKind,
+  playlistSyncKey,
+} from "./Types.tsx";
 import { DEFAULT_BEATPORT_GENRE_ID } from "./BeatportGenres.tsx";
 
 import { useWebSocket } from "./WebSocket.tsx";
@@ -109,6 +120,10 @@ import NewReleasesDialog, {
 } from "./NewReleasesDialog.tsx";
 import GitSyncStatus from "./GitSyncStatus.tsx";
 import { useTrackSelection } from "./TrackSelection.tsx";
+import PlaylistMenu from "./PlaylistMenu.tsx";
+import SavePlaylistDialog from "./SavePlaylistDialog.tsx";
+import PlaylistsDialog from "./PlaylistsDialog.tsx";
+import { sameView } from "./playlists.ts";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
@@ -229,6 +244,51 @@ type State = {
   youtube_fixup_matched?: number;
   youtube_fixup_total?: number;
   youtube_fixup_tracks?: ITrack[];
+
+  /** The current repo's dynamic playlists (saved views); undefined until the server sends them. */
+  dynamic_playlists?: IPlaylist[];
+  /** The latest sync status of each playlist and service, by `playlistSyncKey`. */
+  playlist_sync: Record<string, PlaylistSyncStatus>;
+  /** Syncs the user started (by `playlistSyncKey`), whose outcome is worth a toast. */
+  playlist_sync_manual: string[];
+};
+
+const serviceNames: Record<PlaylistService, string> = {
+  spotify: "Spotify",
+  youtube: "YouTube",
+};
+
+/** A toast for the outcome of a sync the user started, if it has one. */
+const playlistSyncMessage = (
+  status: PlaylistSyncStatus,
+  name: string,
+): [string, AppNotification["kind"]] | undefined => {
+  const service = serviceNames[status.service];
+  switch (status.state) {
+    case "synced":
+      return [
+        status.matched !== null &&
+        status.total !== null &&
+        status.matched < status.total
+          ? `Updated the ${service} playlist ${name}: ${status.matched} of ${status.total} tracks found on ${service}`
+          : `Updated the ${service} playlist ${name}`,
+        "info",
+      ];
+    case "unchanged":
+      return [`The ${service} playlist ${name} is up to date`, "info"];
+    case "busy":
+      return [
+        `The ${service} playlist ${name} is already being updated`,
+        "info",
+      ];
+    case "failed":
+      return [
+        `Updating the ${service} playlist ${name} failed: ${status.error ?? "unknown error"}`,
+        "error",
+      ];
+    default:
+      return undefined;
+  }
 };
 
 // Queues a toast; the Notification component shows and then consumes queued entries.
@@ -244,6 +304,11 @@ const notify = (
     { id: state.notification_next_id, message, kind },
   ],
 });
+
+/** Exported playlists set to update automatically are pushed at most this often. */
+const PLAYLIST_AUTO_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+/** How often the open tab looks for playlists due for an update. */
+const PLAYLIST_AUTO_SYNC_CHECK_MS = 5 * 60 * 1000;
 
 const NO_SEARCH_SOURCES_MESSAGE =
   "Choose at least one source in Search options before searching.";
@@ -684,6 +749,56 @@ const reducer = (state: State, action: Action): State => {
     case "clear-youtube-fixup-result":
       return { ...state, youtube_fixup_tracks: undefined };
 
+    case "playlists":
+      return { ...state, dynamic_playlists: action.playlists };
+
+    case "clear-playlists":
+      return { ...state, dynamic_playlists: undefined, playlist_sync: {} };
+
+    case "save-playlist-reply":
+      return state;
+
+    case "start-playlist-sync": {
+      const key = playlistSyncKey(action.playlist_id, action.service);
+      return {
+        ...state,
+        playlist_sync_manual: [...state.playlist_sync_manual, key],
+      };
+    }
+
+    case "playlist-sync": {
+      const status: PlaylistSyncStatus = {
+        playlist_id: action.playlist_id,
+        service: action.service,
+        state: action.state,
+        current: action.current,
+        total: action.total,
+        matched: action.matched,
+        error: action.error,
+      };
+      const key = playlistSyncKey(status.playlist_id, status.service);
+      const next = {
+        ...state,
+        playlist_sync: { ...state.playlist_sync, [key]: status },
+      };
+      if (
+        status.state === "running" ||
+        !state.playlist_sync_manual.includes(key)
+      )
+        return next;
+      const done = {
+        ...next,
+        playlist_sync_manual: state.playlist_sync_manual.filter(
+          (k) => k !== key,
+        ),
+      };
+      const name =
+        state.dynamic_playlists?.find((p) => p.id === status.playlist_id)
+          ?.name ?? "playlist";
+      const message = playlistSyncMessage(status, name);
+      return message ? notify(done, ...message) : done;
+    }
+
     case "cancel-youtube-fixup":
       return {
         ...state,
@@ -764,6 +879,8 @@ function App() {
     spotify_playlist_running: false,
     youtube_playlist_running: false,
     youtube_fixup_running: false,
+    playlist_sync: {},
+    playlist_sync_manual: [],
   });
 
   const [settings, setSettings] = useLocalStorage<Settings>(
@@ -1025,6 +1142,7 @@ function App() {
     // would close the open collection and run another sync for nothing.
     if (activeRepo.current !== target) {
       activeRepo.current = target;
+      dispatch({ type: "clear-playlists" });
       sendMsg({ type: "set-repo", path: target });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1828,6 +1946,149 @@ function App() {
   const isSearchGridActive =
     (state.search_results !== undefined || state.search_busy) && hasSearchInput;
 
+  // ── Dynamic playlists: saved views of a collection ────────────────────────
+  const [activePlaylistId, setActivePlaylistId] = useLocalStorage<
+    string | undefined
+  >("stereo_active_playlist", undefined);
+  const [savePlaylistOpen, setSavePlaylistOpen] = useState(false);
+  const [playlistsOpen, setPlaylistsOpen] = useState(false);
+  const playlists = useMemo(
+    () =>
+      [...(state.dynamic_playlists ?? [])].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      ),
+    [state.dynamic_playlists],
+  );
+  const activePlaylist = playlists.find((p) => p.id === activePlaylistId);
+  const currentView = useMemo(
+    () => ({
+      collection: settings.collectionPath,
+      filter_model: (gridState?.filter?.filterModel ?? {}) as Record<
+        string,
+        unknown
+      >,
+      sort_model: (gridState?.sort?.sortModel ?? []) as SortModelItem[],
+    }),
+    [settings.collectionPath, gridState],
+  );
+  const isPlaylistModified =
+    !!activePlaylist && !sameView(activePlaylist, currentView);
+  const hasPlaylistSyncErrors = playlists.some(
+    (p) =>
+      !!p.spotify_status?.error ||
+      !!p.youtube_status?.error ||
+      (["spotify", "youtube"] as const).some(
+        (service) =>
+          state.playlist_sync[playlistSyncKey(p.id, service)]?.state ===
+          "failed",
+      ),
+  );
+
+  const applyPlaylist = useCallback(
+    (p: IPlaylist) => {
+      setActivePlaylistId(p.id);
+      // The grid reads its initial state from here if it isn't mounted (e.g. while searching).
+      setGridState((prev) => ({
+        ...prev,
+        filter: { filterModel: p.filter_model },
+        sort: { sortModel: p.sort_model },
+      }));
+      const api = gridRef.current?.api;
+      if (api) {
+        api.setFilterModel(p.filter_model);
+        api.applyColumnState({
+          state: p.sort_model.map((s, i) => ({
+            colId: s.colId,
+            sort: s.sort,
+            sortIndex: i,
+          })),
+          defaultState: { sort: null },
+        });
+      }
+      if (isSearchGridActive) handleExitSearch();
+      if (p.collection !== settings.collectionPath) {
+        setSettings((s) => ({ ...s, collectionPath: p.collection }));
+      }
+    },
+    [
+      setActivePlaylistId,
+      setGridState,
+      isSearchGridActive,
+      handleExitSearch,
+      settings.collectionPath,
+      setSettings,
+    ],
+  );
+
+  const savePlaylist = useCallback(
+    (input: PlaylistInput, onSaved?: (id: string) => void) =>
+      requestReply({ type: "save-playlist", playlist: input }, (msg) => {
+        if (msg.type === "save-playlist-reply" && "playlist_id" in msg) {
+          onSaved?.(msg.playlist_id);
+        }
+      }),
+    [requestReply],
+  );
+
+  const editPlaylist = useCallback(
+    (p: IPlaylist, edit: PlaylistEdit) =>
+      sendMsg({ type: "edit-playlist", playlist_id: p.id, edit }),
+    [sendMsg],
+  );
+
+  const syncPlaylist = useCallback(
+    (p: IPlaylist, service: PlaylistService) => {
+      dispatch({ type: "start-playlist-sync", playlist_id: p.id, service });
+      sendMsg({
+        type: "sync-playlist",
+        playlist_id: p.id,
+        service,
+        force: true,
+      });
+    },
+    [sendMsg],
+  );
+
+  // Keeps exported playlists up to date while the tab is open and visible: each playlist set
+  // to update automatically is offered to the server about every few minutes, which pushes it
+  // at most once an hour and only if its tracks changed.
+  const playlistsRef = useRef(playlists);
+  playlistsRef.current = playlists;
+  const autoSyncPlaylists = useCallback(() => {
+    if (!backendReady || document.visibilityState !== "visible") return;
+    const now = Date.now();
+    for (const p of playlistsRef.current) {
+      for (const service of ["spotify", "youtube"] as const) {
+        if (!p[service]?.auto_sync) continue;
+        const syncedAt = p[`${service}_status`]?.synced_at;
+        if (syncedAt && now - syncedAt < PLAYLIST_AUTO_SYNC_INTERVAL_MS)
+          continue;
+        sendMsg({
+          type: "sync-playlist",
+          playlist_id: p.id,
+          service,
+          force: false,
+        });
+      }
+    }
+  }, [backendReady, sendMsg]);
+  useEffect(() => {
+    const timer = setInterval(autoSyncPlaylists, PLAYLIST_AUTO_SYNC_CHECK_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") autoSyncPlaylists();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [autoSyncPlaylists]);
+  // Also once the repo's playlists arrive.
+  const playlistsLoaded = state.dynamic_playlists !== undefined;
+  useEffect(() => {
+    if (playlistsLoaded) autoSyncPlaylists();
+  }, [playlistsLoaded, autoSyncPlaylists]);
+
   const centerGridAroundCurrentTrack = useCallback(() => {
     if (!state.current_id) {
       return;
@@ -2250,9 +2511,12 @@ function App() {
                   isValid={state.collection_is_valid ?? true}
                   collections={state.collections ?? []}
                   value={settings.collectionPath}
-                  setValue={(path) =>
-                    setSettings({ ...settings, collectionPath: path })
-                  }
+                  setValue={(path) => {
+                    if (path !== settings.collectionPath) {
+                      setActivePlaylistId(undefined);
+                    }
+                    setSettings({ ...settings, collectionPath: path });
+                  }}
                   onCreate={(name) =>
                     sendMsg({ type: "create-collection", name })
                   }
@@ -2267,6 +2531,7 @@ function App() {
                   setRepoPath={(path) => {
                     setSettings({ ...settings, repoPath: path });
                     activeRepo.current = path;
+                    dispatch({ type: "clear-playlists" });
                     sendMsg({ type: "set-repo", path });
                   }}
                   onClone={(url) => {
@@ -2426,6 +2691,29 @@ function App() {
                       </>
                     ) : (
                       <>
+                        {state.collection && (
+                          <PlaylistMenu
+                            playlists={playlists}
+                            active={activePlaylist}
+                            isModified={isPlaylistModified}
+                            hasSyncErrors={hasPlaylistSyncErrors}
+                            canSave={!!state.collection}
+                            onSelect={applyPlaylist}
+                            onSaveAs={() => setSavePlaylistOpen(true)}
+                            onSaveChanges={() => {
+                              if (activePlaylist) {
+                                editPlaylist(activePlaylist, {
+                                  kind: "set-view",
+                                  ...currentView,
+                                });
+                              }
+                            }}
+                            onRevert={() => {
+                              if (activePlaylist) applyPlaylist(activePlaylist);
+                            }}
+                            onManage={() => setPlaylistsOpen(true)}
+                          />
+                        )}
                         <Text type="supporting">
                           {visibleTrackCount}
                           {filteredRowCount !== undefined &&
@@ -2769,6 +3057,47 @@ function App() {
             requestReply={requestReply}
             onCancel={() => dispatch({ type: "clear-youtube-fixup-result" })}
             onCommit={commitYouTubeStaging}
+          />
+          <SavePlaylistDialog
+            isOpen={savePlaylistOpen}
+            onClose={() => setSavePlaylistOpen(false)}
+            collectionName={collectionLabel(settings.collectionPath)}
+            existingNames={playlists.map((p) => p.name)}
+            onSave={(name) =>
+              savePlaylist(
+                {
+                  name,
+                  ...currentView,
+                  limit: null,
+                  spotify: null,
+                  youtube: null,
+                },
+                setActivePlaylistId,
+              )
+            }
+          />
+          <PlaylistsDialog
+            isOpen={playlistsOpen}
+            onClose={() => setPlaylistsOpen(false)}
+            playlists={playlists}
+            initialId={activePlaylist?.id}
+            collections={state.collections ?? []}
+            syncStatus={state.playlist_sync}
+            onEdit={editPlaylist}
+            onDelete={(p) => {
+              sendMsg({ type: "delete-playlist", playlist_id: p.id });
+              if (p.id === activePlaylistId) setActivePlaylistId(undefined);
+            }}
+            onSync={syncPlaylist}
+            onUnlink={(p, service) =>
+              sendMsg({ type: "unlink-playlist", playlist_id: p.id, service })
+            }
+            onOpen={applyPlaylist}
+            onReplaceWithView={
+              state.collection
+                ? (p) => editPlaylist(p, { kind: "set-view", ...currentView })
+                : undefined
+            }
           />
           <SpotifyPlaylistDialog
             open={spotifyPlaylistOpen}

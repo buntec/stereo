@@ -6,6 +6,8 @@ pub mod db;
 pub mod git;
 pub mod message;
 pub mod models;
+pub mod playlist_sync;
+pub mod playlists;
 pub mod scraper;
 pub mod server;
 pub mod settings;

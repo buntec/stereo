@@ -226,7 +226,19 @@ export type ClientMsg =
       name: string;
       yt_ids: string[];
     }
-  | { type: "cancel-youtube-playlist"; id: number };
+  | { type: "cancel-youtube-playlist"; id: number }
+  | { type: "list-playlists" }
+  | { type: "save-playlist"; id?: number; playlist: PlaylistInput }
+  | { type: "edit-playlist"; playlist_id: string; edit: PlaylistEdit }
+  | { type: "delete-playlist"; playlist_id: string }
+  | { type: "unlink-playlist"; playlist_id: string; service: PlaylistService }
+  | {
+      type: "sync-playlist";
+      playlist_id: string;
+      service: PlaylistService;
+      /** Push even if the last sync was less than an hour ago or nothing changed. */
+      force: boolean;
+    };
 
 export type ServerMsg =
   | {
@@ -417,7 +429,103 @@ export type ServerMsg =
       id: number;
       current: number;
       total: number;
+    }
+  | { type: "playlists"; playlists: IPlaylist[] }
+  | { type: "save-playlist-reply"; id: number; playlist_id: string }
+  | ({ type: "playlist-sync" } & PlaylistSyncStatus);
+
+// ── Dynamic playlists ────────────────────────────────────────────────────────
+
+export type PlaylistService = "spotify" | "youtube";
+
+/** ag-Grid's filter model, keyed by column id. */
+export type FilterModel = Record<string, unknown>;
+
+export type SortModelItem = { colId: string; sort: "asc" | "desc" };
+
+/** Where a playlist is exported to on one service. */
+export type PlaylistTarget = {
+  /** Keep the remote playlist up to date (at most hourly) while Stereo is open. */
+  auto_sync: boolean;
+  /** The remote playlist, once the first sync created it. Ignored when saving. */
+  playlist_id?: string | null;
+};
+
+/** This machine's sync state of a playlist on one service. */
+export type PlaylistTargetStatus = {
+  url: string | null;
+  synced_at: number | null;
+  /** Why the last sync failed, if it did. */
+  error: string | null;
+};
+
+/** A saved view: a collection with column filters and sorting. */
+export interface IPlaylist {
+  id: string;
+  name: string;
+  /** The collection's full path. */
+  collection: string;
+  filter_model: FilterModel;
+  sort_model: SortModelItem[];
+  /** Only the first `limit` tracks, if set. */
+  limit: number | null;
+  spotify: PlaylistTarget | null;
+  youtube: PlaylistTarget | null;
+  updated_at: number;
+  spotify_status: PlaylistTargetStatus | null;
+  youtube_status: PlaylistTargetStatus | null;
+}
+
+/** A new playlist, for `save-playlist`. */
+export type PlaylistInput = Pick<
+  IPlaylist,
+  | "name"
+  | "collection"
+  | "filter_model"
+  | "sort_model"
+  | "limit"
+  | "spotify"
+  | "youtube"
+>;
+
+/**
+ * One change to an existing playlist, for `edit-playlist`. Each changes only its own fields of
+ * the server's copy, so that quick edits in a row (before the server's reply) can't undo each
+ * other.
+ */
+export type PlaylistEdit =
+  | { kind: "rename"; name: string }
+  | { kind: "set-limit"; limit: number | null }
+  | ({ kind: "set-view" } & Pick<
+      IPlaylist,
+      "collection" | "filter_model" | "sort_model"
+    >)
+  | {
+      kind: "set-export";
+      service: PlaylistService;
+      target: PlaylistTarget | null;
     };
+
+export type PlaylistSyncState =
+  | "running"
+  | "synced"
+  | "unchanged"
+  | "throttled"
+  | "busy"
+  | "failed";
+
+export type PlaylistSyncStatus = {
+  playlist_id: string;
+  service: PlaylistService;
+  state: PlaylistSyncState;
+  current: number | null;
+  total: number | null;
+  matched: number | null;
+  error: string | null;
+};
+
+export const playlistSyncKey = (playlistId: string, service: PlaylistService) =>
+  `${playlistId}/${service}`;
 
 export type Action =
   | ServerMsg
@@ -456,7 +564,13 @@ export type Action =
   | { type: "cancel-youtube-playlist"; reason: "cancelled" | "timeout" }
   | { type: "start-youtube-fixup"; id: number; name: string; total: number }
   | { type: "clear-youtube-fixup-result" }
-  | { type: "cancel-youtube-fixup" };
+  | { type: "cancel-youtube-fixup" }
+  | { type: "clear-playlists" }
+  | {
+      type: "start-playlist-sync";
+      playlist_id: string;
+      service: PlaylistService;
+    };
 
 export type RequestReply = (
   request: ClientMsg,

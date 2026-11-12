@@ -18,6 +18,7 @@ use crate::{
     db,
     message::{GitConflictStrategy, GitSyncState},
     models::Track,
+    playlists::PLAYLISTS_FILE,
 };
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -236,7 +237,11 @@ pub async fn init_if_needed(home: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     run_git(home, &["init"], GIT_TIMEOUT).await?;
-    tokio::fs::write(home.join(".gitignore"), "*\n!.gitignore\n!*.db\n").await?;
+    tokio::fs::write(
+        home.join(".gitignore"),
+        format!("*\n!.gitignore\n!*.db\n!{PLAYLISTS_FILE}\n"),
+    )
+    .await?;
     tracing::info!("Initialized git repo in {}", home.display());
     Ok(())
 }
@@ -337,6 +342,9 @@ async fn staged_paths(repo: &Path) -> Result<BTreeSet<String>, GitFailure> {
         .collect())
 }
 
+/// The collections and the playlists file with changes to commit. The playlists file is always
+/// included when it exists: repos created before it existed ignore it, so `git status` doesn't
+/// report it until it is tracked, and staging it unchanged commits nothing.
 async fn discover_dirty_databases(repo: &Path) -> Result<BTreeSet<String>, GitFailure> {
     let out = run_git(
         repo,
@@ -344,13 +352,17 @@ async fn discover_dirty_databases(repo: &Path) -> Result<BTreeSet<String>, GitFa
         GIT_TIMEOUT,
     )
     .await?;
-    Ok(out
+    let mut dirty: BTreeSet<String> = out
         .stdout
         .split(|byte| *byte == 0)
         .filter_map(|entry| entry.get(3..))
-        .filter(|path| path.ends_with(b".db"))
+        .filter(|path| path.ends_with(b".db") || *path == PLAYLISTS_FILE.as_bytes())
         .map(|path| String::from_utf8_lossy(path).to_string())
-        .collect())
+        .collect();
+    if repo.join(PLAYLISTS_FILE).exists() {
+        dirty.insert(PLAYLISTS_FILE.to_string());
+    }
+    Ok(dirty)
 }
 
 async fn commit_dirty(repo: &Path, dirty: &mut BTreeSet<String>) -> anyhow::Result<()> {
@@ -366,7 +378,10 @@ async fn commit_dirty(repo: &Path, dirty: &mut BTreeSet<String>) -> anyhow::Resu
     }
     let names: Vec<String> = dirty.iter().cloned().collect();
     for name in &names {
-        if repo.join(name).exists() {
+        if name == PLAYLISTS_FILE && repo.join(name).exists() {
+            // Forced: repos created before playlists existed ignore everything but databases.
+            run_git(repo, &["add", "-f", "--", name], GIT_TIMEOUT).await?;
+        } else if repo.join(name).exists() {
             stage_consistent_database(repo, name).await?;
         } else {
             // A deleted collection. It may never have been committed (created and deleted
@@ -379,17 +394,26 @@ async fn commit_dirty(repo: &Path, dirty: &mut BTreeSet<String>) -> anyhow::Resu
             .await?;
         }
     }
-    if staged_paths(repo).await?.is_empty() {
+    let staged = staged_paths(repo).await?;
+    if staged.is_empty() {
         dirty.clear();
         write_dirty(repo, dirty).await?;
         return Ok(());
     }
+    // The commit message describes the collections; the playlists file only counts on its own.
+    let names: Vec<String> = if staged.len() == 1 && staged.contains(PLAYLISTS_FILE) {
+        vec![PLAYLISTS_FILE.to_string()]
+    } else {
+        names.into_iter().filter(|n| n != PLAYLISTS_FILE).collect()
+    };
     let missing: Vec<&String> = names.iter().filter(|n| !repo.join(n).exists()).collect();
     let message = if names.len() == 2 && missing.len() == 1 {
         let added = names.iter().find(|n| *n != missing[0]).expect("two names");
         format!("rename {} to {added}", missing[0])
     } else if names.len() == 1 && !missing.is_empty() {
         format!("delete {}", names[0])
+    } else if names.len() == 1 && names[0] == PLAYLISTS_FILE {
+        "update playlists".to_string()
     } else if names.len() == 1 {
         format!("update {}", names[0])
     } else {
@@ -701,6 +725,24 @@ async fn find_conflicts(
     Ok(conflicts)
 }
 
+/// Both sides' playlists merged per playlist (`playlists::merge`); a side that deleted the file
+/// counts as having no playlists.
+async fn merge_playlists_file(
+    repo: &Path,
+    base_rev: &str,
+    remote_rev: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let empty = b"{}".to_vec();
+    let local = show_blob(repo, "HEAD", PLAYLISTS_FILE).await?;
+    let remote = show_blob(repo, remote_rev, PLAYLISTS_FILE).await?;
+    let base = show_blob(repo, base_rev, PLAYLISTS_FILE).await?;
+    crate::playlists::merge_files(
+        base.as_deref(),
+        local.as_deref().unwrap_or(&empty),
+        remote.as_deref().unwrap_or(&empty),
+    )
+}
+
 async fn build_merged_database(
     repo: &Path,
     base_rev: &str,
@@ -889,6 +931,26 @@ async fn merge_diverged(
     if resolution.is_none() {
         for conflict in &conflicts {
             let path = &conflict.path;
+            if conflict.paths().iter().all(|p| *p == PLAYLISTS_FILE) {
+                match merge_playlists_file(repo, &base, remote_ref).await {
+                    Ok(bytes) => {
+                        let unique = temp.path().join(PLAYLISTS_FILE);
+                        tokio::fs::write(&unique, bytes).await?;
+                        merged_files.insert(path.clone(), unique);
+                        continue;
+                    }
+                    Err(e) => {
+                        return Ok(SyncReport::new(
+                            GitSyncState::ConflictRequiresAttention,
+                            format!(
+                                "Could not merge playlists: {e:#}; recovery copies are in {}",
+                                recovery.unwrap().display()
+                            ),
+                            false,
+                        ));
+                    }
+                }
+            }
             if !conflict.paths().iter().all(|p| p.ends_with(".db")) {
                 return Ok(SyncReport::new(
                     GitSyncState::ConflictRequiresAttention,
@@ -1503,6 +1565,84 @@ mod tests {
         let track = db::get_track(&pool, "one").await.unwrap().unwrap();
         pool.close().await;
         track
+    }
+
+    fn playlist(id: &str) -> crate::playlists::Playlist {
+        crate::playlists::Playlist {
+            id: id.into(),
+            name: format!("Playlist {id}"),
+            collection: "music.db".into(),
+            filter_model: Default::default(),
+            sort_model: vec![],
+            limit: None,
+            spotify: None,
+            youtube: None,
+            updated_at: 1,
+        }
+    }
+
+    async fn playlist_ids(repo: &Path) -> Vec<String> {
+        crate::playlists::load(repo)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|p| p.id)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn sync_merges_playlists_added_on_both_sides() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_remote, first, second) = two_clones(temp.path()).await;
+        let path = crate::playlists::playlists_path(&first);
+        crate::playlists::save(&first, &[playlist("a")])
+            .await
+            .unwrap();
+        let report = sync_repository(first.clone(), Some(path.clone()), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+        let report = sync_repository(second.clone(), None, true, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+        assert_eq!(playlist_ids(&second).await, ["a"]);
+
+        crate::playlists::save(&first, &[playlist("a"), playlist("b")])
+            .await
+            .unwrap();
+        let report = sync_repository(first.clone(), Some(path), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+        crate::playlists::save(&second, &[playlist("a"), playlist("c")])
+            .await
+            .unwrap();
+        let report = sync_repository(second.clone(), None, true, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+        assert_eq!(playlist_ids(&second).await, ["a", "c", "b"]);
+
+        let report = sync_repository(first.clone(), None, true, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+        assert_eq!(playlist_ids(&first).await, ["a", "c", "b"]);
+    }
+
+    #[tokio::test]
+    async fn sync_commits_playlists_in_repos_that_ignore_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        init_if_needed(&repo).await.unwrap();
+        // The .gitignore of repos created before playlists existed.
+        std::fs::write(repo.join(".gitignore"), "*\n!.gitignore\n!*.db\n").unwrap();
+        create_collection(&repo.join("music.db"), &track("one")).await;
+        crate::playlists::save(&repo, &[playlist("a")])
+            .await
+            .unwrap();
+        // Not told about the playlists file, as after a restart with uncommitted changes.
+        let report = sync_repository(repo.clone(), None, false, None).await;
+        assert_eq!(report.state, GitSyncState::LocalOnly, "{}", report.message);
+        let tracked = std::process::Command::new("git")
+            .args(["ls-files"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        let tracked = String::from_utf8_lossy(&tracked.stdout);
+        assert!(tracked.contains("playlists.json"), "{tracked}");
+        assert!(tracked.contains("music.db"), "{tracked}");
     }
 
     #[tokio::test]

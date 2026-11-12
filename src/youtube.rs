@@ -377,6 +377,66 @@ impl<'a> Api<'a> {
         Ok(())
     }
 
+    /// Removes every video from playlist `playlist_id`, keeping the playlist (and its URL).
+    pub async fn clear_playlist(&self, playlist_id: &str) -> anyhow::Result<()> {
+        let set_video_ids = self.playlist_set_video_ids(playlist_id).await?;
+        for batch in set_video_ids.chunks(BATCH_SIZE) {
+            let actions: Vec<Value> = batch
+                .iter()
+                .map(|id| json!({ "action": "ACTION_REMOVE_VIDEO", "setVideoId": id }))
+                .collect();
+            let data = self
+                .post(
+                    "browse/edit_playlist",
+                    json!({ "playlistId": playlist_id, "actions": actions }),
+                )
+                .await?;
+            anyhow::ensure!(
+                data["status"] == json!("STATUS_SUCCEEDED"),
+                "YouTube refused to remove videos ({})",
+                data["status"]
+            );
+        }
+        Ok(())
+    }
+
+    /// The `setVideoId`s of a playlist's entries (which identify an entry, unlike its video id,
+    /// since a video may be in it twice), read through the signed-in browse endpoint so that
+    /// private playlists work.
+    async fn playlist_set_video_ids(&self, playlist_id: &str) -> anyhow::Result<Vec<String>> {
+        let mut page = self
+            .post("browse", json!({ "browseId": format!("VL{playlist_id}") }))
+            .await?;
+        anyhow::ensure!(
+            !find_error_alert(&page),
+            "YouTube playlist {playlist_id} not found; unlink it to create a new one"
+        );
+        let mut ids: Vec<String> = vec![];
+        let mut seen = std::collections::HashSet::new();
+        // Bounded, so that a changed response format can't page forever (5000 videos at 100 a
+        // page is 50 pages).
+        for _ in 0..60 {
+            let mut found = vec![];
+            find_all(&page, "setVideoId", &mut found);
+            ids.extend(
+                found
+                    .into_iter()
+                    .filter_map(Value::as_str)
+                    .filter(|id| seen.insert(id.to_string()))
+                    .map(str::to_string),
+            );
+            let mut tokens = vec![];
+            find_all(&page, "continuationCommand", &mut tokens);
+            let Some(token) = tokens.iter().find_map(|c| c["token"].as_str()) else {
+                break;
+            };
+            page = self
+                .post("browse", json!({ "continuation": token }))
+                .await?;
+        }
+        Ok(ids)
+    }
+
     async fn post(&self, endpoint: &str, mut body: Value) -> anyhow::Result<Value> {
         body["context"] = self.config.context.clone();
         let mut req = self
@@ -480,6 +540,13 @@ fn find_all<'v>(value: &'v Value, key: &str, found: &mut Vec<&'v Value>) {
         Value::Array(values) => values.iter().for_each(|v| find_all(v, key, found)),
         _ => {}
     }
+}
+
+/// Whether a browse response carries an error alert (e.g. "The playlist does not exist.").
+fn find_error_alert(data: &Value) -> bool {
+    let mut alerts = vec![];
+    find_all(data, "alertRenderer", &mut alerts);
+    alerts.iter().any(|a| a["type"] == json!("ERROR"))
 }
 
 /// The text of one of YouTube's text objects (`simpleText`, or `runs` of text).
