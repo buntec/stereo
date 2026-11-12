@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{Collection, NewReleasesCandidate, Repo, ScoredName, Track, TrackSource};
+use crate::playlists::{ExportTarget, Playlist, Service};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -264,6 +265,85 @@ pub enum MsgServer {
         matched: i64,
         total: i64,
     },
+    /// The current repo's dynamic playlists, sent once the repo is synced and whenever they
+    /// change.
+    Playlists {
+        playlists: Vec<PlaylistView>,
+    },
+    /// Reply to `SavePlaylist`: the id of the saved playlist.
+    SavePlaylistReply {
+        id: i64,
+        playlist_id: String,
+    },
+    /// Progress and outcome of syncing a playlist to a service (`SyncPlaylist`).
+    PlaylistSync(PlaylistSync),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaylistSync {
+    pub playlist_id: String,
+    pub service: Service,
+    pub state: PlaylistSyncState,
+    /// Tracks matched or uploaded so far, while running.
+    pub current: Option<i64>,
+    pub total: Option<i64>,
+    /// For `Synced`: how many of the view's tracks are in the remote playlist.
+    pub matched: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlaylistSyncState {
+    Running,
+    Synced,
+    /// Nothing to push: the view's tracks are the ones pushed last time.
+    Unchanged,
+    /// An automatic sync skipped because the last one was less than an hour ago.
+    Throttled,
+    /// Another sync of the same playlist to the same service is still running.
+    Busy,
+    Failed,
+}
+
+/// A playlist as the client sees it: its collection as the collection's full path, plus this
+/// machine's sync state for each service it is exported to.
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaylistView {
+    #[serde(flatten)]
+    pub playlist: Playlist,
+    pub spotify_status: Option<PlaylistTargetStatus>,
+    pub youtube_status: Option<PlaylistTargetStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlaylistTargetStatus {
+    pub url: Option<String>,
+    pub synced_at: Option<i64>,
+    /// Why the last sync from this machine failed, if it did.
+    pub error: Option<String>,
+}
+
+/// A playlist to save (`SavePlaylist`). The remote playlist ids of its targets are ignored:
+/// syncs set those, and `UnlinkPlaylist` clears them.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlaylistInput {
+    /// `None` for a new playlist.
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    /// The collection's full path, as in `SetCollection`.
+    pub collection: String,
+    #[serde(default)]
+    pub filter_model: FilterModelMap,
+    #[serde(default)]
+    pub sort_model: Vec<SortModelItem>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub spotify: Option<ExportTarget>,
+    #[serde(default)]
+    pub youtube: Option<ExportTarget>,
 }
 
 /// A browser profile logged in to YouTube.
@@ -300,7 +380,7 @@ pub struct SortModelItem {
     #[serde(rename = "colId")]
     pub col_id: String,
     pub sort: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub sort_type: Option<String>,
 }
 
@@ -310,9 +390,13 @@ pub struct FilterModelItem {
     pub filter_type: String,
     #[serde(rename = "type")]
     pub filter_op: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filter_to: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub date_from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub date_to: Option<String>,
 }
 
@@ -585,6 +669,28 @@ pub enum MsgClient {
     CancelYouTubePlaylist {
         id: i64,
     },
+    ListPlaylists,
+    /// Creates or updates a dynamic playlist of the current repo.
+    SavePlaylist {
+        id: i64,
+        playlist: PlaylistInput,
+    },
+    DeletePlaylist {
+        playlist_id: String,
+    },
+    /// Forgets the remote playlist a playlist is exported to, so the next sync creates a new one.
+    UnlinkPlaylist {
+        playlist_id: String,
+        service: Service,
+    },
+    /// Pushes a playlist's tracks to a service. Unless `force`d, at most once an hour, and only
+    /// if they changed since the last push.
+    SyncPlaylist {
+        playlist_id: String,
+        service: Service,
+        #[serde(default)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -623,7 +729,8 @@ impl MsgClient {
             | Self::FixupTrack { id, .. }
             | Self::GetYouTubeSession { id }
             | Self::ConnectYouTubeSession { id, .. }
-            | Self::DisconnectYouTubeSession { id } => Some(*id),
+            | Self::DisconnectYouTubeSession { id }
+            | Self::SavePlaylist { id, .. } => Some(*id),
             _ => None,
         }
     }
