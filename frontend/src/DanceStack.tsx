@@ -11,8 +11,8 @@ type DanceStackProps = {
   /** 0–1: the volume, from the logo alone to a full stack. */
   level: number;
   /**
-   * The stack's mirror image, for the header's other end: a stereo pair. It
-   * takes no space in the layout (App.css places it) and is only decoration.
+   * The stack's mirror image, for the header's other end: a stereo pair. It is
+   * only decoration.
    */
   isMirrored?: boolean;
 };
@@ -29,13 +29,16 @@ function DanceStack({ level, isMirrored = false }: DanceStackProps) {
   const points = drawing.cabinets.flatMap((c) =>
     c.shapes.flatMap((s) => s.points),
   );
-  // The logo's viewBox is 0 0 64 64 with its top at 2; the stack keeps that
-  // margin above and left, and grows to the right and down.
-  const left = Math.min(0, ...points.map(([x]) => x));
-  const right = Math.max(64, ...points.map(([x]) => x));
-  const top = drawing.top - 2;
-  const bottom = Math.max(64, ...points.map(([, y]) => y + 2));
-  const scale = (LOGO_SIZE / 64) * drawing.scale;
+  // The logo's viewBox is 0 0 64 64 and the stack is drawn in the same units,
+  // at the same scale, so the logo stays put and the rest overflows its box
+  // (the cabinets beside it rise a little, being farther from the camera).
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  const left = Math.min(0, ...xs) - 2;
+  const right = Math.max(64, ...xs) + 2;
+  const top = Math.min(0, ...ys) - 2;
+  const bottom = Math.max(64, ...ys) + 2;
+  const scale = LOGO_SIZE / 64;
 
   return (
     <svg
@@ -50,6 +53,7 @@ function DanceStack({ level, isMirrored = false }: DanceStackProps) {
     >
       <svg
         x={left * scale}
+        y={top * scale}
         viewBox={`${left} ${top} ${right - left} ${bottom - top}`}
         width={(right - left) * scale}
         height={(bottom - top) * scale}

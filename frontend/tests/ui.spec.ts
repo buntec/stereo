@@ -809,7 +809,7 @@ test("shows the playing track's thumbnail, blurred, behind the app", async ({
   await expect(background).toHaveCount(0);
 });
 
-test("the logo grows into a dance stack with the volume, without moving the header", async ({
+test("the logo builds up into a dance stack with the volume, without moving the header", async ({
   page,
 }) => {
   await openApp(page);
@@ -823,7 +823,7 @@ test("the logo grows into a dance stack with the volume, without moving the head
   const collection = page.locator(".collection-controls > :nth-child(2)");
   const collectionLeft = async () => (await collection.boundingBox())!.x;
 
-  // Full volume by default: three bass bins, the logo's cabinet and a top box.
+  // Full volume by default: the logo's cabinet, two more beside it, two bass bins under them.
   await expect(cabinets).toHaveCount(5);
   await expect(mirroredCabinets).toHaveCount(5);
   await expect(mirrored).toHaveCSS("scale", "-1 1");

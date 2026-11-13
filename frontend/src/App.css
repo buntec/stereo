@@ -22,16 +22,8 @@
   overflow: visible;
   pointer-events: none;
 }
-/* Its mirror image at the other end of the header, level with it (both groups are
-   centered on the header's first row), taking no space. */
-.nav-controls {
-  position: relative;
-}
+/* Its mirror image at the other end of the header, growing toward the middle. */
 .dance-stack-mirrored {
-  position: absolute;
-  inset-inline-end: 0;
-  inset-block-start: 50%;
-  translate: 0 -50%;
   scale: -1 1;
 }
 /* The stacks run under the controls at the header's and toolbar's ends: the

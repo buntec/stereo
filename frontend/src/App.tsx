@@ -2738,9 +2738,12 @@ function App() {
                   errorMessage={state.search_error_message}
                 />
               </StackItem>
-              <HStack vAlign="center" hAlign="end" className="nav-controls">
-                {/* The other speaker of the stereo pair, behind the controls. */}
-                <DanceStack level={stackLevel} isMirrored />
+              <HStack
+                vAlign="center"
+                hAlign="end"
+                gap={2}
+                className="nav-controls"
+              >
                 <NavBarControls
                   isCompact={narrow}
                   version={state.backend_version}
@@ -2763,6 +2766,8 @@ function App() {
                   spotifyBackfillTotal={state.spotify_backfill_total}
                   onSpotifyBackfill={backfillSpotifyIds}
                 />
+                {/* The other speaker of the stereo pair, at the header's other end. */}
+                <DanceStack level={stackLevel} isMirrored />
               </HStack>
             </HStack>
           }

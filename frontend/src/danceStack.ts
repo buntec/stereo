@@ -1,8 +1,8 @@
 /**
- * The header's speaker, as a dance stack that grows with the volume: the logo's
- * cabinet alone when quiet, then bass bins appearing under it and a top box on
- * it. Pure geometry: `danceStack(level)` returns the SVG polygons, drawn by
- * `DanceStack.tsx`.
+ * The header's speaker, as a dance stack that builds up with the volume: the
+ * logo's cabinet alone when quiet, then two more beside it and two bass bins
+ * under the three. Pure geometry: `danceStack(level)` returns the SVG
+ * polygons, drawn by `DanceStack.tsx`.
  *
  * Every cabinet is a box in 3D, seen through the camera the logo was drawn with
  * (recovered from its corners: a level camera, so vertical edges stay vertical,
@@ -56,7 +56,6 @@ const project = (x: number, y: number, w: number): Point => {
 
 type Polygon = [number, number][];
 type Decoration = { fill: string; polygons: Polygon[] };
-type Rect = [u0: number, v0: number, u1: number, v1: number];
 
 const COLORS = {
   front: "#2f2b57",
@@ -68,18 +67,6 @@ const COLORS = {
 
 /** The highlighted front edges' color. */
 export const EDGE_COLOR = COLORS.edge;
-
-/** Moves decorations drawn in the rect `from` of a face to the rect `to`. */
-const remap = (decorations: Decoration[], from: Rect, to: Rect): Decoration[] =>
-  decorations.map(({ fill, polygons }) => ({
-    fill,
-    polygons: polygons.map((polygon) =>
-      polygon.map(([u, v]) => [
-        to[0] + ((u - from[0]) / (from[2] - from[0])) * (to[2] - to[0]),
-        to[1] + ((v - from[1]) / (from[3] - from[1])) * (to[3] - to[1]),
-      ]),
-    ),
-  }));
 
 // The logo's front, in face coordinates.
 const PANEL: Decoration = {
@@ -95,7 +82,6 @@ const PANEL: Decoration = {
     ],
   ],
 };
-const PANEL_RECT: Rect = [0.071, 0.052, 0.928, 0.569];
 
 /** The small high-frequency horn at the top of the panel. */
 const HF_HORN: Decoration[] = [
@@ -226,7 +212,6 @@ const MID_HORN: Decoration[] = [
     ],
   },
 ];
-const MID_HORN_RECT: Rect = [0.119, 0.233, 0.881, 0.543];
 
 /** The bass horn's mouth at the bottom, with its bevels and braces. */
 const BASS_MOUTH: Decoration[] = [
@@ -292,7 +277,6 @@ const BASS_MOUTH: Decoration[] = [
     ],
   },
 ];
-const BASS_MOUTH_RECT: Rect = [0.071, 0.621, 0.928, 0.948];
 
 /** A handle recessed into a side, u from the back (0) to the front (1). */
 const handle = (v0: number, v1: number): Decoration => ({
@@ -327,67 +311,103 @@ const MAIN: Cabinet = {
   side: [handle(0.32, 0.38), handle(0.78, 0.84)],
 };
 
-/** A wide bass bin with two horn mouths, for under the cabinet. */
-const BASS_BIN: Cabinet = {
-  width: 1.3,
-  backWidth: 1.3,
-  height: 0.62,
-  depth: 0.9,
-  front: [
-    ...remap(BASS_MOUTH, BASS_MOUTH_RECT, [0.05, 0.12, 0.49, 0.88]),
-    ...remap(BASS_MOUTH, BASS_MOUTH_RECT, [0.51, 0.12, 0.95, 0.88]),
-  ],
-  side: [handle(0.42, 0.56)],
-};
-
-/** A top box with two mid horns side by side, for on top of the cabinet. */
-const TOP_BOX: Cabinet = {
-  width: 0.92,
-  backWidth: 0.92,
-  height: 0.42,
-  depth: 0.7,
-  front: [
-    ...remap([PANEL], PANEL_RECT, [0.04, 0.1, 0.96, 0.9]),
-    ...remap(MID_HORN, MID_HORN_RECT, [0.07, 0.18, 0.49, 0.82]),
-    ...remap(MID_HORN, MID_HORN_RECT, [0.51, 0.18, 0.93, 0.82]),
-  ],
-  side: [handle(0.4, 0.58)],
-};
+/** How many of the logo's cabinets stand side by side in the full stack. */
+const TOPS = 3;
 
 /**
- * Draws a cabinet whose top is `top` (down from the main cabinet's top), as
- * tall as `height` (its own unless it's still rising).
+ * The bass bin the cabinets stand on, as wide as their row: one big horn,
+ * its walls flaring out to a mouth over nearly all of its front.
  */
+const BASS_BIN: Cabinet = {
+  width: TOPS,
+  backWidth: TOPS,
+  height: 0.9,
+  // Deep enough for the turned cabinets at the row's far end to stand on.
+  depth: 1.25,
+  front: [
+    {
+      fill: "#110f21",
+      polygons: [
+        [
+          [0.03, 0.07],
+          [0.97, 0.07],
+          [0.97, 0.93],
+          [0.03, 0.93],
+        ],
+      ],
+    },
+    {
+      fill: "#3d3873",
+      polygons: [
+        [
+          [0.03, 0.07],
+          [0.97, 0.07],
+          [0.78, 0.45],
+          [0.22, 0.45],
+        ],
+      ],
+    },
+    {
+      fill: "#23203f",
+      polygons: [
+        [
+          [0.03, 0.07],
+          [0.22, 0.45],
+          [0.22, 0.93],
+          [0.03, 0.93],
+        ],
+        [
+          [0.97, 0.07],
+          [0.78, 0.45],
+          [0.78, 0.93],
+          [0.97, 0.93],
+        ],
+      ],
+    },
+  ],
+  side: [handle(0.4, 0.54)],
+};
+
+/** Where a cabinet stands: the middle of its front, and its turn from the logo's. */
+type Pose = {
+  x: number;
+  w: number;
+  /** In radians; positive turns the front's right end back. */
+  angle: number;
+};
+
+/** Draws a cabinet standing at `pose`, its top `top` down from the logo's top. */
 const drawCabinet = (
   cabinet: Cabinet,
+  pose: Pose,
   top: number,
   opacity: number,
-  height = cabinet.height,
 ): CabinetDrawing => {
-  const { width, backWidth, depth } = cabinet;
+  const { width, backWidth, height, depth } = cabinet;
   const shapes: Shape[] = [];
   const bottom = top + height;
   const left = -width / 2;
   const right = width / 2;
   const backLeft = -backWidth / 2;
   const backRight = backWidth / 2;
+  const cos = Math.cos(pose.angle);
+  const sin = Math.sin(pose.angle);
+  // Projects a point given along the cabinet's own front (x) and back (w).
+  const at = (x: number, y: number, w: number) =>
+    project(pose.x + x * cos - w * sin, y, pose.w + x * sin + w * cos);
   const onFront = ([u, v]: [number, number]) =>
-    project(left + u * width, top + v * height, 0);
+    at(left + u * width, top + v * height, 0);
   // u runs from the back-left edge to the front-left edge.
   const onSide = ([u, v]: [number, number]) =>
-    project(
-      backLeft + u * (left - backLeft),
-      top + v * height,
-      depth * (1 - u),
-    );
+    at(backLeft + u * (left - backLeft), top + v * height, depth * (1 - u));
   const add = (points: Point[], fill: string) => shapes.push({ points, fill });
 
   add(
     [
-      project(backLeft, top, depth),
-      project(left, top, 0),
-      project(left, bottom, 0),
-      project(backLeft, bottom, depth),
+      at(backLeft, top, depth),
+      at(left, top, 0),
+      at(left, bottom, 0),
+      at(backLeft, bottom, depth),
     ],
     COLORS.side,
   );
@@ -395,19 +415,19 @@ const drawCabinet = (
     for (const polygon of polygons) add(polygon.map(onSide), fill);
   add(
     [
-      project(left, top, 0),
-      project(right, top, 0),
-      project(backRight, top, depth),
-      project(backLeft, top, depth),
+      at(left, top, 0),
+      at(right, top, 0),
+      at(backRight, top, depth),
+      at(backLeft, top, depth),
     ],
     COLORS.top,
   );
   add(
     [
-      project(left, top, 0),
-      project(right, top, 0),
-      project(right, bottom, 0),
-      project(left, bottom, 0),
+      at(left, top, 0),
+      at(right, top, 0),
+      at(right, bottom, 0),
+      at(left, bottom, 0),
     ],
     COLORS.front,
   );
@@ -415,11 +435,7 @@ const drawCabinet = (
     for (const polygon of polygons) add(polygon.map(onFront), fill);
   return {
     shapes,
-    edges: [
-      project(left, bottom, 0),
-      project(left, top, 0),
-      project(right, top, 0),
-    ],
+    edges: [at(left, bottom, 0), at(left, top, 0), at(right, top, 0)],
     opacity,
   };
 };
@@ -430,53 +446,59 @@ const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 const stage = (level: number, from: number, to: number) =>
   clamp01((level - from) / (to - from));
 
+/** How much each cabinet in the row turns back from the one before it. */
+const SPLAY = (8 * Math.PI) / 180;
+
+/**
+ * The row's cabinets on a slight arc, as stacks are splayed: from the logo's,
+ * each turns back a little more, its front's left corner on the right corner
+ * of the one before.
+ */
+const arc = (): Pose[] => {
+  const poses: Pose[] = [{ x: 0, w: 0, angle: 0 }];
+  for (let i = 1; i < TOPS; i++) {
+    const prev = poses[i - 1];
+    const angle = i * SPLAY;
+    const half = MAIN.width / 2;
+    poses.push({
+      x: prev.x + half * Math.cos(prev.angle) + half * Math.cos(angle),
+      w: prev.w + half * Math.sin(prev.angle) + half * Math.sin(angle),
+      angle,
+    });
+  }
+  return poses;
+};
+
 export type DanceStackDrawing = {
-  /** Bottom up: from above, each cabinet hides the top of the one under it. */
+  /** In drawing order: each cabinet hides the parts of the ones before it behind it. */
   cabinets: CabinetDrawing[];
-  /**
-   * The drawing's top in image units (the logo's is 2): it rises with the top
-   * box, so the stack can stay anchored at its top-left.
-   */
-  top: number;
-  /** How much bigger than the plain logo the drawing is shown. */
-  scale: number;
 };
 
 /**
- * The stack at `level` (0–1, the volume): below a tenth the logo alone, then
- * three bass bins one after another under it, and a top box on it by nine
- * tenths. The bins fade in where they stand; the top box rises out of the
- * cabinet (fading in as it does), pushing it down. The whole grows by half.
+ * The stack at `level` (0–1, the volume): below a tenth the logo alone, then a
+ * second cabinet beside it, a third, a bass bin under the three and a second
+ * bin under that by nine tenths. Each fades in where it stands; nothing grows,
+ * and the logo stays put.
  */
 export const danceStack = (level: number): DanceStackDrawing => {
+  const tops = [1, stage(level, 0.1, 0.25), stage(level, 0.3, 0.45)];
+  const bins = [stage(level, 0.5, 0.65), stage(level, 0.75, 0.9)];
+
+  // The bins bottom up, as each stands on the one below; then the cabinets from
+  // the far end of the row (the camera is off the logo's end) to the logo.
   const cabinets: CabinetDrawing[] = [];
-  const bins = [
-    stage(level, 0.1, 0.3),
-    stage(level, 0.3, 0.5),
-    stage(level, 0.5, 0.7),
-  ];
-  const topBox = stage(level, 0.7, 0.9);
-
-  let y = MAIN.height + bins.length * BASS_BIN.height;
-  for (let i = bins.length - 1; i >= 0; i--) {
-    y -= BASS_BIN.height;
-    if (bins[i] > 0) cabinets.push(drawCabinet(BASS_BIN, y, bins[i]));
-  }
-  cabinets.push(drawCabinet(MAIN, 0, 1));
-  const boxHeight = TOP_BOX.height * topBox;
-  if (topBox > 0)
-    cabinets.push(
-      drawCabinet(TOP_BOX, -boxHeight, Math.min(1, 2 * topBox), boxHeight),
-    );
-
-  // The back corner is the highest point: the logo's, or the top box's.
-  const top =
-    topBox > 0
-      ? project(TOP_BOX.backWidth / 2, -boxHeight, TOP_BOX.depth)[1]
-      : project(MAIN.backWidth / 2, 0, MAIN.depth)[1];
-  return {
-    cabinets,
-    top,
-    scale: 1 + 0.5 * clamp01(level),
-  };
+  for (let i = bins.length - 1; i >= 0; i--)
+    if (bins[i] > 0)
+      cabinets.push(
+        drawCabinet(
+          BASS_BIN,
+          { x: (TOPS - 1) / 2, w: 0, angle: 0 },
+          MAIN.height + i * BASS_BIN.height,
+          bins[i],
+        ),
+      );
+  const poses = arc();
+  for (let i = TOPS - 1; i >= 0; i--)
+    if (tops[i] > 0) cabinets.push(drawCabinet(MAIN, poses[i], 0, tops[i]));
+  return { cabinets };
 };
