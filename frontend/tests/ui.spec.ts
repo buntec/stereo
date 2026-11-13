@@ -809,6 +809,100 @@ test("shows the playing track's thumbnail, blurred, behind the app", async ({
   await expect(background).toHaveCount(0);
 });
 
+test("the logo builds up into a dance stack with the volume, without moving the header", async ({
+  page,
+}) => {
+  await openApp(page);
+  const stack = page.getByRole("img", { name: "Stereo" });
+  const cabinets = stack.locator("svg > g");
+  // Its mirror image at the other end of the header: a stereo pair.
+  const mirrored = page.locator(".dance-stack-mirrored");
+  const mirroredCabinets = mirrored.locator("svg > g");
+  const slider = page.getByRole("slider", { name: "Volume" });
+  const mute = page.getByRole("button", { name: "Mute" });
+  const collection = page.locator(".collection-controls > :nth-child(2)");
+  const collectionLeft = async () => (await collection.boundingBox())!.x;
+
+  // Full volume by default: the logo's cabinet, two more beside it, two bass bins under them.
+  await expect(cabinets).toHaveCount(5);
+  await expect(mirroredCabinets).toHaveCount(5);
+  await expect(mirrored).toHaveCSS("scale", "-1 1");
+  const viewport = page.viewportSize()!;
+  const [leftBox, rightBox] = [
+    (await stack.boundingBox())!,
+    (await mirrored.boundingBox())!,
+  ];
+  expect(leftBox.y).toBe(rightBox.y);
+  expect(leftBox.x).toBeCloseTo(
+    viewport.width - rightBox.x - rightBox.width,
+    0,
+  );
+  const left = await collectionLeft();
+  await expect(stack).toHaveAttribute("width", "28");
+
+  await slider.focus();
+  await page.keyboard.press("Home");
+  await expect(cabinets).toHaveCount(1);
+  await expect(mirroredCabinets).toHaveCount(1);
+  expect(await collectionLeft()).toBe(left);
+
+  await page.keyboard.press("End");
+  await expect(cabinets).toHaveCount(5);
+  await mute.click();
+  await expect(cabinets).toHaveCount(1);
+  await mute.click();
+  await expect(cabinets).toHaveCount(5);
+
+  // Behind the app's content.
+  for (const s of [stack, mirrored]) {
+    await expect(s).toHaveCSS("z-index", "-1");
+    await expect(s).toHaveCSS("pointer-events", "none");
+  }
+  // The controls they run under are frosted over, to stay readable.
+  await expect(page.getByRole("button", { name: "Settings" })).toHaveCSS(
+    "backdrop-filter",
+    "blur(8px)",
+  );
+});
+
+test("offers only mute where the page can't set the volume (iOS)", async ({
+  page,
+}) => {
+  // WebKit on iOS keeps an assigned volume for now and restores the old one in
+  // a task it queues, so reading it back right away says it worked.
+  await page.addInitScript(() => {
+    const native = Object.getOwnPropertyDescriptor(
+      HTMLMediaElement.prototype,
+      "volume",
+    )!;
+    const assigned = new WeakMap<HTMLMediaElement, number>();
+    Object.defineProperty(HTMLMediaElement.prototype, "volume", {
+      configurable: true,
+      get(this: HTMLMediaElement) {
+        return assigned.get(this) ?? (native.get!.call(this) as number);
+      },
+      set(this: HTMLMediaElement, volume: number) {
+        assigned.set(this, volume);
+        setTimeout(() => assigned.delete(this));
+      },
+    });
+  });
+  await openApp(page);
+  const mute = page.getByRole("button", { name: "Mute" });
+  await expect(mute).toBeVisible();
+  // Longer than the app gives a reversion to land.
+  await page.waitForTimeout(1000);
+  await expect(page.getByRole("slider", { name: "Volume" })).toHaveCount(0);
+  // The stacks don't claim a volume that isn't applied: they're the logo alone.
+  await expect(
+    page.getByRole("img", { name: "Stereo" }).locator("svg > g"),
+  ).toHaveCount(1);
+  await expect(page.locator(".dance-stack-mirrored svg > g")).toHaveCount(1);
+
+  await mute.click();
+  await expect(mute).toHaveAttribute("aria-pressed", "true");
+});
+
 test("explains that playback needs yt-dlp when the backend can't download audio", async ({
   page,
 }) => {
@@ -903,7 +997,9 @@ test("an evicted track stays shown as not downloaded when its buffered audio pla
     .toEqual([{ type: "download-audio", yt_id: "audit0" }]);
 });
 
-test("the logo pulses with the playing track's beats", async ({ page }) => {
+test("the background pulses with the playing track's beats", async ({
+  page,
+}) => {
   const { send, messages } = await openApp(page, {
     audio: "ok",
     audioSeconds: 240,
@@ -924,11 +1020,11 @@ test("the logo pulses with the playing track's beats", async ({ page }) => {
     // Every half second, at full strength.
     beats: Array.from({ length: 480 }, (_, i) => [i * 500, 255]),
   });
-  const logo = page.locator(".stereo-logo");
-  /** The pulses over a beat and a half, as the logo shows them. */
+  const background = page.locator(".background-player");
+  /** The pulses over a beat and a half, as the background shows them. */
   const pulses = () =>
-    logo.evaluate(
-      (element: SVGElement) =>
+    background.evaluate(
+      (element: HTMLElement) =>
         new Promise<number[]>((resolve) => {
           const values: number[] = [];
           const started = performance.now();

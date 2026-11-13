@@ -62,6 +62,7 @@ function SettingsMenu({
         tooltip="Settings"
         icon={<GearIcon />}
         variant="ghost"
+        className="settings-button"
       />
     </Popover>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type {
   PlaybackEngine,
   PlaybackEvents,
@@ -13,6 +13,38 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 // React state, since playback sets its `src` and `currentTime`.
 const audio = new Audio();
 audio.preload = "auto";
+
+/**
+ * Whether the page can set the volume, as a tiny external store: iOS and iPadOS
+ * ignore `volume`, leaving it to the hardware buttons; `muted` works
+ * everywhere. Reading it back right away doesn't tell: WebKit there keeps the
+ * assigned value for now and restores the old one in a task it queues
+ * (`HTMLMediaElement::setVolume`), so the probe is only read some time later.
+ * Until then the answer is no, so a slider that wouldn't work never shows.
+ */
+const volumeSupport = (() => {
+  /** How long to give a queued reversion to land, in ms. */
+  const SETTLE_MS = 250;
+  let supported = false;
+  const listeners = new Set<() => void>();
+  const probe = new Audio();
+  probe.volume = 0.5;
+  setTimeout(() => {
+    supported = probe.volume === 0.5;
+    if (supported) listeners.forEach((l) => l());
+  }, SETTLE_MS);
+  return {
+    get: () => supported,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  };
+})();
+
+/** Whether the page can set the volume (see `volumeSupport`); false until known. */
+export const useCanSetVolume = () =>
+  useSyncExternalStore(volumeSupport.subscribe, volumeSupport.get);
 
 const audioUrl = (id: string, key: string) =>
   `/audio/${encodeURIComponent(id)}?key=${encodeURIComponent(key)}`;
@@ -218,6 +250,13 @@ export const useAudioPlayback = (
         return "playing";
       },
       currentId: () => idRef.current,
+      setVolume: (volume, muted) => {
+        // Squared: loudness is perceived roughly logarithmically, so a linear
+        // gain would put most of the audible change in the slider's low end.
+        const v = Math.min(1, Math.max(0, volume));
+        audio.volume = v * v;
+        audio.muted = muted;
+      },
       prefetch: (ids) => {
         const key = keyRef.current;
         if (!key) return;

@@ -633,4 +633,7 @@ export type Settings = {
   /** How strongly the background pulses with the beats, 0–100 (%); unset in older stored settings. */
   backgroundPulse?: number;
   shufflePlay: boolean;
+  /** Playback volume, 0–100 (%, perceptual); unset in older stored settings. */
+  volume?: number;
+  muted?: boolean;
 };

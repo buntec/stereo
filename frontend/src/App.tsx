@@ -87,7 +87,8 @@ import BpmCheck from "./BpmCheck.tsx";
 import { formatTempo } from "./tempo.ts";
 import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
-import { useAudioPlayback } from "./AudioPlayback.ts";
+import { useAudioPlayback, useCanSetVolume } from "./AudioPlayback.ts";
+import VolumeControl, { DEFAULT_VOLUME } from "./VolumeControl.tsx";
 import {
   formatDuration,
   useLocalStorage,
@@ -114,7 +115,7 @@ import SpotifyPlaylistDialog, {
 import AddTracksDialog from "./AddTracksDialog.tsx";
 import NavBarControls from "./NavBarControls.tsx";
 import { DEFAULT_BACKGROUND_PULSE } from "./SettingsMenu.tsx";
-import StereoLogo from "./StereoLogo.tsx";
+import DanceStack from "./DanceStack.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
@@ -181,6 +182,8 @@ const defaultSettings: Settings = {
   backgroundVideo: true,
   backgroundPulse: DEFAULT_BACKGROUND_PULSE,
   shufflePlay: false,
+  volume: DEFAULT_VOLUME,
+  muted: false,
 };
 
 type State = {
@@ -1990,6 +1993,33 @@ function App() {
     updatePlaylist(shufflePlay);
   }, [settings, setSettings, updatePlaylist]);
 
+  const volume = settings.volume ?? DEFAULT_VOLUME;
+  const muted = settings.muted ?? false;
+  const canSetVolume = useCanSetVolume();
+  useEffect(() => {
+    playback?.setVolume(volume / 100, muted);
+  }, [playback, volume, muted]);
+
+  const setVolume = useCallback(
+    (volume: number) => setSettings((s) => ({ ...s, volume, muted: false })),
+    [setSettings],
+  );
+
+  const toggleMuted = useCallback(
+    () =>
+      setSettings((s) => {
+        const volume = s.volume ?? DEFAULT_VOLUME;
+        // Slid all the way down: unmuting brings the sound back at half volume.
+        if (volume === 0) return { ...s, volume: 50, muted: false };
+        return { ...s, muted: !s.muted };
+      }),
+    [setSettings],
+  );
+
+  // The header's speakers grow into dance stacks with the volume (DanceStack.tsx):
+  // muted, or where the page can't set the volume (iOS), they're the logo alone.
+  const stackLevel = canSetVolume && !muted ? volume / 100 : 0;
+
   const toggleBackgroundVideo = useCallback(
     () =>
       setSettings({ ...settings, backgroundVideo: !settings.backgroundVideo }),
@@ -2004,14 +2034,6 @@ function App() {
     state.current_id,
     currentAudio.cached,
     requestReply,
-  );
-  const logoRef = useRef<SVGSVGElement>(null);
-  useBeatPulse(
-    logoRef,
-    playback,
-    state.current_id,
-    currentWaveform?.beats,
-    state.player_state === "playing",
   );
   const backgroundRef = useRef<HTMLElement>(null);
   const backgroundPulse = settings.backgroundPulse ?? DEFAULT_BACKGROUND_PULSE;
@@ -2394,6 +2416,7 @@ function App() {
     "5": () => updateCurrentRating(5),
     s: () => toggleShuffle(),
     b: () => toggleBackgroundVideo(),
+    m: () => toggleMuted(),
     c: () => centerGridAroundCurrentTrack(),
     t: () => scrollActiveGridToTop(),
     p: () => togglePlayback(),
@@ -2627,7 +2650,7 @@ function App() {
               className="app-header"
             >
               <HStack vAlign="center" gap={2} className="collection-controls">
-                <StereoLogo size={28} ref={logoRef} className="stereo-logo" />
+                <DanceStack level={stackLevel} />
                 <CollectionSelector
                   isValid={state.collection_is_valid ?? true}
                   collections={state.collections ?? []}
@@ -2716,7 +2739,12 @@ function App() {
                   errorMessage={state.search_error_message}
                 />
               </StackItem>
-              <HStack vAlign="center" hAlign="end">
+              <HStack
+                vAlign="center"
+                hAlign="end"
+                gap={2}
+                className="nav-controls"
+              >
                 <NavBarControls
                   isCompact={narrow}
                   version={state.backend_version}
@@ -2739,6 +2767,8 @@ function App() {
                   spotifyBackfillTotal={state.spotify_backfill_total}
                   onSpotifyBackfill={backfillSpotifyIds}
                 />
+                {/* The other speaker of the stereo pair, at the header's other end. */}
+                <DanceStack level={stackLevel} isMirrored />
               </HStack>
             </HStack>
           }
@@ -3126,6 +3156,17 @@ function App() {
                           />
                         </Tooltip>
                       </HStack>
+
+                      {touch ? null : <Divider orientation="vertical" />}
+
+                      <VolumeControl
+                        volume={volume}
+                        muted={muted}
+                        setVolume={setVolume}
+                        toggleMuted={toggleMuted}
+                        showSlider={canSetVolume}
+                        size={footerButtonSize}
+                      />
                     </HStack>
                   </StackItem>
                 </HStack>

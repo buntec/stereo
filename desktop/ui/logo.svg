@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Stereo: tapered horn-loaded PA cabinet, three-quarter view. Same paths as frontend/src/StereoLogo.tsx. -->
+  <!-- Stereo: tapered horn-loaded PA cabinet, three-quarter view. Same paths as frontend/src/danceStack.ts draws at level 0. -->
   <path d="M23.42 62.00L12.85 50.13L12.85 3.91L23.42 9.41Z" fill="#262249"/>
   <path d="M19.95 26.80L15.94 23.79L15.94 20.91L19.95 23.77ZM19.95 50.03L15.94 45.91L15.94 43.02L19.95 47.00Z" fill="#181530"/>
   <path d="M23.42 9.41L51.15 4.93L26.84 2.00L12.85 3.91Z" fill="#3d3873"/>
