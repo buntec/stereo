@@ -244,7 +244,7 @@ impl TXTrack {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct YTVideo {
     pub title: String,
     pub id: String,

@@ -13,13 +13,13 @@ type ScrollState = {
   // More than a screenful down.
   scrolledDown: boolean;
   // Tracks whose rows are on screen.
-  visibleIds: string[];
+  visible: ITrack[];
 };
 
 const sameState = (a: ScrollState, b: ScrollState) =>
   a.scrolledDown === b.scrolledDown &&
-  a.visibleIds.length === b.visibleIds.length &&
-  a.visibleIds.every((id, i) => id === b.visibleIds[i]);
+  a.visible.length === b.visible.length &&
+  a.visible.every((track, i) => track === b.visible[i]);
 
 /**
  * Tracks whether a grid is scrolled down far enough to offer "back to top", and whether the
@@ -27,26 +27,27 @@ const sameState = (a: ScrollState, b: ScrollState) =>
  */
 export const useGridScrollState = (
   gridRef: RefObject<AgGridReact<ITrack> | null>,
-  currentId: string | undefined,
+  // Whether a row is the playing track's; unset when nothing plays.
+  isCurrent: ((track: ITrack) => boolean) | undefined,
 ) => {
   const [state, setState] = useState<ScrollState>({
     scrolledDown: false,
-    visibleIds: [],
+    visible: [],
   });
 
   const update = useCallback(() => {
     const api = gridRef.current?.api;
     if (!api || api.isDestroyed()) return;
     const { top, bottom } = api.getVerticalPixelRange();
-    const visibleIds = api.getRenderedNodes().flatMap((node) => {
+    const visible = api.getRenderedNodes().flatMap((node) => {
       if (!node.data || node.rowTop == null || node.rowHeight == null)
         return [];
       // Rendered rows include a buffer outside the viewport; count a row as visible when its
       // middle is inside it.
       const middle = node.rowTop + node.rowHeight / 2;
-      return middle >= top && middle <= bottom ? [node.data.yt_id] : [];
+      return middle >= top && middle <= bottom ? [node.data] : [];
     });
-    const next = { scrolledDown: top > bottom - top, visibleIds };
+    const next = { scrolledDown: top > bottom - top, visible };
     setState((prev) => (sameState(prev, next) ? prev : next));
   }, [gridRef]);
 
@@ -62,7 +63,7 @@ export const useGridScrollState = (
 
   return {
     scrolledDown: state.scrolledDown,
-    currentVisible: !!currentId && state.visibleIds.includes(currentId),
+    currentVisible: !!isCurrent && state.visible.some(isCurrent),
     gridEvents,
   };
 };

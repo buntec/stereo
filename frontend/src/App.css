@@ -218,6 +218,16 @@
   font-size: var(--font-size-2xs);
 }
 
+/* A candidate video's thumbnail in the change-video dialog (ChangeVideoDialog.tsx). */
+.video-thumbnail {
+  flex: none;
+  width: var(--spacing-12);
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--radius-inner);
+  background: var(--color-background-muted);
+}
+
 /* A track row's thumbnail, which plays the track (ThumbnailPlayButton in Grid.tsx):
    a play triangle on a scrim that darkens on hover. */
 .thumbnail-play-button {

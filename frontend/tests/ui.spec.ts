@@ -35,6 +35,8 @@ async function openApp(
      */
     audio?: "hold" | "ok" | "fail" | "off";
     audioSeconds?: number;
+    /** What every search finds. */
+    searchResults?: Record<string, unknown>[];
   } = {},
 ) {
   let socket: WebSocketRoute;
@@ -161,10 +163,33 @@ async function openApp(
           break;
         case "search":
           send([
-            { type: "search-results", query_id: message.query_id, tracks: [] },
+            {
+              type: "search-results",
+              query_id: message.query_id,
+              tracks: options.searchResults ?? [],
+            },
             { type: "search-complete", query_id: message.query_id },
           ]);
           break;
+        case "search-youtube-videos": {
+          // A pasted link gives just that video; searches find nothing.
+          const linked = /[?&]v=([\w-]{11})/.exec(message.query)?.[1];
+          send({
+            type: "youtube-videos",
+            id: message.id,
+            videos: linked
+              ? [
+                  {
+                    id: linked,
+                    title: `Video ${linked}`,
+                    channel: "Example channel",
+                    duration_secs: 300,
+                  },
+                ]
+              : [],
+          });
+          break;
+        }
         case "validate-track":
           send({
             type: "validate-track-reply",
@@ -1431,4 +1456,205 @@ test("a rejected saved token is forgotten and explained", async ({ page }) => {
       timeout: 10_000,
     })
     .toEqual([[auth], null]);
+});
+
+const searchResults = [
+  { title: "Result A", artists: ["Artist A"], yt_id: "aVideo00001", bp_id: 1 },
+  { title: "Result B", artists: ["Artist B"], yt_id: "bVideo00002", bp_id: 2 },
+  { title: "Result C", artists: ["Artist C"], yt_id: "cVideo00003", bp_id: 3 },
+  { title: "Result D", artists: ["Artist D"], yt_id: "dVideo00004", bp_id: 4 },
+];
+
+/** Searches, and waits for the results above. */
+async function showSearchResults(page: Page) {
+  await page.getByRole("textbox", { name: /Search query/ }).fill("results");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Play Result D", exact: true }),
+  ).toBeVisible();
+}
+
+/** Changes a search result's video to a pasted link's. */
+async function changeResultVideo(page: Page, title: string, yt_id: string) {
+  await page
+    .getByRole("button", { name: `Options for ${title}`, exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Change YouTube video…", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Change YouTube video" });
+  await dialog
+    .getByRole("searchbox", { name: "Search YouTube or paste a video link" })
+    .fill(`https://www.youtube.com/watch?v=${yt_id}`);
+  await page.keyboard.press("Enter");
+  const use = dialog.getByRole("button", { name: "Use this video" });
+  await expect(use).toBeEnabled();
+  await use.click();
+  await expect(dialog).toHaveCount(0);
+}
+
+test("changing a search result's video leaves results sharing its old video alone", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, {
+    audio: "ok",
+    searchResults,
+  });
+  await showSearchResults(page);
+  await changeResultVideo(page, "Result A", "bVideo00002");
+  await changeResultVideo(page, "Result B", "newVideo001");
+  await page
+    .getByRole("button", { name: "Play Result A", exact: true })
+    .click();
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/bVideo00002?key=test-key");
+  await page
+    .getByRole("button", { name: "Play Result B", exact: true })
+    .click();
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/newVideo001?key=test-key");
+});
+
+test("a queue of search results plays a result's changed video", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, {
+    audio: "hold",
+    searchResults,
+  });
+  await showSearchResults(page);
+  await page
+    .getByRole("button", { name: "Play Result A", exact: true })
+    .click();
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/aVideo00001?key=test-key");
+  await changeResultVideo(page, "Result B", "newVideo001");
+  await page
+    .getByRole("button", { name: "Skip to next track", exact: true })
+    .click();
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/newVideo001?key=test-key");
+  expect(audioRequests).not.toContain("GET /audio/bVideo00002?key=test-key");
+});
+
+test("changing the playing search result's video keeps its place in the queue", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, {
+    audio: "ok",
+    audioSeconds: 30,
+    searchResults,
+  });
+  await showSearchResults(page);
+  await page
+    .getByRole("button", { name: "Play Result A", exact: true })
+    .click();
+  await expect(page.locator(".play-pause-button")).toHaveAccessibleName(
+    "Pause",
+  );
+  await changeResultVideo(page, "Result A", "newVideo001");
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/newVideo001?key=test-key");
+  await page
+    .getByRole("button", { name: "Skip to next track", exact: true })
+    .click();
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/bVideo00002?key=test-key");
+});
+
+test("changing a selected search result's video keeps it selected", async ({
+  page,
+}) => {
+  const { messages } = await openApp(page, { searchResults });
+  await showSearchResults(page);
+  const rowA = page.locator(".ag-row", {
+    has: page.getByRole("button", { name: "Play Result A", exact: true }),
+  });
+  await rowA.getByRole("checkbox").first().check();
+  await expect(
+    page.getByRole("button", { name: "Add selected (1)", exact: true }),
+  ).toBeEnabled();
+  await changeResultVideo(page, "Result A", "newVideo001");
+  // Past the grid's row animations, which would drop a replaced row.
+  await page.waitForTimeout(600);
+  await expect(rowA.getByRole("checkbox").first()).toBeChecked();
+  const add = page.getByRole("button", {
+    name: "Add selected (1)",
+    exact: true,
+  });
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect
+    .poll(() =>
+      messages
+        .filter((m) => m.type === "add-tracks")
+        .flatMap((m) => (m.tracks as { yt_id: string }[]).map((t) => t.yt_id)),
+    )
+    .toEqual(["newVideo001"]);
+});
+
+test("a queue of search results sharing a video plays through to its end", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, {
+    audio: "hold",
+    searchResults,
+  });
+  await showSearchResults(page);
+  // The queue's videos: a, b, a, d.
+  await changeResultVideo(page, "Result C", "aVideo00001");
+  await page
+    .getByRole("button", { name: "Play Result A", exact: true })
+    .click();
+  const next = page.getByRole("button", {
+    name: "Skip to next track",
+    exact: true,
+  });
+  const playing = page.locator(".grid .progress-bar");
+  for (const title of ["Result B", "Result C", "Result D"]) {
+    await next.click();
+    await expect(playing).toHaveCount(1);
+    await expect(playing).toContainText(title);
+  }
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/dVideo00004?key=test-key");
+  await page
+    .getByRole("button", { name: "Skip to previous track", exact: true })
+    .click();
+  await expect(playing).toContainText("Result C");
+});
+
+test("changing a result's video leaves another result playing the same video alone", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, {
+    audio: "hold",
+    searchResults,
+  });
+  await showSearchResults(page);
+  await changeResultVideo(page, "Result C", "aVideo00001");
+  // Result C plays, from a queue whose first entry, Result A, has the same video.
+  await page
+    .getByRole("button", { name: "Play Result A", exact: true })
+    .click();
+  const next = page.getByRole("button", {
+    name: "Skip to next track",
+    exact: true,
+  });
+  await next.click();
+  await next.click();
+  const playing = page.locator(".grid .progress-bar");
+  await expect(playing).toHaveCount(1);
+  await expect(playing).toContainText("Result C");
+  await changeResultVideo(page, "Result A", "newVideo001");
+  await expect(playing).toHaveCount(1);
+  await expect(playing).toContainText("Result C");
+  expect(audioRequests).not.toContain("GET /audio/newVideo001?key=test-key");
 });
