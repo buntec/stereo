@@ -496,10 +496,7 @@ for (const width of [390, 1440]) {
     expect(
       await page.locator("html").getAttribute("data-copied-report"),
     ).toContain("FAILED Beatport (1234 ms)");
-    await dialog
-      .getByRole("button", { name: "Close", exact: true })
-      .last()
-      .click();
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await trigger.click();
     await expect(dialog.getByText("1 of 9 checks failed.")).toBeVisible();
     expect(requests()).toHaveLength(1);
@@ -545,13 +542,25 @@ test("health check recovers from a lost connection", async ({ page }) => {
     (message) => message.type === "run-health-check",
   )[1];
   send({
-    type: "error-reply",
+    type: "health-check",
     id: request.id,
-    message: "A health check is already running",
+    checked_at: "2026-11-13T12:00:00Z",
+    checks: [
+      {
+        name: "YouTube",
+        probe: "Search for “Daft Punk One More Time”",
+        status: "passed",
+        message: "3 usable results; e.g. Daft Punk - One More Time",
+        duration_ms: 800,
+      },
+    ],
   });
+  await expect(dialog.getByText("All 1 checks passed.")).toBeVisible();
   await expect(
-    dialog.getByText("A health check is already running"),
-  ).toBeVisible();
+    dialog.getByText(
+      "Connection lost during the health check. Reconnect and try again.",
+    ),
+  ).toHaveCount(0);
 });
 
 test("column customizations survive crossing the compact breakpoint", async ({

@@ -18,7 +18,7 @@ use stereo_backend::{
     scraper::{
         self, bp_get_genre_top100, bp_search_artist, bp_search_tracks, create_client,
         shazam_similar_tracks, shazam_similar_tracks_for_track, tx_get_top100,
-        yt_create_anon_playlist, yt_import_playlist, yt_search_simple,
+        yt_create_anon_playlist, yt_import_playlist, yt_search_simple, BP_SEARCH_PER_PAGE,
     },
 };
 
@@ -39,7 +39,7 @@ fn all_sources() -> Vec<TrackSource> {
 #[ignore = "hits all external search providers"]
 async fn test_health_check() {
     let checks = stereo_backend::health::run(&client()).await;
-    assert_eq!(checks.len(), 9);
+    assert_eq!(checks.len(), 10);
     for check in &checks {
         println!(
             "{:?} {} ({} ms): {}",
@@ -113,7 +113,9 @@ async fn test_yt_import_playlist() {
 #[ignore = "hits real Beatport API (may be blocked without TLS impersonation)"]
 async fn test_bp_search_tracks() {
     let c = client();
-    let tracks = bp_search_tracks(&c, "kadosh").await.unwrap();
+    let tracks = bp_search_tracks(&c, "kadosh", BP_SEARCH_PER_PAGE)
+        .await
+        .unwrap();
     assert!(!tracks.is_empty(), "expected Beatport track results");
     assert!(!tracks[0].track_name.is_empty());
     assert!(!tracks[0].artists.is_empty());

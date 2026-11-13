@@ -11,12 +11,6 @@
   min-width: 0;
 }
 
-/* Dialog contains scrolling inside its panel; its backdrop needs containment too. */
-.health-check-dialog::backdrop {
-  overflow: hidden;
-  overscroll-behavior: contain;
-}
-
 /* The logo, growing into a dance stack with the volume (DanceStack.tsx): it keeps the
    logo's place in the header and draws the rest over its edges, behind everything but
    the background artwork. Nothing between it and the app shell is a stacking context,

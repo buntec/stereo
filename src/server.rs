@@ -1168,13 +1168,12 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         }
 
         MsgClient::RunHealthCheck { id } => {
-            anyhow::ensure!(
-                !state
-                    .health_check_task
-                    .as_ref()
-                    .is_some_and(|task| !task.is_finished()),
-                "A health check is already running"
-            );
+            // A new request replaces a check still running. The client only sends one after
+            // its previous one ended for it (replied, or it gave up waiting), so the old run's
+            // reply would go to no one; refusing instead would block "Run again" until it ends.
+            if let Some(task) = state.health_check_task.take() {
+                task.abort();
+            }
             let client = Arc::clone(client);
             let tx = tx.clone();
             state.health_check_task = Some(tokio::spawn(async move {

@@ -9,31 +9,16 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
-import { CopyIcon, ReloadIcon } from "@radix-ui/react-icons";
+import {
+  ActivityLogIcon,
+  CheckIcon,
+  CopyIcon,
+  Cross2Icon,
+  ReloadIcon,
+} from "@radix-ui/react-icons";
 import type { RequestReply, ServerMsg } from "./Types.tsx";
 
 type HealthReport = Extract<ServerMsg, { type: "health-check" }>;
-
-// Radix's icon set has no heart-pulse glyph. Keep this small SVG in the existing icon
-// style instead of adding an icon library for a single button.
-function HeartPulseIcon() {
-  return (
-    <svg
-      width="1em"
-      height="1em"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" />
-      <path d="M2 12h5l2-4 4 8 2-4h7" />
-    </svg>
-  );
-}
 
 function reportText(report: HealthReport, version?: string) {
   return [
@@ -82,7 +67,8 @@ export default function HealthCheckButton({
           );
         }
       },
-      // Every backend probe is bounded to 45 s; allow for message batching and transit.
+      // Every backend probe is bounded to 45 s; allow for message batching and transit. If
+      // this gives up first, the next run replaces the backend's (server.rs).
       60000,
     );
   };
@@ -95,7 +81,7 @@ export default function HealthCheckButton({
       <IconButton
         label="Health check"
         tooltip="Health check"
-        icon={<HeartPulseIcon />}
+        icon={<ActivityLogIcon />}
         variant="ghost"
         onClick={() => {
           setIsOpen(true);
@@ -103,12 +89,7 @@ export default function HealthCheckButton({
           if (!report) run();
         }}
       />
-      <Dialog
-        isOpen={isOpen}
-        onOpenChange={setIsOpen}
-        width={640}
-        className="health-check-dialog"
-      >
+      <Dialog isOpen={isOpen} onOpenChange={setIsOpen} width={640}>
         <Layout
           header={
             <DialogHeader
@@ -159,6 +140,8 @@ export default function HealthCheckButton({
                           key={check.name}
                           align="first-line"
                           startContent={
+                            // The icon gives the status a shape, so it doesn't rest on
+                            // color and needs no text repeating the dot's label.
                             <StatusDot
                               variant={
                                 check.status === "passed" ? "success" : "error"
@@ -166,16 +149,20 @@ export default function HealthCheckButton({
                               label={
                                 check.status === "passed" ? "Passed" : "Failed"
                               }
+                              icon={
+                                check.status === "passed" ? (
+                                  <CheckIcon />
+                                ) : (
+                                  <Cross2Icon />
+                                )
+                              }
                             />
                           }
                           label={
                             <HStack gap={2} wrap="wrap" vAlign="center">
                               <Text weight="semibold">{check.name}</Text>
                               <Text type="supporting">
-                                {check.status === "passed"
-                                  ? "Passed"
-                                  : "Failed"}
-                                {` · ${(check.duration_ms / 1000).toFixed(1)} s`}
+                                {`${(check.duration_ms / 1000).toFixed(1)} s`}
                               </Text>
                             </HStack>
                           }
@@ -212,7 +199,6 @@ export default function HealthCheckButton({
                     }}
                   />
                 )}
-                <Button label="Close" onClick={() => setIsOpen(false)} />
                 <Button
                   label={
                     isRunning
