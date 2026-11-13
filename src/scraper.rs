@@ -2758,9 +2758,13 @@ pub async fn search_by_artist(
         vl_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, &t.mix_name, &artist_name));
         tx_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, &t.mix_name, &artist_name));
         sp_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, "", &artist_name));
-        am_tracks.retain(|t| {
-            let mix_name = t.mix_name.as_deref().unwrap_or_default();
-            credits_artist(&t.artists, &t.track_name, mix_name, &artist_name)
+        // Apple joins its artists into one credit, whose separators also occur within names
+        // ("Earth, Wind & Fire"), so it is matched as written too.
+        am_tracks.retain_mut(|t| {
+            t.regroup_artist(|name| is_same_name(name, &artist_name)) || {
+                let mix_name = t.mix_name.as_deref().unwrap_or_default();
+                credits_artist(&t.artists, &t.track_name, mix_name, &artist_name)
+            }
         });
         stream_raw_tracks(
             &client,
@@ -3234,6 +3238,27 @@ mod remix_match_tests {
         let other_remix = video("Aquarius Heaven - Just Like Magic (Other Artist Remix)");
         assert!(match_score(&raw, &matching_remix).total > match_score(&raw, &original).total);
         assert!(match_score(&raw, &matching_remix).total > match_score(&raw, &other_remix).total);
+    }
+
+    #[test]
+    fn apple_music_remix_matches_its_video_with_a_featured_credit_after_the_version() {
+        // Apple's song 499472452.
+        let song = crate::apple_music::parse_track(&serde_json::json!({
+            "kind": "song",
+            "trackId": 499472452_i64,
+            "artistName": "Above & Beyond",
+            "artistViewUrl": "https://music.apple.com/us/artist/above-beyond/20318188?uo=4",
+            "trackName": "You Got To Go (Seven Lions Remix) [feat. Zoë Johnston]",
+            "releaseDate": "2012-02-06T12:00:00Z",
+        }))
+        .unwrap();
+        let raw = RawTrack::Am(song);
+        let score = match_score(
+            &raw,
+            &video("Above & Beyond - You Got To Go (Seven Lions Remix)"),
+        );
+        assert_eq!(score.version, VersionMatch::Match);
+        assert!(score.acceptable(), "{score:?}");
     }
 
     #[test]

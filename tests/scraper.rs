@@ -40,7 +40,23 @@ fn all_sources() -> Vec<TrackSource> {
 #[ignore = "hits all external search providers"]
 async fn test_health_check() {
     let checks = stereo_backend::health::run(&client()).await;
-    assert_eq!(checks.len(), 10);
+    let names: Vec<&str> = checks.iter().map(|check| check.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "Beatport",
+            "SoundCloud",
+            "Volumo",
+            "Traxsource",
+            "Spotify",
+            "Apple Music",
+            "YouTube",
+            "Shazam",
+            "Shazam lookup",
+            "Beatport charts",
+            "Traxsource charts",
+        ]
+    );
     for check in &checks {
         println!(
             "{:?} {} ({} ms): {}",
