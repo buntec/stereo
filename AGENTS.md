@@ -12,7 +12,7 @@ Prerequisites: [Rust](https://rustup.rs), [Bun](https://bun.sh), [just](https://
 
 ```
 bun install              # install frontend deps (also: just init)
-just dev                 # run backend (port 8055) + frontend dev server concurrently, hot reload both
+just dev                 # run backend (port 8055, data dir ~/.local/share/stereo-dev or $STEREO_HOME) + frontend dev server concurrently, hot reload both
 just dev-tailscale       # build the frontend, run the backend with --tailscale (test on a phone: scan the Tailscale button's QR code)
 just build               # build frontend then backend release binary
 just desktop-dev         # run the Tauri desktop app with a debug backend (desktop/README.md)

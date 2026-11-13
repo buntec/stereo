@@ -139,7 +139,7 @@ Prerequisites: [Rust](https://rustup.rs), [Bun](https://bun.sh), [just](https://
 
 ```
 bun install        # install frontend dependencies
-just dev           # run backend + frontend dev server concurrently
+just dev           # run backend + frontend dev server concurrently (data in ~/.local/share/stereo-dev, or $STEREO_HOME)
 ```
 
 Frontend checks:

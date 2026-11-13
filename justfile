@@ -17,15 +17,19 @@ install: build
 
 dev-port := "8055"
 
+# The dev backend's data dir: its own, since a running Stereo (e.g. the launchd service)
+# locks the default one. STEREO_HOME picks another, e.g. a copy of your collections.
+dev-home := env("STEREO_HOME", home_directory() / ".local/share/stereo-dev")
+
 run-frontend-dev *args:
     STEREO_PORT={{ dev-port }} bun run dev --host {{ args }}
 
 run-backend-dev *args:
-    cargo run -- --dev -vv --port {{ dev-port }} {{ args }}
+    STEREO_HOME="{{ dev-home }}" cargo run -- --dev -vv --port {{ dev-port }} {{ args }}
 
 dev:
     #!/usr/bin/env sh
-    cargo run -- --dev -vv --port {{ dev-port }} &
+    STEREO_HOME="{{ dev-home }}" cargo run -- --dev -vv --port {{ dev-port }} &
     BACKEND_PID=$!
     trap "kill $BACKEND_PID" EXIT INT TERM
     STEREO_PORT={{ dev-port }} bun run dev
@@ -34,7 +38,7 @@ dev:
 # Build the app and serve it over HTTPS on your tailnet too, e.g. to test on a phone: open
 # http://localhost:8055 and scan the QR code from the Tailscale button
 dev-tailscale: build-frontend
-    cargo run -- -v --tailscale --port {{ dev-port }}
+    STEREO_HOME="{{ dev-home }}" cargo run -- -v --tailscale --port {{ dev-port }}
 
 exe := if os() == "windows" { ".exe" } else { "" }
 
