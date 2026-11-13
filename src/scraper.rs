@@ -785,6 +785,17 @@ async fn bp_get_releases(
     Ok(tracks)
 }
 
+/// A Beatport URL with these path segments, percent-encoded. Slugs from track pages keep
+/// non-ASCII letters (RBØR's is `rbør`), which the HTTP client would send raw and Beatport
+/// rejects with HTTP 400.
+fn bp_url(segments: &[&str]) -> String {
+    let mut url = url::Url::parse("https://www.beatport.com").expect("valid base URL");
+    url.path_segments_mut()
+        .expect("base URL has a path")
+        .extend(segments);
+    url.into()
+}
+
 pub async fn bp_get_label_releases(
     client: &Client,
     label: &BPLabel,
@@ -795,10 +806,7 @@ pub async fn bp_get_label_releases(
         let end = chrono::Local::now().date_naive();
         params.push(("publish_date", format!("{}:{}", start, end)));
     }
-    let url = format!(
-        "https://www.beatport.com/label/{}/{}/tracks",
-        label.name, label.id
-    );
+    let url = bp_url(&["label", &label.name, &label.id.to_string(), "tracks"]);
     bp_get_releases(client, &url, &params).await
 }
 
@@ -812,10 +820,7 @@ pub async fn bp_get_artist_releases(
         let end = chrono::Local::now().date_naive();
         params.push(("publish_date", format!("{}:{}", start, end)));
     }
-    let url = format!(
-        "https://www.beatport.com/artist/{}/{}/tracks",
-        artist.name, artist.id
-    );
+    let url = bp_url(&["artist", &artist.name, &artist.id.to_string(), "tracks"]);
     tracing::info!("Fetching artist releases: {url}");
     bp_get_releases(client, &url, &params).await
 }
@@ -3069,6 +3074,18 @@ pub async fn search_traxsource_top100(
 #[cfg(test)]
 mod top100_tests {
     use super::*;
+
+    #[test]
+    fn test_bp_url_encodes_slugs() {
+        assert_eq!(
+            bp_url(&["artist", "rbør", "1099363", "tracks"]),
+            "https://www.beatport.com/artist/rb%C3%B8r/1099363/tracks"
+        );
+        assert_eq!(
+            bp_url(&["label", "a/b", "1", "tracks"]),
+            "https://www.beatport.com/label/a%2Fb/1/tracks"
+        );
+    }
 
     #[test]
     fn test_parse_bp_top100() {
