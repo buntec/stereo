@@ -140,7 +140,10 @@ const churn = (points: Point[], amount: number): Point[] =>
 
 /** Where the waves can go, in px from the stack's box: the canvas's bounds. */
 const airBounds = (fronts: Front[], air: AirSettings) => {
-  const reach = air.beatTurbulence / 2 + WAVE_WIDTH / 2 + 1;
+  // The turbulence goes from the calm amount to the beat's and back, and
+  // either can be the larger.
+  const turbulence = Math.max(air.calmTurbulence, air.beatTurbulence);
+  const reach = turbulence / 2 + WAVE_WIDTH / 2 + 1;
   const points = fronts.flatMap((front) =>
     [0, 0.5, 1].flatMap((d) => airWave(front, d * air.waveTravel)),
   );
