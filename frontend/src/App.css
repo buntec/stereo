@@ -4,6 +4,14 @@
   position: relative;
   isolation: isolate;
 }
+/* Astryx's layout is a flex item of the shell, at the shell's height, but with
+   `min-height: auto` every layout of the page measures its content's height first:
+   any change, e.g. the footer's time every second, lays out the whole grid again
+   (some 17ms on a full one), which visibly stalls the animations timed by the beats.
+   Its content scrolls inside it anyway. */
+.stereo-app > .astryx-layout {
+  min-height: 0;
+}
 
 .collection-controls {
   flex-wrap: wrap;

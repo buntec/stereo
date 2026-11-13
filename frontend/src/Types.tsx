@@ -597,11 +597,6 @@ export type Action =
   | { type: "set-search-kind"; kind: SearchBoxKind }
   | { type: "set-search-sources"; sources: TrackSource[] }
   | { type: "set-new-releases-days"; days: number }
-  | {
-      type: "set-playback-progress";
-      duration: number;
-      current_time: number;
-    }
   | { type: "rows" }
   | { type: "toggle-shuffle" }
   | { type: "start-spotify-backfill"; id: number }
