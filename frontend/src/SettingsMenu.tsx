@@ -2,6 +2,7 @@ import { Divider } from "@astryxdesign/core/Divider";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Popover } from "@astryxdesign/core/Popover";
 import { Slider } from "@astryxdesign/core/Slider";
+import { Switch } from "@astryxdesign/core/Switch";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { GearIcon } from "@radix-ui/react-icons";
@@ -36,7 +37,7 @@ function SettingsMenu({
   footer,
 }: SettingsMenuProps) {
   const airSlider = (
-    key: keyof AirSettings,
+    key: Exclude<keyof AirSettings, "isOn">,
     label: string,
     tooltip: string,
     min: number,
@@ -54,6 +55,8 @@ function SettingsMenu({
       step={step}
       formatValue={formatValue}
       valueDisplay="text"
+      isDisabled={!air.isOn}
+      disabledMessage="Speaker air is off"
     />
   );
   const ms = (v: number) => `${v} ms`;
@@ -85,9 +88,14 @@ function SettingsMenu({
             disabledMessage="Background is off"
           />
           <Divider />
-          <Text type="label" weight="bold">
-            Speaker air
-          </Text>
+          <Switch
+            label="Speaker air"
+            labelTooltip="Whether the speaker stacks in the header push air out with the beats."
+            value={air.isOn}
+            onChange={(isOn) => setAir({ ...air, isOn })}
+            labelPosition="start"
+            labelSpacing="spread"
+          />
           {airSlider(
             "waveDuration",
             "Wave duration",

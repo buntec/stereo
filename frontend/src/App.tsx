@@ -2159,7 +2159,8 @@ function App() {
   );
 
   // With every beat, the stacks push air out of their speakers, as hard as the
-  // volume says (at full strength where the page can't set it).
+  // volume says (at full strength where the page can't set it), unless it's
+  // turned off.
   const air = useMemo(
     () => ({ ...DEFAULT_AIR, ...settings.air }),
     [settings.air],
@@ -2171,7 +2172,7 @@ function App() {
       id: state.current_id,
       beats: currentWaveform?.beats,
       strength:
-        state.player_state !== "playing" || muted
+        !air.isOn || state.player_state !== "playing" || muted
           ? 0
           : canSetVolume
             ? Math.sqrt(volume / 100)

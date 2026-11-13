@@ -667,6 +667,8 @@ export type AppNotification = {
 
 /** The air the header's dance stacks push out with the beats (DanceStack.tsx). */
 export type AirSettings = {
+  /** Whether the stacks push air at all. */
+  isOn: boolean;
   /** How long a beat's pressure wave travels, in ms. */
   waveDuration: number;
   /** How far it travels, in cabinet widths. */
@@ -681,6 +683,7 @@ export type AirSettings = {
 
 /** The air's defaults; SettingsMenu.tsx adjusts them. */
 export const DEFAULT_AIR: AirSettings = {
+  isOn: true,
   waveDuration: 650,
   waveTravel: 1.6,
   calmTurbulence: 3,
