@@ -1654,11 +1654,16 @@ fn parse_duration_secs(text: &str) -> Option<u32> {
     Some(secs)
 }
 
+/// Searches YouTube with each of `YT_CLIENTS` in turn until one finds videos. Finding none is
+/// `Ok` once a client has answered with search results; only when none did (network errors,
+/// error statuses, responses without results) is it an error, the last client's.
 pub async fn yt_search_simple(
     client: &Client,
     query: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<YTVideo>> {
+    let mut answered = false;
+    let mut last_error = None;
     for (name, version) in YT_CLIENTS {
         let body = serde_json::json!({
             "context": {"client": {"clientName": name, "clientVersion": version}},
@@ -1674,18 +1679,23 @@ pub async fn yt_search_simple(
             .send()
             .await;
 
-        let data: serde_json::Value = match resp {
-            Ok(r) => match r.json().await {
-                Ok(d) => d,
-                Err(_) => continue,
-            },
-            Err(_) => continue,
+        let data = match resp {
+            Ok(r) => response_json(r).await,
+            Err(error) => Err(error.into()),
+        };
+        let data = match data {
+            Ok(data) => data,
+            Err(error) => {
+                last_error = Some(error.context(format!("{name} client")));
+                continue;
+            }
         };
 
         let mut results = vec![];
         let sections = &data["contents"]["twoColumnSearchResultsRenderer"]["primaryContents"]
             ["sectionListRenderer"]["contents"];
         if let Some(sections) = sections.as_array() {
+            answered = true;
             'outer: for section in sections {
                 if let Some(items) = section["itemSectionRenderer"]["contents"].as_array() {
                     for item in items {
@@ -1727,8 +1737,16 @@ pub async fn yt_search_simple(
         if !results.is_empty() {
             return Ok(results);
         }
+        if !answered {
+            last_error = Some(anyhow::anyhow!(
+                "{name} client: no search results in the response"
+            ));
+        }
     }
-    Ok(vec![])
+    match last_error {
+        Some(error) if !answered => Err(error),
+        _ => Ok(vec![]),
+    }
 }
 
 /// How many videos `yt_find_videos` offers for a search.

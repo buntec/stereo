@@ -170,14 +170,51 @@ const sameItems = <T,>(a: T[] | undefined, b: T[] | undefined): boolean =>
   a === b ||
   (!!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]));
 
-/** The track after `current` in the playlist, wrapping around. */
-const nextTrackId = (
-  playlist: string[],
-  current: string | undefined,
-): string | undefined => {
-  if (playlist.length === 0) return undefined;
-  const i = playlist.indexOf(current ?? playlist[0]);
-  return i >= 0 ? playlist[(i + 1) % playlist.length] : playlist[0];
+/** Where the current track is in the queue, -1 when it isn't in it. */
+type QueuePosition = Pick<State, "playlist" | "current_id" | "current_index">;
+
+/**
+ * The current track's index in the playlist: `current_index` while it still points at the
+ * track, else its first entry. By index, since search results can share a video (see
+ * `set-search-result-video`); with no current track, the first entry.
+ */
+const queueIndex = ({
+  playlist,
+  current_id,
+  current_index,
+}: QueuePosition): number => {
+  if (current_id === undefined) return playlist.length > 0 ? 0 : -1;
+  return current_index !== undefined && playlist[current_index] === current_id
+    ? current_index
+    : playlist.indexOf(current_id);
+};
+
+/** The index of the track after the current one, wrapping around. */
+const nextIndex = (queue: QueuePosition): number | undefined => {
+  if (queue.playlist.length === 0) return undefined;
+  const i = queueIndex(queue);
+  return i >= 0 ? (i + 1) % queue.playlist.length : 0;
+};
+
+/** The index of the track before the current one, wrapping around. */
+const prevIndex = (queue: QueuePosition): number | undefined => {
+  if (queue.playlist.length === 0) return undefined;
+  const i = queueIndex(queue);
+  return i >= 0 ? (i + queue.playlist.length - 1) % queue.playlist.length : 0;
+};
+
+/** The state for playing the playlist's entry `index`. */
+const playIndex = (state: State, index: number): State => ({
+  ...state,
+  current_id: state.playlist[index],
+  current_index: index,
+  current_autoplay: true,
+});
+
+/** The `result_id` of the search result playing, when playing a queue of them. */
+const currentResultId = (state: State): number | undefined => {
+  const i = queueIndex(state);
+  return i >= 0 ? state.playlist_result_ids?.[i] : undefined;
 };
 
 const defaultSettings: Settings = {
@@ -207,6 +244,11 @@ type State = {
 
   current_id?: string;
   /**
+   * The current track's index in `playlist`, when it is in it (see `queueIndex`): results in
+   * a queue of search results can share a video, which `current_id` can't tell apart.
+   */
+  current_index?: number;
+  /**
    * Whether the current track should be playing: false while it is only the
    * first of a new playlist, so that loading the page doesn't start playback.
    */
@@ -216,7 +258,7 @@ type State = {
   current_time?: number;
   playlist: string[];
   /** Set while the playlist is a queue of search results: each entry's `result_id`. */
-  playlist_result_ids?: number[];
+  playlist_result_ids?: (number | undefined)[];
   player_state: PlaybackStatus;
   /** Playback was asked for but can't start or continue yet (buffering, downloading). */
   player_loading: boolean;
@@ -372,52 +414,50 @@ const reducer = (state: State, action: Action): State => {
           playlist: action.ids,
           playlist_result_ids: action.result_ids,
           current_id: action.ids[0],
+          current_index: 0,
           current_autoplay: false,
         };
       }
+      // The current track's entry in the new queue: the same search result if it is one.
+      const resultId = currentResultId(state);
+      const byResult =
+        resultId !== undefined
+          ? (action.result_ids?.indexOf(resultId) ?? -1)
+          : -1;
+      const index =
+        byResult >= 0
+          ? byResult
+          : state.current_id
+            ? action.ids.indexOf(state.current_id)
+            : -1;
       return {
         ...state,
         playlist: action.ids,
         playlist_result_ids: action.result_ids,
+        current_index: index >= 0 ? index : undefined,
       };
     }
 
-    case "play-id":
-      return { ...state, current_id: action.id, current_autoplay: true };
+    case "play-id": {
+      // A queue of search results starts with the one asked for, the first with its video;
+      // elsewhere a video is in the queue only once.
+      const index = state.playlist.indexOf(action.id);
+      return {
+        ...state,
+        current_id: action.id,
+        current_index: index >= 0 ? index : undefined,
+        current_autoplay: true,
+      };
+    }
 
     case "play-next-track": {
-      if (state.playlist.length > 0) {
-        return {
-          ...state,
-          current_id: nextTrackId(state.playlist, state.current_id),
-          current_autoplay: true,
-        };
-      }
-      return { ...state };
+      const i = nextIndex(state);
+      return i === undefined ? state : playIndex(state, i);
     }
 
     case "play-prev-track": {
-      if (state.playlist.length > 0) {
-        const id = state.current_id ?? state.playlist[0];
-        const i = state.playlist.indexOf(id);
-        console.log("play-prev-track", id, i);
-        if (i >= 0) {
-          return {
-            ...state,
-            current_id:
-              state.playlist[
-                (i + state.playlist.length - 1) % state.playlist.length
-              ],
-            current_autoplay: true,
-          };
-        }
-        return {
-          ...state,
-          current_id: state.playlist[0],
-          current_autoplay: true,
-        };
-      }
-      return { ...state };
+      const i = prevIndex(state);
+      return i === undefined ? state : playIndex(state, i);
     }
 
     case "player-state-change":
@@ -484,7 +524,11 @@ const reducer = (state: State, action: Action): State => {
         return {
           ...state,
           should_refresh_grid: true,
-          track_info: action.track,
+          // Still the same search result, if one is playing (see the track-info effect).
+          track_info: {
+            ...action.track,
+            result_id: state.track_info?.result_id,
+          },
           collection_last_update: Date.now(),
         };
       }
@@ -546,22 +590,20 @@ const reducer = (state: State, action: Action): State => {
       };
       // A queue of search results plays the corrected video too, from where it is.
       const resultIds = state.playlist_result_ids;
-      const queued = resultIds?.indexOf(action.result_id) ?? -1;
-      if (!resultIds || queued < 0) return next;
-      const currentIndex = state.current_id
-        ? state.playlist.indexOf(state.current_id)
-        : -1;
+      if (!resultIds?.includes(action.result_id)) return next;
       const playlist = state.playlist.map((id, i) =>
         resultIds[i] === action.result_id ? action.yt_id : id,
       );
-      if (currentIndex >= 0 && resultIds[currentIndex] === action.result_id) {
+      if (currentResultId(state) === action.result_id) {
         // The playing result's video changed: switch to the new one, so the queue keeps its
-        // place (and the row stays the current one), playing only if it was.
+        // place (and the row stays the current one), playing if it was or was about to.
         return {
           ...next,
           playlist,
           current_id: action.yt_id,
-          current_autoplay: state.player_state === "playing",
+          current_index: queueIndex(state),
+          current_autoplay:
+            state.player_state === "playing" || state.player_loading,
         };
       }
       return { ...next, playlist };
@@ -728,6 +770,7 @@ const reducer = (state: State, action: Action): State => {
     case "check-spotify-id-reply":
     case "spotify-playlist-info":
     case "youtube-playlist-info":
+    case "youtube-videos":
     case "clone-repo-reply":
     case "new-releases-candidates":
     case "pairing-code":
@@ -1222,16 +1265,18 @@ function App() {
     }
   }, [state.should_purge_grid]);
 
-  const queueRef = useRef({
+  const queueRef = useRef<QueuePosition>({
     playlist: state.playlist,
     current_id: state.current_id,
+    current_index: state.current_index,
   });
   useEffect(() => {
     queueRef.current = {
       playlist: state.playlist,
       current_id: state.current_id,
+      current_index: state.current_index,
     };
-  }, [state.playlist, state.current_id]);
+  }, [state.playlist, state.current_id, state.current_index]);
 
   /** Registers the lock-screen / media-key handlers again (see the effect below). */
   const registerMediaSessionRef = useRef<() => void>(() => {});
@@ -1261,8 +1306,10 @@ function App() {
       dispatch({ type: "notification", message, kind: "error" });
     },
     // Must match what `play-next-track` picks, which the app dispatches on "ended".
-    nextId: () =>
-      nextTrackId(queueRef.current.playlist, queueRef.current.current_id),
+    nextId: () => {
+      const i = nextIndex(queueRef.current);
+      return i === undefined ? undefined : queueRef.current.playlist[i];
+    },
   });
 
   useEffect(() => {
@@ -1333,8 +1380,24 @@ function App() {
     }
   }, [settings.collectionPath, state.collections, requestReply]);
 
+  const playingResultId = currentResultId(state);
   useEffect(() => {
-    if (state.current_id && state.current_id !== state.track_info?.yt_id) {
+    if (!state.current_id) return;
+    // A queue of search results: that result, which may share its video with others.
+    const playingResult =
+      playingResultId !== undefined
+        ? state.search_results?.find((t) => t.result_id === playingResultId)
+        : undefined;
+    if (playingResult) {
+      if (
+        state.track_info?.result_id !== playingResultId ||
+        state.track_info?.yt_id !== playingResult.yt_id
+      ) {
+        dispatch({ type: "track-info", track: playingResult });
+      }
+      return;
+    }
+    if (state.current_id !== state.track_info?.yt_id) {
       const searchTrack = state.search_results?.find(
         (t) => t.yt_id === state.current_id,
       );
@@ -1344,7 +1407,13 @@ function App() {
         sendMsg({ type: "get-track-info", yt_id: state.current_id });
       }
     }
-  }, [state.current_id, state.track_info, state.search_results, sendMsg]);
+  }, [
+    state.current_id,
+    playingResultId,
+    state.track_info,
+    state.search_results,
+    sendMsg,
+  ]);
 
   useEffect(() => {
     let t = null;
@@ -1418,14 +1487,27 @@ function App() {
   useEffect(() => {
     if (!playback || state.player_state !== "playing") return;
     const upcoming: string[] = [];
-    let id = state.current_id;
+    const current: QueuePosition = {
+      playlist: state.playlist,
+      current_id: state.current_id,
+      current_index: state.current_index,
+    };
+    let queue = current;
     for (let n = 0; n < 2; n++) {
-      id = nextTrackId(state.playlist, id);
-      if (!id || id === state.current_id || upcoming.includes(id)) break;
-      upcoming.push(id);
+      const i = nextIndex(queue);
+      if (i === undefined || i === queueIndex(current)) break;
+      const id = queue.playlist[i];
+      if (id !== state.current_id && !upcoming.includes(id)) upcoming.push(id);
+      queue = { ...queue, current_id: id, current_index: i };
     }
     playback.prefetch(upcoming);
-  }, [playback, state.player_state, state.current_id, state.playlist]);
+  }, [
+    playback,
+    state.player_state,
+    state.current_id,
+    state.current_index,
+    state.playlist,
+  ]);
 
   useEffect(() => {
     searchGridRef.current?.api.refreshCells({
@@ -2262,8 +2344,10 @@ function App() {
       return;
     }
     if (isSearchGridActive) {
-      const index = state.search_results?.findIndex(
-        (track) => track.yt_id === state.current_id,
+      const index = state.search_results?.findIndex((track) =>
+        playingResultId !== undefined
+          ? track.result_id === playingResultId
+          : track.yt_id === state.current_id,
       );
       if (index !== undefined && index >= 0) {
         searchGridRef.current?.api.ensureIndexVisible(index, "middle");
@@ -2302,6 +2386,7 @@ function App() {
     gridReady,
     requestReply,
     state.current_id,
+    playingResultId,
     isSearchGridActive,
     state.search_results,
   ]);
@@ -2533,6 +2618,7 @@ function App() {
       onExitSearch={handleExitSearch}
       gridRef={searchGridRef}
       currentId={state.current_id}
+      currentResultId={playingResultId}
       playId={playId}
       requestReply={requestReply}
       dispatch={dispatch}

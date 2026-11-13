@@ -280,7 +280,7 @@ export type ServerMsg =
       ids: string[];
       // For a queue of search results: the `result_id` of each entry, so that changing a
       // result's video also changes its queued entry.
-      result_ids?: number[];
+      result_ids?: (number | undefined)[];
     }
   | { type: "play-id"; id: string }
   | { type: "play-next-track" }

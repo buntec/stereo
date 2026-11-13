@@ -11,6 +11,7 @@ import { HStack, StackItem, VStack } from "@astryxdesign/core/Stack";
 import { TextInput } from "@astryxdesign/core/TextInput";
 
 import type { ITrack, RequestReply, YouTubeVideo } from "./Types.tsx";
+import { formatTime } from "./Utils.tsx";
 import YouTubeIcon from "./YouTubeIcon.tsx";
 
 // The query the dialog starts with: what the automatic match searched for, roughly.
@@ -19,13 +20,10 @@ const defaultQuery = (track: ITrack) =>
     .filter(Boolean)
     .join(" ");
 
-const formatDuration = (secs: number) =>
-  `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
-
 const describe = (video: YouTubeVideo) =>
   [
     video.channel,
-    video.duration_secs != null ? formatDuration(video.duration_secs) : "",
+    video.duration_secs != null ? formatTime(video.duration_secs) : "",
   ]
     .filter(Boolean)
     .join(" · ") || undefined;
@@ -80,11 +78,15 @@ export default function ChangeVideoDialog({
     [requestReply],
   );
 
+  // A new search replaces the list, and with it the choice: one made in the old list could
+  // be applied without being shown.
   const search = (q: string) => {
     const trimmed = q.trim();
     if (!trimmed) return;
     setIsSearching(true);
     setError(null);
+    setVideos(null);
+    setPicked(track?.yt_id ?? "");
     request(trimmed);
   };
 
@@ -174,7 +176,6 @@ export default function ChangeVideoDialog({
                   isLabelHidden
                   value={picked}
                   onChange={setPicked}
-                  isDisabled={isSearching}
                 >
                   {videos.map((video) => (
                     <RadioListItem
@@ -186,6 +187,10 @@ export default function ChangeVideoDialog({
                       }
                       description={describe(video)}
                       startContent={
+                        // Not Astryx's Thumbnail: that is a square preview of an image
+                        // attachment, without lazy loading. This is 4:3, as YouTube's
+                        // thumbnails and the grid's track thumbnails are, and loads lazily
+                        // (a search lists up to 20).
                         <img
                           className="video-thumbnail"
                           src={`https://i.ytimg.com/vi/${video.id}/default.jpg`}
@@ -218,7 +223,7 @@ export default function ChangeVideoDialog({
               <Button
                 label="Use this video"
                 variant="primary"
-                isDisabled={!picked || picked === track?.yt_id}
+                isDisabled={!picked || picked === track?.yt_id || isSearching}
                 onClick={commit}
               />
             </HStack>

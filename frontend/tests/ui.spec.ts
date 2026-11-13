@@ -1462,6 +1462,7 @@ const searchResults = [
   { title: "Result A", artists: ["Artist A"], yt_id: "aVideo00001", bp_id: 1 },
   { title: "Result B", artists: ["Artist B"], yt_id: "bVideo00002", bp_id: 2 },
   { title: "Result C", artists: ["Artist C"], yt_id: "cVideo00003", bp_id: 3 },
+  { title: "Result D", artists: ["Artist D"], yt_id: "dVideo00004", bp_id: 4 },
 ];
 
 /** Searches, and waits for the results above. */
@@ -1469,7 +1470,7 @@ async function showSearchResults(page: Page) {
   await page.getByRole("textbox", { name: /Search query/ }).fill("results");
   await page.keyboard.press("Enter");
   await expect(
-    page.getByRole("button", { name: "Play Result C", exact: true }),
+    page.getByRole("button", { name: "Play Result D", exact: true }),
   ).toBeVisible();
 }
 
@@ -1596,4 +1597,64 @@ test("changing a selected search result's video keeps it selected", async ({
         .flatMap((m) => (m.tracks as { yt_id: string }[]).map((t) => t.yt_id)),
     )
     .toEqual(["newVideo001"]);
+});
+
+test("a queue of search results sharing a video plays through to its end", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, {
+    audio: "hold",
+    searchResults,
+  });
+  await showSearchResults(page);
+  // The queue's videos: a, b, a, d.
+  await changeResultVideo(page, "Result C", "aVideo00001");
+  await page
+    .getByRole("button", { name: "Play Result A", exact: true })
+    .click();
+  const next = page.getByRole("button", {
+    name: "Skip to next track",
+    exact: true,
+  });
+  const playing = page.locator(".grid .progress-bar");
+  for (const title of ["Result B", "Result C", "Result D"]) {
+    await next.click();
+    await expect(playing).toHaveCount(1);
+    await expect(playing).toContainText(title);
+  }
+  await expect
+    .poll(() => audioRequests)
+    .toContain("GET /audio/dVideo00004?key=test-key");
+  await page
+    .getByRole("button", { name: "Skip to previous track", exact: true })
+    .click();
+  await expect(playing).toContainText("Result C");
+});
+
+test("changing a result's video leaves another result playing the same video alone", async ({
+  page,
+}) => {
+  const { audioRequests } = await openApp(page, {
+    audio: "hold",
+    searchResults,
+  });
+  await showSearchResults(page);
+  await changeResultVideo(page, "Result C", "aVideo00001");
+  // Result C plays, from a queue whose first entry, Result A, has the same video.
+  await page
+    .getByRole("button", { name: "Play Result A", exact: true })
+    .click();
+  const next = page.getByRole("button", {
+    name: "Skip to next track",
+    exact: true,
+  });
+  await next.click();
+  await next.click();
+  const playing = page.locator(".grid .progress-bar");
+  await expect(playing).toHaveCount(1);
+  await expect(playing).toContainText("Result C");
+  await changeResultVideo(page, "Result A", "newVideo001");
+  await expect(playing).toHaveCount(1);
+  await expect(playing).toContainText("Result C");
+  expect(audioRequests).not.toContain("GET /audio/newVideo001?key=test-key");
 });

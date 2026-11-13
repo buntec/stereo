@@ -7,6 +7,8 @@ import {
   type PointerEvent,
 } from "react";
 
+import { formatTime } from "./Utils.tsx";
+
 /** Width of a bar and of the gap after it, in CSS pixels. */
 const BAR_WIDTH = 2;
 const BAR_GAP = 1;
@@ -17,11 +19,6 @@ const PLACEHOLDER_LEVEL = 0.08;
 /** Seek step of the arrow keys, and of Page Up / Page Down, in seconds. */
 const KEY_STEP = 5;
 const PAGE_STEP = 30;
-
-const formatTime = (seconds: number) => {
-  const s = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-};
 
 /** The loudest value in each of `n` equal spans of `peaks`, as fractions of 255. */
 const resample = (peaks: number[], n: number): number[] =>

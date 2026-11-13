@@ -369,9 +369,8 @@ const SearchPlayControlRenderer: React.FC<
       context.dispatch({
         type: "set-playlist",
         ids: queue.map((t) => t.yt_id),
-        result_ids: queue.flatMap((t) =>
-          t.result_id === undefined ? [] : [t.result_id],
-        ),
+        // One per entry, so the two stay aligned.
+        result_ids: queue.map((t) => t.result_id),
       });
       context.playId(data.yt_id);
     }
@@ -455,6 +454,9 @@ interface SearchResultsGridProps {
   onExitSearch: () => void;
   gridRef: React.RefObject<AgGridReact<ITrack> | null>;
   currentId?: string;
+  // The playing result, when playing a queue of search results: results can share a video,
+  // so `currentId` alone may match several rows.
+  currentResultId?: number;
   playId: (id: string) => void;
   requestReply: RequestReply;
   dispatch: Dispatch<Action>;
@@ -488,6 +490,7 @@ type SearchResultsGridContext = {
 export const SearchResultsGrid = ({
   gridRef,
   currentId,
+  currentResultId,
   playId,
   requestReply,
   dispatch,
@@ -632,17 +635,26 @@ export const SearchResultsGrid = ({
     [dispatch],
   );
 
+  const isCurrent = useMemo(
+    () =>
+      currentResultId !== undefined
+        ? (track: ITrack) => track.result_id === currentResultId
+        : currentId
+          ? (track: ITrack) => track.yt_id === currentId
+          : undefined,
+    [currentId, currentResultId],
+  );
+
   const rowClassRules = useMemo(() => {
     return {
-      "progress-bar": (params: RowClassParams<ITrack>) => {
-        return Boolean(currentId && params.data?.yt_id === currentId);
-      },
+      "progress-bar": (params: RowClassParams<ITrack>) =>
+        !!params.data && !!isCurrent?.(params.data),
     };
-  }, [currentId]);
+  }, [isCurrent]);
 
   useEffect(() => {
     gridRef.current?.api?.redrawRows();
-  }, [currentId, gridRef]);
+  }, [isCurrent, gridRef]);
 
   // One batched lookup for all results instead of one request per row. Results stream in one
   // at a time, so the lookup is debounced.
@@ -718,11 +730,10 @@ export const SearchResultsGrid = ({
 
   const { scrolledDown, currentVisible, gridEvents } = useGridScrollState(
     gridRef,
-    currentId,
+    isCurrent,
   );
   // Only offered when the playing track is one of the results.
-  const currentInResults =
-    !!currentId && !!tracks?.some((track) => track.yt_id === currentId);
+  const currentInResults = !!isCurrent && !!tracks?.some(isCurrent);
 
   return (
     <StackItem size="fill" className="grid">
@@ -1152,9 +1163,14 @@ export const TracksGrid = ({
     [onStateUpdate],
   );
 
+  const isCurrent = useMemo(
+    () =>
+      currentId ? (track: ITrack) => track.yt_id === currentId : undefined,
+    [currentId],
+  );
   const { scrolledDown, currentVisible, gridEvents } = useGridScrollState(
     gridRef,
-    currentId,
+    isCurrent,
   );
 
   return (

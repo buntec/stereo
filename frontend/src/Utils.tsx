@@ -35,6 +35,12 @@ export function shuffleArray<T>(array: T[]): T[] {
   return array;
 }
 
+/** A time as m:ss, e.g. 3:07 (whole seconds, never negative). */
+export const formatTime = (seconds: number) => {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
 export function formatDuration(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = Math.floor(totalSeconds % 60);
