@@ -1008,7 +1008,9 @@ test("the logo builds up into a dance stack with the volume, without moving the 
     0,
   );
   const left = await collectionLeft();
-  await expect(stack).toHaveAttribute("width", "28");
+  // However big the stack, it keeps the logo's box in the layout.
+  expect(leftBox.width).toBe(28);
+  expect(leftBox.height).toBe(28);
 
   await slider.focus();
   await page.keyboard.press("Home");

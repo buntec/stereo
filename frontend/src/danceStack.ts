@@ -376,6 +376,14 @@ type Pose = {
   angle: number;
 };
 
+/** Projects a point given along the front (x) and back (w) of a cabinet at `pose`. */
+const placed = (pose: Pose) => {
+  const cos = Math.cos(pose.angle);
+  const sin = Math.sin(pose.angle);
+  return (x: number, y: number, w: number) =>
+    project(pose.x + x * cos - w * sin, y, pose.w + x * sin + w * cos);
+};
+
 /** Draws a cabinet standing at `pose`, its top `top` down from the logo's top. */
 const drawCabinet = (
   cabinet: Cabinet,
@@ -390,11 +398,7 @@ const drawCabinet = (
   const right = width / 2;
   const backLeft = -backWidth / 2;
   const backRight = backWidth / 2;
-  const cos = Math.cos(pose.angle);
-  const sin = Math.sin(pose.angle);
-  // Projects a point given along the cabinet's own front (x) and back (w).
-  const at = (x: number, y: number, w: number) =>
-    project(pose.x + x * cos - w * sin, y, pose.w + x * sin + w * cos);
+  const at = placed(pose);
   const onFront = ([u, v]: [number, number]) =>
     at(left + u * width, top + v * height, 0);
   // u runs from the back-left edge to the front-left edge.
@@ -469,9 +473,52 @@ const arc = (): Pose[] => {
   return poses;
 };
 
+/** A cabinet's front, where it pushes air out with the beats (`airWave`). */
+export type Front = {
+  pose: Pose;
+  width: number;
+  top: number;
+  height: number;
+  /** 0–1: as faded in as its cabinet. */
+  opacity: number;
+};
+
 export type DanceStackDrawing = {
   /** In drawing order: each cabinet hides the parts of the ones before it behind it. */
   cabinets: CabinetDrawing[];
+  /** The fronts of the cabinets drawn, the bass bins' first. */
+  fronts: Front[];
+};
+
+/** How much a pressure wave widens on every side per cabinet width it travels. */
+const WAVE_SPREAD = 0.35;
+/** How far (in cabinet widths) a wave travels before it is round. */
+const WAVE_ROUNDING = 0.8;
+/** Points around a wave's outline. */
+const WAVE_POINTS = 64;
+
+/**
+ * The outline of a pressure wave `distance` (in cabinet widths) in front of
+ * `front`: it leaves as the front's rectangle, widens as it travels, and rounds
+ * off into an ellipse (a superellipse in between), in the plane parallel to the
+ * front, seen through the same camera as the stack.
+ */
+export const airWave = (front: Front, distance: number): Point[] => {
+  const at = placed(front.pose);
+  const a = front.width / 2 + WAVE_SPREAD * distance;
+  const b = front.height / 2 + WAVE_SPREAD * distance;
+  const middle = front.top + front.height / 2;
+  // The superellipse's exponent: near 0 a rectangle, 1 an ellipse.
+  const p = 0.15 + 0.85 * clamp01(distance / WAVE_ROUNDING);
+  const power = (c: number) => Math.sign(c) * Math.abs(c) ** p;
+  const points: Point[] = [];
+  for (let i = 0; i < WAVE_POINTS; i++) {
+    const t = (2 * Math.PI * i) / WAVE_POINTS;
+    points.push(
+      at(a * power(Math.cos(t)), middle + b * power(Math.sin(t)), -distance),
+    );
+  }
+  return points;
 };
 
 /**
@@ -487,18 +534,31 @@ export const danceStack = (level: number): DanceStackDrawing => {
   // The bins bottom up, as each stands on the one below; then the cabinets from
   // the far end of the row (the camera is off the logo's end) to the logo.
   const cabinets: CabinetDrawing[] = [];
+  const fronts: Front[] = [];
+  const binPose: Pose = { x: (TOPS - 1) / 2, w: 0, angle: 0 };
   for (let i = bins.length - 1; i >= 0; i--)
-    if (bins[i] > 0)
-      cabinets.push(
-        drawCabinet(
-          BASS_BIN,
-          { x: (TOPS - 1) / 2, w: 0, angle: 0 },
-          MAIN.height + i * BASS_BIN.height,
-          bins[i],
-        ),
-      );
+    if (bins[i] > 0) {
+      const top = MAIN.height + i * BASS_BIN.height;
+      cabinets.push(drawCabinet(BASS_BIN, binPose, top, bins[i]));
+      fronts.push({
+        pose: binPose,
+        width: BASS_BIN.width,
+        top,
+        height: BASS_BIN.height,
+        opacity: bins[i],
+      });
+    }
   const poses = arc();
   for (let i = TOPS - 1; i >= 0; i--)
-    if (tops[i] > 0) cabinets.push(drawCabinet(MAIN, poses[i], 0, tops[i]));
-  return { cabinets };
+    if (tops[i] > 0) {
+      cabinets.push(drawCabinet(MAIN, poses[i], 0, tops[i]));
+      fronts.push({
+        pose: poses[i],
+        width: MAIN.width,
+        top: 0,
+        height: MAIN.height,
+        opacity: tops[i],
+      });
+    }
+  return { cabinets, fronts };
 };

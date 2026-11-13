@@ -68,6 +68,7 @@ import type {
   TailscaleStatus,
 } from "./Types.tsx";
 import {
+  DEFAULT_AIR,
   isChartSearchKind,
   isQuerylessSearchKind,
   playlistSyncKey,
@@ -75,13 +76,9 @@ import {
 import { DEFAULT_BEATPORT_GENRE_ID } from "./BeatportGenres.tsx";
 
 import { useWebSocket } from "./WebSocket.tsx";
-import {
-  audioCache,
-  downloadStatusLabels,
-  isDownloading,
-  useTrackAudio,
-} from "./AudioCache.ts";
-import { Waveform } from "./Waveform.tsx";
+import { audioCache, isDownloading, useTrackAudio } from "./AudioCache.ts";
+import PlaybackProgress from "./PlaybackProgress.tsx";
+import { setRowProgress } from "./rowProgress.ts";
 import { forgetMissingWaveforms, useWaveform } from "./useWaveform.ts";
 import BpmCheck from "./BpmCheck.tsx";
 import { formatTempo } from "./tempo.ts";
@@ -89,12 +86,7 @@ import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
 import { useAudioPlayback, useCanSetVolume } from "./AudioPlayback.ts";
 import VolumeControl, { DEFAULT_VOLUME } from "./VolumeControl.tsx";
-import {
-  formatDuration,
-  useLocalStorage,
-  shuffleArray,
-  hasCollectionStats,
-} from "./Utils.tsx";
+import { useLocalStorage, shuffleArray, hasCollectionStats } from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
 import { scrollGridToTop } from "./useGridScrollState.ts";
 import SearchBox from "./SearchBox.tsx";
@@ -254,8 +246,6 @@ type State = {
    */
   current_autoplay: boolean;
   player_id?: string;
-  duration?: number;
-  current_time?: number;
   playlist: string[];
   /** Set while the playlist is a queue of search results: each entry's `result_id`. */
   playlist_result_ids?: (number | undefined)[];
@@ -545,7 +535,7 @@ const reducer = (state: State, action: Action): State => {
       if (action.path === state.import_from) {
         return { ...state, import_from_is_valid: action.is_valid };
       }
-      return { ...state };
+      return state;
 
     case "grid-refreshed":
       return { ...state, should_refresh_grid: false };
@@ -688,13 +678,6 @@ const reducer = (state: State, action: Action): State => {
     case "set-new-releases-days":
       return { ...state, new_releases_days: action.days };
 
-    case "set-playback-progress":
-      return {
-        ...state,
-        duration: action.duration,
-        current_time: action.current_time,
-      };
-
     case "track-info":
       return { ...state, track_info: action.track };
 
@@ -776,7 +759,7 @@ const reducer = (state: State, action: Action): State => {
     case "pairing-code":
     case "health-check":
     case "error-reply": // the server also sends a notification with the reason
-      return { ...state };
+      return state;
 
     case "start-spotify-backfill":
       return {
@@ -789,7 +772,7 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "spotify-backfill-progress":
-      if (action.id !== state.spotify_backfill_id) return { ...state };
+      if (action.id !== state.spotify_backfill_id) return state;
       return {
         ...state,
         spotify_backfill_checked: action.checked,
@@ -798,7 +781,7 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "spotify-backfill-complete":
-      if (action.id !== state.spotify_backfill_id) return { ...state };
+      if (action.id !== state.spotify_backfill_id) return state;
       return notify(
         { ...state, spotify_backfill_running: false },
         action.error_message ??
@@ -819,7 +802,7 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "spotify-playlist-progress":
-      if (action.id !== state.spotify_playlist_id) return { ...state };
+      if (action.id !== state.spotify_playlist_id) return state;
       return {
         ...state,
         spotify_playlist_checked: action.checked,
@@ -828,7 +811,7 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "spotify-playlist":
-      if (action.id !== state.spotify_playlist_id) return { ...state };
+      if (action.id !== state.spotify_playlist_id) return state;
       return notify(
         {
           ...state,
@@ -854,7 +837,7 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "youtube-playlist-progress":
-      if (action.id !== state.youtube_playlist_id) return { ...state };
+      if (action.id !== state.youtube_playlist_id) return state;
       return {
         ...state,
         youtube_playlist_current: action.current,
@@ -862,7 +845,7 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "fixup-tracks-progress":
-      if (action.id !== state.youtube_fixup_id) return { ...state };
+      if (action.id !== state.youtube_fixup_id) return state;
       return {
         ...state,
         youtube_fixup_current: action.current,
@@ -871,7 +854,7 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "fixup-tracks-complete": {
-      if (action.id !== state.youtube_fixup_id) return { ...state };
+      if (action.id !== state.youtube_fixup_id) return state;
       const next = {
         ...state,
         youtube_fixup_running: false,
@@ -960,7 +943,7 @@ const reducer = (state: State, action: Action): State => {
       };
 
     case "youtube-playlist":
-      if (action.id !== state.youtube_playlist_id) return { ...state };
+      if (action.id !== state.youtube_playlist_id) return state;
       return notify(
         {
           ...state,
@@ -977,7 +960,7 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, youtube_playlist_open_url: undefined };
 
     case "cancel-youtube-playlist":
-      if (!state.youtube_playlist_running) return { ...state };
+      if (!state.youtube_playlist_running) return state;
       return notify(
         {
           ...state,
@@ -1520,20 +1503,13 @@ function App() {
   useEffect(() => {
     const i = setInterval(() => {
       if (playback) {
+        // Not dispatched: the footer's `PlaybackProgress` follows playback
+        // itself, as re-rendering the whole app every second stalls the
+        // animations timed by the beats.
         const t = Math.max(0.0, playback.currentTime());
-        // 0 while the track is loading, which shows "--:--" and disables the slider.
         const duration = playback.duration();
         const d = Math.max(1.0, duration);
-        document.documentElement.style.setProperty(
-          "--stereo-playback-progress",
-          `${t / d}`,
-        );
-        dispatch({
-          type: "set-playback-progress",
-          duration,
-          current_time: t,
-        });
-
+        setRowProgress(t / d);
         if (
           "mediaSession" in navigator &&
           Number.isFinite(t) &&
@@ -1556,7 +1532,7 @@ function App() {
     return () => {
       clearInterval(i);
     };
-  }, [playback, dispatch]);
+  }, [playback]);
 
   useEffect(() => {
     const query = state.search_box_input?.trim() ?? "";
@@ -1686,15 +1662,7 @@ function App() {
       const d = playback?.duration();
       if (!playback || !d) return;
       playback.seek(seconds);
-      document.documentElement.style.setProperty(
-        "--stereo-playback-progress",
-        `${seconds / d}`,
-      );
-      dispatch({
-        type: "set-playback-progress",
-        duration: d,
-        current_time: seconds,
-      });
+      setRowProgress(seconds / d);
     },
     [playback],
   );
@@ -2188,6 +2156,38 @@ function App() {
     state.player_state === "playing" &&
       settings.backgroundVideo &&
       backgroundPulse > 0,
+  );
+
+  // With every beat, the stacks push air out of their speakers, as hard as the
+  // volume says (at full strength where the page can't set it), unless it's
+  // turned off.
+  const air = useMemo(
+    () => ({ ...DEFAULT_AIR, ...settings.air }),
+    [settings.air],
+  );
+  const stackBeats = useMemo(
+    () => ({
+      air,
+      playback,
+      id: state.current_id,
+      beats: currentWaveform?.beats,
+      strength:
+        !air.isOn || state.player_state !== "playing" || muted
+          ? 0
+          : canSetVolume
+            ? Math.sqrt(volume / 100)
+            : 1,
+    }),
+    [
+      air,
+      playback,
+      state.current_id,
+      currentWaveform?.beats,
+      state.player_state,
+      muted,
+      canSetVolume,
+      volume,
+    ],
   );
 
   const hasSearchInput =
@@ -2797,7 +2797,7 @@ function App() {
               className="app-header"
             >
               <HStack vAlign="center" gap={2} className="collection-controls">
-                <DanceStack level={stackLevel} />
+                <DanceStack level={stackLevel} beats={stackBeats} />
                 <CollectionSelector
                   isValid={state.collection_is_valid ?? true}
                   collections={state.collections ?? []}
@@ -2904,6 +2904,8 @@ function App() {
                   setBackgroundPulse={(backgroundPulse) =>
                     setSettings((s) => ({ ...s, backgroundPulse }))
                   }
+                  air={air}
+                  setAir={(air) => setSettings((s) => ({ ...s, air }))}
                   isConnected={backendReady}
                   requestReply={requestReply}
                   tailscale={state.tailscale}
@@ -2915,7 +2917,7 @@ function App() {
                   onSpotifyBackfill={backfillSpotifyIds}
                 />
                 {/* The other speaker of the stereo pair, at the header's other end. */}
-                <DanceStack level={stackLevel} isMirrored />
+                <DanceStack level={stackLevel} beats={stackBeats} isMirrored />
               </HStack>
             </HStack>
           }
@@ -3131,117 +3133,84 @@ function App() {
                     {nowPlaying}
                   </StackItem>
                   <StackItem className="playback-transport">
-                    <HStack
-                      className="progress-slider"
-                      width="100%"
-                      vAlign="center"
-                      gap={2}
+                    <PlaybackProgress
+                      playback={playback}
+                      download={currentDownload}
+                      peaks={currentWaveform?.peaks}
+                      onSeek={onWaveformSeek}
                     >
-                      <Text
-                        type="supporting"
-                        hasTabularNumbers
-                        aria-live={currentDownload ? "polite" : undefined}
-                      >
-                        {currentDownload
-                          ? downloadStatusLabels[currentDownload.status]
-                          : formatDuration(state.current_time ?? 0)}
-                      </Text>
                       {/* The transport buttons float over the middle of the waveform. */}
-                      <StackItem size="fill" className="transport-stage">
-                        <Waveform
-                          peaks={currentWaveform?.peaks}
-                          currentTime={
-                            currentDownload ? 0 : (state.current_time ?? 0)
+                      <HStack
+                        className="transport-buttons"
+                        vAlign="center"
+                        hAlign="center"
+                        gap={touch ? 3 : 2}
+                      >
+                        <Tooltip
+                          content={
+                            <>
+                              Skip to previous track <Kbd keys="up" />
+                            </>
                           }
-                          duration={currentDownload ? 0 : (state.duration ?? 0)}
-                          onSeek={onWaveformSeek}
-                          buffered={currentDownload?.progress}
-                          isPending={
-                            !!currentDownload &&
-                            currentDownload.progress === undefined
-                          }
-                        />
-                        <HStack
-                          className="transport-buttons"
-                          vAlign="center"
-                          hAlign="center"
-                          gap={touch ? 3 : 2}
                         >
-                          <Tooltip
-                            content={
-                              <>
-                                Skip to previous track <Kbd keys="up" />
-                              </>
-                            }
-                          >
-                            <IconButton
-                              variant="secondary"
-                              size="lg"
-                              label="Skip to previous track"
-                              icon={<TrackPreviousIcon />}
-                              onClick={prevTrack}
-                            />
-                          </Tooltip>
+                          <IconButton
+                            variant="secondary"
+                            size="lg"
+                            label="Skip to previous track"
+                            icon={<TrackPreviousIcon />}
+                            onClick={prevTrack}
+                          />
+                        </Tooltip>
 
-                          <Tooltip
-                            content={
-                              <>
-                                Play / pause <Kbd keys="Space" /> /{" "}
-                                <Kbd keys="p" />
-                              </>
+                        <Tooltip
+                          content={
+                            <>
+                              Play / pause <Kbd keys="Space" /> /{" "}
+                              <Kbd keys="p" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            variant="primary"
+                            size="lg"
+                            className="play-pause-button"
+                            label={
+                              state.player_state === "playing" ||
+                              state.player_loading
+                                ? "Pause"
+                                : "Play"
                             }
-                          >
-                            <IconButton
-                              variant="primary"
-                              size="lg"
-                              className="play-pause-button"
-                              label={
-                                state.player_state === "playing" ||
-                                state.player_loading
-                                  ? "Pause"
-                                  : "Play"
-                              }
-                              icon={
-                                state.player_state === "playing" ? (
-                                  <PauseIcon />
-                                ) : (
-                                  <PlayIcon />
-                                )
-                              }
-                              // Stays clickable while loading, to cancel playback.
-                              isLoading={state.player_loading}
-                              isInterruptible
-                              onClick={togglePlayback}
-                            />
-                          </Tooltip>
+                            icon={
+                              state.player_state === "playing" ? (
+                                <PauseIcon />
+                              ) : (
+                                <PlayIcon />
+                              )
+                            }
+                            // Stays clickable while loading, to cancel playback.
+                            isLoading={state.player_loading}
+                            isInterruptible
+                            onClick={togglePlayback}
+                          />
+                        </Tooltip>
 
-                          <Tooltip
-                            content={
-                              <>
-                                Skip to next track <Kbd keys="down" />
-                              </>
-                            }
-                          >
-                            <IconButton
-                              variant="secondary"
-                              size="lg"
-                              label="Skip to next track"
-                              icon={<TrackNextIcon />}
-                              onClick={nextTrack}
-                            />
-                          </Tooltip>
-                        </HStack>
-                      </StackItem>
-                      <Text type="supporting" hasTabularNumbers>
-                        {currentDownload
-                          ? currentDownload.progress === undefined
-                            ? "--%"
-                            : `${Math.round(currentDownload.progress * 100)}%`
-                          : state.duration
-                            ? formatDuration(state.duration)
-                            : "--:--"}
-                      </Text>
-                    </HStack>
+                        <Tooltip
+                          content={
+                            <>
+                              Skip to next track <Kbd keys="down" />
+                            </>
+                          }
+                        >
+                          <IconButton
+                            variant="secondary"
+                            size="lg"
+                            label="Skip to next track"
+                            icon={<TrackNextIcon />}
+                            onClick={nextTrack}
+                          />
+                        </Tooltip>
+                      </HStack>
+                    </PlaybackProgress>
                   </StackItem>
                   <StackItem className="playback-options">
                     {/* On a phone the rating and the toggles get a row each. */}

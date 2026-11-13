@@ -4,6 +4,14 @@
   position: relative;
   isolation: isolate;
 }
+/* Astryx's layout is a flex item of the shell, at the shell's height, but with
+   `min-height: auto` every layout of the page measures its content's height first:
+   any change, e.g. the footer's time every second, lays out the whole grid again
+   (some 17ms on a full one), which visibly stalls the animations timed by the beats.
+   Its content scrolls inside it anyway. */
+.stereo-app > .astryx-layout {
+  min-height: 0;
+}
 
 .collection-controls {
   flex-wrap: wrap;
@@ -16,11 +24,20 @@
    the background artwork. Nothing between it and the app shell is a stacking context,
    so the negative z-index puts it under all of the app's content. */
 .dance-stack {
+  display: block;
   flex-shrink: 0;
   position: relative;
   z-index: -1;
-  overflow: visible;
   pointer-events: none;
+}
+.dance-stack > svg {
+  display: block;
+}
+/* The air its speakers push out with the beats: pressure waves through turbulence. */
+.dance-stack-air {
+  position: absolute;
+  display: none;
+  color: #b9b4f5;
 }
 /* Its mirror image at the other end of the header, growing toward the middle. */
 .dance-stack-mirrored {
