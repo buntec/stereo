@@ -1450,6 +1450,21 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             });
         }
 
+        MsgClient::SearchYouTubeVideos { id, query } => {
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                match scraper::yt_find_videos(&client, &query).await {
+                    Ok(videos) => {
+                        let _ = tx.send(MsgServer::YouTubeVideos { id, videos }).await;
+                    }
+                    Err(error) => {
+                        reply_error(&tx, id, &format!("YouTube search failed: {error:#}")).await;
+                    }
+                }
+            });
+        }
+
         MsgClient::DeleteTracks { ids, collection } => {
             // The ids were chosen in the client's view of a collection, which may since have been
             // switched; deleting them from another collection could remove the wrong tracks.

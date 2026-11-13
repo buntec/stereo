@@ -220,6 +220,15 @@
 
 /* A track row's thumbnail, which plays the track (ThumbnailPlayButton in Grid.tsx):
    a play triangle on a scrim that darkens on hover. */
+/* A candidate video's thumbnail in the change-video dialog. */
+.video-thumbnail {
+  flex: none;
+  width: var(--spacing-12);
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--radius-inner);
+  background: var(--color-background-muted);
+}
 .thumbnail-play-button {
   position: relative;
   display: grid;

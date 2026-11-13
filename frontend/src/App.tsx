@@ -518,6 +518,19 @@ const reducer = (state: State, action: Action): State => {
       };
     }
 
+    case "set-search-result-video": {
+      const updateTrack = (track: ITrack): ITrack =>
+        track.yt_id === action.old_yt_id
+          ? { ...track, yt_id: action.yt_id }
+          : track;
+      return {
+        ...state,
+        search_results: state.search_results?.map(updateTrack),
+        search_results_selection:
+          state.search_results_selection?.map(updateTrack),
+      };
+    }
+
     case "clear-search-results":
       return {
         ...state,

@@ -204,6 +204,12 @@ pub enum MsgServer {
         tracks: Vec<Track>,
         error_message: Option<String>,
     },
+    /// Reply to `SearchYouTubeVideos`.
+    #[serde(rename = "youtube-videos")]
+    YouTubeVideos {
+        id: i64,
+        videos: Vec<crate::models::YTVideo>,
+    },
     ValidateTrackReply {
         id: i64,
         is_valid: bool,
@@ -666,6 +672,13 @@ pub enum MsgClient {
         id: i64,
         url: String,
     },
+    /// YouTube videos for `query` (`MsgServer::YouTubeVideos`), to pick another video for a track
+    /// whose automatic match is wrong; a YouTube video link gives just that video.
+    #[serde(rename = "search-youtube-videos")]
+    SearchYouTubeVideos {
+        id: i64,
+        query: String,
+    },
     SetRepo {
         path: String,
     },
@@ -798,6 +811,7 @@ impl MsgClient {
             | Self::DisconnectBeatportSession { id }
             | Self::GetSpotifyPlaylistInfo { id, .. }
             | Self::GetYouTubePlaylist { id, .. }
+            | Self::SearchYouTubeVideos { id, .. }
             | Self::CloneRepo { id, .. }
             | Self::ValidateTrack { id, .. }
             | Self::CheckSpotifyId { id, .. }

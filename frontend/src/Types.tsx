@@ -27,6 +27,7 @@ export type TrackSource =
 
 export interface ITrack {
   title: string;
+  mix_name?: string;
   artists: string[];
   yt_id: string;
   bp_id?: number;
@@ -215,6 +216,8 @@ export type ClientMsg =
     }
   | { type: "get-spotify-playlist-info"; id?: number; url: string }
   | { type: "get-youtube-playlist"; id?: number; url: string }
+  /** Videos to pick a track's video from; a YouTube video link gives just that video. */
+  | { type: "search-youtube-videos"; id?: number; query: string }
   | { type: "set-repo"; path: string }
   | { type: "clone-repo"; url: string; id?: number }
   | { type: "list-repos" }
@@ -261,6 +264,7 @@ export type ServerMsg =
     }
   | { type: "heartbeat"; timestamp: number }
   | { type: "validate-track-reply"; is_valid: boolean; id: number }
+  | { type: "youtube-videos"; id: number; videos: YouTubeVideo[] }
   | {
       type: "check-spotify-id-reply";
       id: number;
@@ -560,6 +564,8 @@ export type Action =
   | { type: "search-box-input"; input: string }
   | { type: "search-results-selection-changed"; selected: ITrack[] }
   | { type: "set-track-rating"; yt_id: string; rating: number | null }
+  // Replaces the YouTube video matched to a search result.
+  | { type: "set-search-result-video"; old_yt_id: string; yt_id: string }
   | { type: "clear-search-results" }
   | { type: "set-search-failure" }
   // `is_chart` marks a chart search, whose results are shown in chart order.
@@ -596,6 +602,15 @@ export type RequestReply = (
   cb: (response: ServerMsg | { type: string }) => void,
   timeout?: number,
 ) => void;
+
+/** A YouTube video, as found by `search-youtube-videos`. */
+export type YouTubeVideo = {
+  id: string;
+  /** Empty for a linked video YouTube's search didn't turn up. */
+  title: string;
+  channel: string;
+  duration_secs: number | null;
+};
 
 export type YouTubeLogin = {
   id: string;

@@ -1338,6 +1338,33 @@ pub fn parse_youtube_playlist_id(input: &str) -> Option<String> {
     .then_some(id)
 }
 
+/// Extracts a video id from a YouTube or YouTube Music video link (`watch?v=`, `youtu.be/`,
+/// `/shorts/`, `/embed/`, `/live/`).
+pub fn parse_youtube_video_id(input: &str) -> Option<String> {
+    let parsed = url::Url::parse(input.trim()).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    let mut segments = parsed.path_segments()?;
+    let id = if host == "youtu.be" {
+        segments.next().map(str::to_string)
+    } else if host == "youtube.com" || host.ends_with(".youtube.com") {
+        match segments.next() {
+            Some("watch") => parsed
+                .query_pairs()
+                .find(|(key, _)| key == "v")
+                .map(|(_, value)| value.into_owned()),
+            Some("shorts" | "embed" | "live" | "v") => segments.next().map(str::to_string),
+            _ => None,
+        }
+    } else {
+        None
+    }?;
+    (id.len() == 11
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+    .then_some(id)
+}
+
 fn extract_json_assignment(html: &str, marker: &str) -> Option<serde_json::Value> {
     let start = html.find(marker)? + marker.len();
     let json_start = html[start..].find('{')? + start;
@@ -1702,6 +1729,30 @@ pub async fn yt_search_simple(
         }
     }
     Ok(vec![])
+}
+
+/// How many videos `yt_find_videos` offers for a search.
+const YT_FIND_LIMIT: usize = 20;
+
+/// YouTube videos to choose a track's video from: search results for `query`, or just the
+/// video a pasted link points to. A linked video YouTube's search doesn't turn up (e.g. one
+/// longer than `MAX_VIDEO_LENGTH_SECS`) is still returned, with its id only and no title.
+pub async fn yt_find_videos(client: &Client, query: &str) -> anyhow::Result<Vec<YTVideo>> {
+    let Some(id) = parse_youtube_video_id(query) else {
+        return yt_search_simple(client, query, YT_FIND_LIMIT).await;
+    };
+    // Searching for a video's id usually finds it, which gives its title and channel.
+    let found = yt_search_simple(client, &id, 5)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|video| video.id == id);
+    Ok(vec![found.unwrap_or(YTVideo {
+        title: String::new(),
+        id,
+        channel: String::new(),
+        duration_secs: None,
+    })])
 }
 
 pub async fn yt_create_anon_playlist(
@@ -3278,6 +3329,35 @@ mod remix_match_tests {
 
         let remix = RawTrack::Bp(bp_track("Just Like Magic", "Someone Remix"));
         assert!(remix.yt_query().contains("Someone Remix"));
+    }
+
+    #[test]
+    fn parses_youtube_video_urls() {
+        for url in [
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://music.youtube.com/watch?list=PLabc&v=dQw4w9WgXcQ&si=x",
+            "https://m.youtube.com/watch?v=dQw4w9WgXcQ&t=42",
+            "https://youtu.be/dQw4w9WgXcQ?si=ignored",
+            "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+            "https://www.youtube.com/embed/dQw4w9WgXcQ",
+            " https://youtube.com/live/dQw4w9WgXcQ ",
+        ] {
+            assert_eq!(
+                parse_youtube_video_id(url),
+                Some("dQw4w9WgXcQ".to_string()),
+                "{url}"
+            );
+        }
+        for input in [
+            "dQw4w9WgXcQ",
+            "artist title",
+            "https://example.com/watch?v=dQw4w9WgXcQ",
+            "https://youtube.com/watch?v=short",
+            "https://youtube.com/playlist?list=PLabc123",
+            "https://youtube.com/@channel",
+        ] {
+            assert_eq!(parse_youtube_video_id(input), None, "{input}");
+        }
     }
 
     #[test]

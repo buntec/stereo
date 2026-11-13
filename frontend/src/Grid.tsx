@@ -67,7 +67,10 @@ import {
   ColumnsIcon,
   HamburgerMenuIcon,
   Pencil1Icon,
+  VideoIcon,
 } from "@radix-ui/react-icons";
+
+import ChangeVideoDialog from "./ChangeVideoDialog.tsx";
 
 import { EditTrackDialog } from "./EditDialog.tsx";
 import { GridScrollButtons } from "./GridScrollButtons.tsx";
@@ -110,16 +113,18 @@ const flexWidth = (flex: number): ColDef => ({
 // Width of the controls column (thumbnail play button and two icon buttons), which is
 // fixed by its renderer's content: 104px plus the cell's horizontal padding.
 const CONTROLS_WIDTH = 136;
+// The search results' controls have a third icon button (28px plus a 4px gap).
+const SEARCH_CONTROLS_WIDTH = CONTROLS_WIDTH + 32;
 
 // Narrow screens: App.css halves the cells' horizontal padding there, so the fixed
 // columns shrink by as much, and the free-text columns may get narrower before the grid
 // scrolls sideways. The selection column fits just its checkbox.
-const COMPACT_CONTROLS_WIDTH = 120;
+const COMPACT_PADDING_SAVING = CONTROLS_WIDTH - 120;
 const COMPACT_FLEX_MIN_WIDTH = 100;
 const compactColumns = (colDefs: ColDef[]): ColDef[] =>
   colDefs.map((c) =>
-    c.field === "yt_id"
-      ? { ...c, ...fixedWidth(COMPACT_CONTROLS_WIDTH) }
+    c.field === "yt_id" && c.width
+      ? { ...c, ...fixedWidth(c.width - COMPACT_PADDING_SAVING) }
       : c.initialFlex
         ? { ...c, minWidth: COMPACT_FLEX_MIN_WIDTH }
         : c,
@@ -377,6 +382,38 @@ const SearchPlayControlRenderer: React.FC<
     <HStack gap={1} vAlign="center">
       <ThumbnailPlayButton track={data} onPlay={handlePlay} />
       <AudioCacheButton id={data.yt_id} onDownload={context.downloadAudio} />
+      <DropdownMenu
+        hasChevron={false}
+        button={{
+          label: `Options for ${data.title}`,
+          icon: <HamburgerMenuIcon />,
+          isIconOnly: true,
+          variant: "ghost",
+          size: "sm",
+          tooltip: "Track options",
+        }}
+        items={[
+          {
+            label: "Change YouTube video…",
+            icon: <VideoIcon />,
+            onClick: () => context.onChangeVideo(data),
+          },
+          {
+            label: "Open in YouTube",
+            icon: <YouTubeIcon size={15} />,
+            onClick: () => openInYouTube(data.yt_id),
+          },
+          ...(data.sp_id
+            ? [
+                {
+                  label: "Open in Spotify",
+                  icon: <SpotifyIcon size={15} />,
+                  onClick: () => openInSpotify(data.sp_id!),
+                },
+              ]
+            : []),
+        ]}
+      />
       <IconButton
         variant="secondary"
         size="sm"
@@ -434,6 +471,8 @@ type SearchResultsGridContext = {
   onLabelClick: (name: string) => void;
   addTrack: (track: ITrack) => void;
   downloadAudio: (id: string) => void;
+  // Opens the dialog to pick another YouTube video for a result.
+  onChangeVideo: (track: ITrack) => void;
   tracks: ITrack[];
 };
 
@@ -473,7 +512,7 @@ export const SearchResultsGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: SearchPlayControlRenderer,
-      ...fixedWidth(CONTROLS_WIDTH),
+      ...fixedWidth(SEARCH_CONTROLS_WIDTH),
     },
     {
       field: "title",
@@ -622,6 +661,17 @@ export const SearchResultsGrid = ({
     };
   }, [resultIds, lastCollectionUpdate, requestReply, gridRef]);
 
+  const [changingVideo, setChangingVideo] = useState<ITrack | null>(null);
+  const changeVideo = useCallback(
+    (track: ITrack, yt_id: string) =>
+      dispatch({
+        type: "set-search-result-video",
+        old_yt_id: track.yt_id,
+        yt_id,
+      }),
+    [dispatch],
+  );
+
   const context: SearchResultsGridContext = useMemo(() => {
     return {
       requestReply,
@@ -632,6 +682,7 @@ export const SearchResultsGrid = ({
       onLabelClick,
       addTrack,
       downloadAudio,
+      onChangeVideo: setChangingVideo,
       tracks: tracks ?? [],
     };
   }, [
@@ -690,6 +741,12 @@ export const SearchResultsGrid = ({
         showCurrent={currentInResults && !currentVisible}
         onTop={() => scrollGridToTop(gridRef.current?.api)}
         onShowCurrent={onShowCurrent}
+      />
+      <ChangeVideoDialog
+        track={changingVideo}
+        onClose={() => setChangingVideo(null)}
+        onChange={changeVideo}
+        requestReply={requestReply}
       />
     </StackItem>
   );
