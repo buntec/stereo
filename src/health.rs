@@ -13,6 +13,7 @@ use tokio::task::JoinSet;
 use wreq::Client;
 
 use crate::{
+    apple_music::{self, AMTrack},
     models::{BPTrack, SCTrack, ShazamTrack, TXTrack, Track, VLTrack, YTVideo},
     scraper,
     spotify::{self, SpTrack},
@@ -94,6 +95,7 @@ impl_probe_item_for_tracks!(
     VLTrack => track_name,
     TXTrack => track_name,
     SpTrack => track_name,
+    AMTrack => track_name,
     ShazamTrack => title,
 );
 
@@ -186,6 +188,20 @@ fn probes(client: &Client) -> Vec<Probe> {
             let client = c();
             async move { summarize(&spotify::search_tracks(&client, SEARCH_QUERY, 3).await?) }
         }),
+        probe("Apple Music", &search_probe, {
+            let client = c();
+            async move {
+                summarize(
+                    &apple_music::search_tracks(
+                        &client,
+                        SEARCH_QUERY,
+                        apple_music::SearchField::Any,
+                        3,
+                    )
+                    .await?,
+                )
+            }
+        }),
         probe("YouTube", "Search for “Daft Punk One More Time”", {
             let client = c();
             async move {
@@ -203,7 +219,8 @@ fn probes(client: &Client) -> Vec<Probe> {
             },
         ),
         // A collection track's similar songs first find it on Shazam through Apple Music's
-        // search; that bridge is checked on its own, so its failures aren't blamed on Shazam.
+        // search and Shazam's Apple-id mapping; that bridge is checked on its own, so its
+        // failures aren't blamed on Shazam's song pages.
         probe(
             "Shazam lookup",
             "Find HUGEL & SOLTO (FR) – Jamaican (Bam Bam) on Apple Music, then on Shazam",

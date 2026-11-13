@@ -589,6 +589,10 @@ export const SearchResultsGrid = ({
             return "Volumo";
           case "traxsource":
             return "Traxsource";
+          case "spotify":
+            return "Spotify";
+          case "apple-music":
+            return "Apple Music";
           case "shazam":
             return "Shazam";
           default:
