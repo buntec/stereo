@@ -22,7 +22,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{
-    audio, beatport, beats, db, git,
+    audio, beatport, beats, db, git, health,
     message::{
         MsgClient, MsgServer, PlaylistEdit, PlaylistSync, PlaylistSyncState, PlaylistTargetStatus,
         PlaylistView, SearchKind,
@@ -215,6 +215,7 @@ struct SessionState {
     repo: Option<std::path::PathBuf>,
     repo_sync_task: Option<tokio::task::JoinHandle<()>>,
     search_task: Option<tokio::task::JoinHandle<()>>,
+    health_check_task: Option<tokio::task::JoinHandle<()>>,
     youtube_playlist_task: Option<tokio::task::JoinHandle<()>>,
     fixup_task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -580,6 +581,7 @@ async fn handle_socket(mut socket: WebSocket, settings: Arc<Settings>, paired: O
     // sync is left to finish so it can't be interrupted halfway through a merge.
     for task in [
         state.search_task.take(),
+        state.health_check_task.take(),
         state.youtube_playlist_task.take(),
         state.fixup_task.take(),
     ]
@@ -1163,6 +1165,28 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
     match msg {
         MsgClient::Heartbeat { timestamp } => {
             let _ = tx.send(MsgServer::Heartbeat { timestamp }).await;
+        }
+
+        MsgClient::RunHealthCheck { id } => {
+            anyhow::ensure!(
+                !state
+                    .health_check_task
+                    .as_ref()
+                    .is_some_and(|task| !task.is_finished()),
+                "A health check is already running"
+            );
+            let client = Arc::clone(client);
+            let tx = tx.clone();
+            state.health_check_task = Some(tokio::spawn(async move {
+                let checks = health::run(&client).await;
+                let _ = tx
+                    .send(MsgServer::HealthCheck {
+                        id,
+                        checked_at: chrono::Utc::now().to_rfc3339(),
+                        checks,
+                    })
+                    .await;
+            }));
         }
 
         MsgClient::SetRepo { path } => {

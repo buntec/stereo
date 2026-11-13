@@ -120,6 +120,7 @@ export type TailscaleStatus =
   | { state: "error"; message: string };
 
 export type ClientMsg =
+  | { type: "run-health-check" }
   | { type: "set-collection"; path: string }
   | { type: "validate-track"; track: unknown; id?: number }
   | { type: "check-spotify-id"; sp_id: string; id?: number }
@@ -261,6 +262,12 @@ export type ClientMsg =
     };
 
 export type ServerMsg =
+  | {
+      type: "health-check";
+      id: number;
+      checked_at: string;
+      checks: HealthCheckResult[];
+    }
   | {
       type: "notification";
       message: string;
@@ -612,6 +619,14 @@ export type RequestReply = (
   cb: (response: ServerMsg | { type: string }) => void,
   timeout?: number,
 ) => void;
+
+export type HealthCheckResult = {
+  name: string;
+  probe: string;
+  status: "passed" | "failed";
+  message: string;
+  duration_ms: number;
+};
 
 /** A YouTube video, as found by `search-youtube-videos`. */
 export type YouTubeVideo = {
