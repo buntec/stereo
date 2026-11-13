@@ -865,6 +865,44 @@ test("the logo builds up into a dance stack with the volume, without moving the 
   );
 });
 
+test("offers only mute where the page can't set the volume (iOS)", async ({
+  page,
+}) => {
+  // WebKit on iOS keeps an assigned volume for now and restores the old one in
+  // a task it queues, so reading it back right away says it worked.
+  await page.addInitScript(() => {
+    const native = Object.getOwnPropertyDescriptor(
+      HTMLMediaElement.prototype,
+      "volume",
+    )!;
+    const assigned = new WeakMap<HTMLMediaElement, number>();
+    Object.defineProperty(HTMLMediaElement.prototype, "volume", {
+      configurable: true,
+      get(this: HTMLMediaElement) {
+        return assigned.get(this) ?? (native.get!.call(this) as number);
+      },
+      set(this: HTMLMediaElement, volume: number) {
+        assigned.set(this, volume);
+        setTimeout(() => assigned.delete(this));
+      },
+    });
+  });
+  await openApp(page);
+  const mute = page.getByRole("button", { name: "Mute" });
+  await expect(mute).toBeVisible();
+  // Longer than the app gives a reversion to land.
+  await page.waitForTimeout(1000);
+  await expect(page.getByRole("slider", { name: "Volume" })).toHaveCount(0);
+  // The stacks don't claim a volume that isn't applied: they're the logo alone.
+  await expect(
+    page.getByRole("img", { name: "Stereo" }).locator("svg > g"),
+  ).toHaveCount(1);
+  await expect(page.locator(".dance-stack-mirrored svg > g")).toHaveCount(1);
+
+  await mute.click();
+  await expect(mute).toHaveAttribute("aria-pressed", "true");
+});
+
 test("explains that playback needs yt-dlp when the backend can't download audio", async ({
   page,
 }) => {

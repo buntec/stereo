@@ -87,7 +87,7 @@ import BpmCheck from "./BpmCheck.tsx";
 import { formatTempo } from "./tempo.ts";
 import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
-import { canSetVolume, useAudioPlayback } from "./AudioPlayback.ts";
+import { useAudioPlayback, useCanSetVolume } from "./AudioPlayback.ts";
 import VolumeControl, { DEFAULT_VOLUME } from "./VolumeControl.tsx";
 import {
   formatDuration,
@@ -1995,6 +1995,7 @@ function App() {
 
   const volume = settings.volume ?? DEFAULT_VOLUME;
   const muted = settings.muted ?? false;
+  const canSetVolume = useCanSetVolume();
   useEffect(() => {
     playback?.setVolume(volume / 100, muted);
   }, [playback, volume, muted]);
