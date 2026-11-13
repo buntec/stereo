@@ -34,6 +34,31 @@
   translate: 0 -50%;
   scale: -1 1;
 }
+/* The stacks run under the controls at the header's and toolbar's ends: the
+   toolbar's first item (playlists menu, or the track or result count) and the
+   settings button. Those get frosted glass, like the transport buttons over the
+   waveform. It's a background image, so a button's own hover and pressed colors
+   still show through. */
+.collection-toolbar .astryx-toolbar > * > .astryx-stack > :first-child,
+.settings-button {
+  --dance-stack-glass: rgb(from var(--color-background-surface) r g b / 0.1);
+  background-image: linear-gradient(
+    var(--dance-stack-glass),
+    var(--dance-stack-glass)
+  );
+  -webkit-backdrop-filter: blur(var(--spacing-2));
+  backdrop-filter: blur(var(--spacing-2));
+}
+/* A count is bare text: pad its glass out without moving it. */
+.collection-toolbar
+  .astryx-toolbar
+  > *
+  > .astryx-stack
+  > .astryx-text:first-child {
+  padding: var(--spacing-1) var(--spacing-2);
+  margin: calc(-1 * var(--spacing-1)) calc(-1 * var(--spacing-2));
+  border-radius: var(--radius-full);
+}
 
 /* The search grows up to a comfortable query width; the auto margins then take
    the leftover space, centering it between the collection and nav-bar controls. */

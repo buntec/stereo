@@ -858,6 +858,11 @@ test("the logo grows into a dance stack with the volume, without moving the head
     await expect(s).toHaveCSS("z-index", "-1");
     await expect(s).toHaveCSS("pointer-events", "none");
   }
+  // The controls they run under are frosted over, to stay readable.
+  await expect(page.getByRole("button", { name: "Settings" })).toHaveCSS(
+    "backdrop-filter",
+    "blur(8px)",
+  );
 });
 
 test("explains that playback needs yt-dlp when the backend can't download audio", async ({
