@@ -116,6 +116,12 @@ pub enum MsgServer {
     Heartbeat {
         timestamp: i64,
     },
+    /// Read-only diagnostics of the search providers, returned after all bounded probes finish.
+    HealthCheck {
+        id: i64,
+        checked_at: String,
+        checks: Vec<crate::health::CheckResult>,
+    },
     TrackUpdate {
         track: Track,
     },
@@ -592,6 +598,9 @@ pub enum MsgClient {
         limit: i64,
     },
     SearchCancelAll {},
+    RunHealthCheck {
+        id: i64,
+    },
     /// Downloads a track's audio in the background, even if its download failed recently.
     DownloadAudio {
         yt_id: String,
@@ -802,6 +811,7 @@ impl MsgClient {
             | Self::GetWaveform { id, .. }
             | Self::CreatePairingCode { id }
             | Self::GetNewReleasesCandidates { id }
+            | Self::RunHealthCheck { id }
             | Self::CreateYtAnonPlaylist { id, .. }
             | Self::GetSpotifySession { id }
             | Self::SetSpotifySession { id, .. }
@@ -828,6 +838,31 @@ impl MsgClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn health_check_protocol_matches_request_reply_and_status_tags() {
+        let request: MsgClient = serde_json::from_value(serde_json::json!({
+            "type": "run-health-check", "id": 42,
+        }))
+        .unwrap();
+        assert_eq!(request.request_id(), Some(42));
+        let reply = serde_json::to_value(MsgServer::HealthCheck {
+            id: 42,
+            checked_at: "2026-11-13T12:00:00Z".into(),
+            checks: vec![crate::health::CheckResult {
+                name: "YouTube".into(),
+                probe: "Known song".into(),
+                status: crate::health::CheckStatus::Failed,
+                message: "HTTP 429".into(),
+                duration_ms: 100,
+            }],
+        })
+        .unwrap();
+        assert_eq!(reply["type"], "health-check");
+        assert_eq!(reply["id"], 42);
+        assert_eq!(reply["checks"][0]["status"], "failed");
+        assert_eq!(reply["checks"][0]["duration_ms"], 100);
+    }
 
     #[test]
     fn waveform_beats_are_time_and_strength_pairs() {

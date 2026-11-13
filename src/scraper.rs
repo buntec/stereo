@@ -312,7 +312,7 @@ pub async fn shazam_similar_tracks(
 /// Finds the Shazam id for a normal collection track by going through Apple Music's public web
 /// search page and Shazam's Apple-id mapping endpoint. Collection tracks do not store a Shazam id,
 /// so this is the bridge used by the row-level "similar songs" action.
-async fn shazam_id_for_track(client: &Client, track: &Track) -> anyhow::Result<i64> {
+pub async fn shazam_id_for_track(client: &Client, track: &Track) -> anyhow::Result<i64> {
     let query = format!("{} {}", track.artists.join(" "), track.title);
     let response = client
         .get("https://music.apple.com/us/search")

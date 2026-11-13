@@ -35,6 +35,25 @@ fn all_sources() -> Vec<TrackSource> {
     ]
 }
 
+#[tokio::test]
+#[ignore = "hits all external search providers"]
+async fn test_health_check() {
+    let checks = stereo_backend::health::run(&client()).await;
+    assert_eq!(checks.len(), 10);
+    for check in &checks {
+        println!(
+            "{:?} {} ({} ms): {}",
+            check.status, check.name, check.duration_ms, check.message
+        );
+    }
+    assert!(
+        checks
+            .iter()
+            .all(|check| check.status == stereo_backend::health::CheckStatus::Passed),
+        "one or more search services failed their health check"
+    );
+}
+
 // ── YouTube ───────────────────────────────────────────────────────────────────
 
 #[tokio::test]

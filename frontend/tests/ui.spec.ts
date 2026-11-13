@@ -265,6 +265,7 @@ async function openApp(
       audio = mode;
     },
     send: (message: unknown) => socket.send(JSON.stringify(message)),
+    disconnect: () => socket.close(),
   };
 }
 
@@ -398,6 +399,7 @@ for (const width of [390, 768, 1440]) {
       page.getByRole("button", { name: /^YouTube:/ }),
       page.getByRole("button", { name: /^Spotify:/ }),
       page.getByRole("button", { name: /^Beatport:/ }),
+      page.getByRole("button", { name: "Health check", exact: true }),
       page.getByRole("button", { name: "Search", exact: true }),
       page.getByRole("button", { name: "Toggle shuffle play", exact: true }),
     ]) {
@@ -417,6 +419,149 @@ for (const width of [390, 768, 1440]) {
     await expect(dark).toBeChecked();
   });
 }
+
+for (const width of [390, 1440]) {
+  test(`health check keeps a diagnostic report and supports reruns at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { messages, send } = await openApp(page, { noCollection: true });
+    const requests = () =>
+      messages.filter((message) => message.type === "run-health-check");
+    const trigger = page.getByRole("button", {
+      name: "Health check",
+      exact: true,
+    });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "Health check" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByRole("progressbar", { name: "Checking search services…" }),
+    ).toBeVisible();
+    await expect.poll(() => requests().length).toBe(1);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    expect(requests()).toHaveLength(1);
+    const checks = [
+      "Beatport",
+      "SoundCloud",
+      "Volumo",
+      "Traxsource",
+      "Spotify",
+      "YouTube",
+      "Shazam",
+      "Beatport charts",
+      "Traxsource charts",
+    ].map((name, index) => ({
+      name,
+      probe: "Search for “Solomun”",
+      status: index === 0 ? "failed" : "passed",
+      message:
+        index === 0
+          ? "request blocked by Cloudflare's bot check (HTTP 403). Reconnect Beatport to refresh the browser clearance."
+          : "3 usable results; e.g. Solomun – Example track",
+      duration_ms: 1234,
+    }));
+    send({
+      type: "health-check",
+      id: requests()[0].id,
+      checked_at: "2026-11-13T12:00:00Z",
+      checks,
+    });
+    await expect(dialog.getByText("1 of 9 checks failed.")).toBeVisible();
+    await expect(dialog.getByText(checks[0].message)).toBeVisible();
+    await expect(dialog.getByRole("listitem")).toHaveCount(9);
+    const box = await dialog.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    const copy = dialog.getByRole("button", {
+      name: "Copy report",
+      exact: true,
+    });
+    await copy.scrollIntoViewIfNeeded();
+    await page.evaluate(() => {
+      Object.defineProperty(navigator.clipboard, "writeText", {
+        configurable: true,
+        value: async (text: string) => {
+          document.documentElement.dataset.copiedReport = text;
+        },
+      });
+    });
+    await copy.click();
+    await expect(
+      dialog.getByRole("button", { name: "Copied", exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.locator("html").getAttribute("data-copied-report"),
+    ).toContain("FAILED Beatport (1234 ms)");
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    await trigger.click();
+    await expect(dialog.getByText("1 of 9 checks failed.")).toBeVisible();
+    expect(requests()).toHaveLength(1);
+    await dialog
+      .getByRole("button", { name: "Run again", exact: true })
+      .click();
+    await expect.poll(() => requests().length).toBe(2);
+    send({
+      type: "health-check",
+      id: requests()[1].id,
+      checked_at: "2026-11-13T12:01:00Z",
+      checks: checks.map((check) => ({ ...check, status: "passed" })),
+    });
+    await expect(dialog.getByText("All 9 checks passed.")).toBeVisible();
+  });
+}
+
+test("health check recovers from a lost connection", async ({ page }) => {
+  const { messages, send, disconnect } = await openApp(page);
+  await page.getByRole("button", { name: "Health check", exact: true }).click();
+  await expect
+    .poll(() => messages.some((message) => message.type === "run-health-check"))
+    .toBe(true);
+  disconnect();
+  const dialog = page.getByRole("dialog", { name: "Health check" });
+  await expect(
+    dialog.getByText(
+      "Connection lost during the health check. Reconnect and try again.",
+    ),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "Run checks", exact: true }),
+  ).toBeEnabled();
+  await dialog.getByRole("button", { name: "Run checks", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        messages.filter((message) => message.type === "run-health-check")
+          .length,
+    )
+    .toBe(2);
+  const request = messages.filter(
+    (message) => message.type === "run-health-check",
+  )[1];
+  send({
+    type: "health-check",
+    id: request.id,
+    checked_at: "2026-11-13T12:00:00Z",
+    checks: [
+      {
+        name: "YouTube",
+        probe: "Search for “Daft Punk One More Time”",
+        status: "passed",
+        message: "3 usable results; e.g. Daft Punk - One More Time",
+        duration_ms: 800,
+      },
+    ],
+  });
+  await expect(dialog.getByText("All 1 checks passed.")).toBeVisible();
+  await expect(
+    dialog.getByText(
+      "Connection lost during the health check. Reconnect and try again.",
+    ),
+  ).toHaveCount(0);
+});
 
 test("column customizations survive crossing the compact breakpoint", async ({
   page,

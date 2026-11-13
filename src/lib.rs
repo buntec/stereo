@@ -5,6 +5,7 @@ pub mod browser_cookies;
 pub mod data_dir;
 pub mod db;
 pub mod git;
+pub mod health;
 pub mod message;
 pub mod models;
 pub mod playlist_sync;

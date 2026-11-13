@@ -14,6 +14,7 @@ import BeatportIcon from "./BeatportIcon.tsx";
 import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
 import SettingsMenu from "./SettingsMenu.tsx";
 import TailscaleButton from "./TailscaleButton.tsx";
+import HealthCheckButton from "./HealthCheckButton.tsx";
 import BeatportSessionDialog from "./BeatportSessionDialog.tsx";
 import YouTubeSessionDialog from "./YouTubeSessionDialog.tsx";
 import { inDesktopApp } from "./Utils.tsx";
@@ -215,6 +216,11 @@ function NavBarControls({
           <TailscaleButton status={tailscale} requestReply={requestReply} />
         </HStack>
         {!isCompact && appearanceControl}
+        <HealthCheckButton
+          isConnected={isConnected}
+          requestReply={requestReply}
+          version={version}
+        />
         <SettingsMenu
           backgroundShown={backgroundShown}
           backgroundPulse={backgroundPulse}
