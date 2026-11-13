@@ -20,9 +20,6 @@ use crate::{
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(45);
 const SEARCH_QUERY: &str = "Solomun";
-/// Enough to tell a working search from a broken one, without fetching Beatport's largest
-/// search page on every check.
-const BP_PROBE_PER_PAGE: usize = 25;
 const SHAZAM_SONG_URL: &str = "https://www.shazam.com/song/1243689211/fiore-and-i";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -171,11 +168,7 @@ fn probes(client: &Client) -> Vec<Probe> {
     vec![
         probe("Beatport", &search_probe, {
             let client = c();
-            async move {
-                summarize(
-                    &scraper::bp_search_tracks(&client, SEARCH_QUERY, BP_PROBE_PER_PAGE).await?,
-                )
-            }
+            async move { summarize(&scraper::bp_search_tracks(&client, SEARCH_QUERY).await?) }
         }),
         probe("SoundCloud", &search_probe, {
             let client = c();

@@ -380,20 +380,12 @@ pub async fn shazam_similar_tracks_for_track(
     .await
 }
 
-/// Results per page for searches: one request gets them all.
-pub const BP_SEARCH_PER_PAGE: usize = 1000;
-
-pub async fn bp_search_tracks(
-    client: &Client,
-    q: &str,
-    per_page: usize,
-) -> anyhow::Result<Vec<BPTrack>> {
+pub async fn bp_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<BPTrack>> {
     tracing::info!("Beatport track search: {q}");
-    let per_page = per_page.to_string();
     let json = bp_page(
         client,
         "https://www.beatport.com/search/tracks",
-        &[("q", q), ("per_page", &per_page), ("page", "1")],
+        &[("q", q), ("per_page", "1000"), ("page", "1")],
     )
     .await?;
 
@@ -2291,7 +2283,7 @@ pub async fn fixup_track(client: Arc<Client>, track: Track) -> anyhow::Result<Op
     }
 
     let (bp_res, vl_res, tx_res) = tokio::join!(
-        bp_search_tracks(&client, &query, BP_SEARCH_PER_PAGE),
+        bp_search_tracks(&client, &query),
         vl_search_tracks(&client, &query, 10),
         tx_search_tracks(&client, &query),
     );
@@ -2534,7 +2526,7 @@ pub async fn search_fuzzy(
         let (bp_res, sc_res, vl_res, tx_res, sp_res) = tokio::join!(
             async {
                 if sources.contains(&TrackSource::Beatport) {
-                    bp_search_tracks(&client, &query, BP_SEARCH_PER_PAGE).await
+                    bp_search_tracks(&client, &query).await
                 } else {
                     Ok(vec![])
                 }

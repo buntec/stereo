@@ -10,12 +10,14 @@ import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
 import {
-  ActivityLogIcon,
   CheckIcon,
   CopyIcon,
   Cross2Icon,
   ReloadIcon,
 } from "@radix-ui/react-icons";
+// Radix has no health/diagnostics glyph. Lucide is the icon set Astryx's Neutral theme draws its
+// own icons with, so it matches the dialogs and menus around it.
+import { Stethoscope } from "lucide-react";
 import type { RequestReply, ServerMsg } from "./Types.tsx";
 
 type HealthReport = Extract<ServerMsg, { type: "health-check" }>;
@@ -81,7 +83,7 @@ export default function HealthCheckButton({
       <IconButton
         label="Health check"
         tooltip="Health check"
-        icon={<ActivityLogIcon />}
+        icon={<Stethoscope size="1em" aria-hidden />}
         variant="ghost"
         onClick={() => {
           setIsOpen(true);
