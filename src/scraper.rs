@@ -12,6 +12,7 @@ use wreq::Client;
 use wreq_util::Emulation;
 
 use crate::{
+    apple_music::{self, AMTrack},
     message::MsgServer,
     models::{
         BPArtist, BPLabel, BPTrack, SCTrack, SCUser, ShazamTrack, TXTrack, Track, TrackSource,
@@ -309,27 +310,12 @@ pub async fn shazam_similar_tracks(
     Ok(tracks)
 }
 
-/// Finds the Shazam id for a normal collection track by going through Apple Music's public web
-/// search page and Shazam's Apple-id mapping endpoint. Collection tracks do not store a Shazam id,
-/// so this is the bridge used by the row-level "similar songs" action.
+/// Finds the Shazam id for a normal collection track: finds the track on Apple Music, then asks
+/// Shazam's Apple-id mapping endpoint for it. Collection tracks do not store a Shazam id, so this
+/// is the bridge used by the row-level "similar songs" action.
 pub async fn shazam_id_for_track(client: &Client, track: &Track) -> anyhow::Result<i64> {
-    let query = format!("{} {}", track.artists.join(" "), track.title);
-    let response = client
-        .get("https://music.apple.com/us/search")
-        .query(&[("term", query.as_str())])
-        .send()
-        .await?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "Apple Music search returned {}",
-        response.status()
-    );
-    let html = response.text().await?;
-    let result_sel = Selector::parse("div[data-testid=\"top-search-result\"]").unwrap();
-    let link_sel = Selector::parse("a[data-testid=\"click-action\"]").unwrap();
-    let expected = format!("{} {}", track.artists.join(" "), track.title);
-
-    let apple_id = doc_select_first_apple_song_id(&html, &result_sel, &link_sel, &expected)
+    let apple_id = apple_music_id_for_track(client, track)
+        .await?
         .context("Apple Music search found no matching song")?;
     let mapping_url = format!("https://www.shazam.com/services/sd/s/a2st/US/en-US/{apple_id}");
     let mapping = response_json(client.get(mapping_url).send().await?).await?;
@@ -340,29 +326,36 @@ pub async fn shazam_id_for_track(client: &Client, track: &Track) -> anyhow::Resu
         .context("Shazam did not map the Apple Music song")
 }
 
-fn doc_select_first_apple_song_id(
-    html: &str,
-    result_sel: &Selector,
-    link_sel: &Selector,
-    expected: &str,
-) -> Option<String> {
-    let doc = Html::parse_document(html);
-    doc.select(result_sel)
-        .filter_map(|result| {
-            let label = result.value().attr("aria-label")?;
-            if !label.to_lowercase().contains("song") {
-                return None;
-            }
-            let href = result.select(link_sel).next()?.value().attr("href")?;
-            let url = url::Url::parse(href).ok()?;
-            let apple_id = url
-                .query_pairs()
-                .find(|(key, _)| key == "i")
-                .map(|(_, value)| value.to_string())?;
-            Some((normalized_similarity(expected, label), apple_id))
-        })
-        .max_by(|(left, _), (right, _)| left.total_cmp(right))
-        .map(|(_, apple_id)| apple_id)
+/// The Apple Music song id of `track`, if Apple Music has it. Searched for with its version first,
+/// so an extended mix maps to the extended mix, then without, since Apple often doesn't carry the
+/// version in the title at all; the best-scoring song wins, as in `fixup_track`.
+async fn apple_music_id_for_track(client: &Client, track: &Track) -> anyhow::Result<Option<i64>> {
+    let title = crate::utils::strip_feat(&track.title);
+    let artists = crate::utils::strip_artist_disambiguators(&track.artists.join(" "));
+    let base_query = format!("{artists} {title}").trim().to_string();
+    anyhow::ensure!(!base_query.is_empty(), "the track has no title or artist");
+    let mix_name = track.mix_name.as_deref().filter(|m| !is_original_mix(m));
+    let queries = mix_name
+        .map(|mix| format!("{base_query} {mix}"))
+        .into_iter()
+        .chain([base_query]);
+    for query in queries {
+        let candidates =
+            apple_music::search_tracks(client, &query, apple_music::SearchField::Any, 10).await?;
+        let best = candidates
+            .into_iter()
+            .map(RawTrack::Am)
+            .map(|raw| {
+                let score = score_raw_match(&raw, &track.title, &track.artists, mix_name);
+                (score, raw)
+            })
+            .filter(|(score, _)| *score > 0.5)
+            .max_by(|(a, _), (b, _)| a.total_cmp(b));
+        if let Some((_, RawTrack::Am(song))) = best {
+            return Ok(Some(song.id));
+        }
+    }
+    Ok(None)
 }
 
 /// Resolves a collection track to its Shazam page and returns the page's similar songs.
@@ -1801,12 +1794,13 @@ enum RawTrack {
     Vl(VLTrack),
     Tx(TXTrack),
     Sp(SpTrack),
+    Am(AMTrack),
     Sz(ShazamTrack),
 }
 
 /// Words that mark a bracketed segment of a title as a mix/edit identifier, as opposed to
 /// e.g. a label tag or "Official Video" annotation.
-const MIX_KEYWORDS: &[&str] = &[
+pub(crate) const MIX_KEYWORDS: &[&str] = &[
     "remix", "mix", "edit", "bootleg", "flip", "rework", "vip", "dub", "version", "rmx",
 ];
 
@@ -1869,6 +1863,7 @@ impl RawTrack {
             RawTrack::Vl(t) => Some(t.label.as_str()),
             RawTrack::Tx(t) => Some(t.label.as_str()),
             RawTrack::Sp(_) => None,
+            RawTrack::Am(_) => None,
             RawTrack::Sz(_) => None,
         }
         .filter(|label| !label.trim().is_empty())
@@ -1881,6 +1876,7 @@ impl RawTrack {
             RawTrack::Vl(t) => &t.track_name,
             RawTrack::Tx(t) => &t.track_name,
             RawTrack::Sp(t) => &t.track_name,
+            RawTrack::Am(t) => &t.track_name,
             RawTrack::Sz(t) => &t.title,
         }
     }
@@ -1892,13 +1888,14 @@ impl RawTrack {
             RawTrack::Vl(t) => &t.artists,
             RawTrack::Tx(t) => &t.artists,
             RawTrack::Sp(t) => &t.artists,
+            RawTrack::Am(t) => &t.artists,
             RawTrack::Sz(t) => &t.artists,
         }
     }
 
     /// The remix/mix identity this track is expected to match on YouTube, if any.
-    /// Beatport, Volumo, and Traxsource expose it as a separate field; SoundCloud embeds it
-    /// in the track name.
+    /// Beatport, Volumo, and Traxsource expose it as a separate field, and Apple Music's is split
+    /// off its title when parsed; SoundCloud and Spotify embed it in the track name.
     fn expected_mix(&self) -> Option<String> {
         match self {
             RawTrack::Bp(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
@@ -1906,6 +1903,7 @@ impl RawTrack {
             RawTrack::Vl(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
             RawTrack::Tx(t) => (!is_original_mix(&t.mix_name)).then(|| t.mix_name.clone()),
             RawTrack::Sp(t) => extract_mix_tag(&t.track_name),
+            RawTrack::Am(t) => t.mix_name.clone().filter(|m| !is_original_mix(m)),
             RawTrack::Sz(t) => extract_mix_tag(&t.title),
         }
     }
@@ -1917,6 +1915,7 @@ impl RawTrack {
             RawTrack::Vl(_) => TrackSource::Volumo,
             RawTrack::Tx(_) => TrackSource::Traxsource,
             RawTrack::Sp(_) => TrackSource::Spotify,
+            RawTrack::Am(_) => TrackSource::AppleMusic,
             RawTrack::Sz(_) => TrackSource::Shazam,
         }
     }
@@ -1928,6 +1927,7 @@ impl RawTrack {
             RawTrack::Vl(t) => t.release_date,
             RawTrack::Tx(t) => t.release_date,
             RawTrack::Sp(t) => t.release_date,
+            RawTrack::Am(t) => t.release_date,
             RawTrack::Sz(_) => NaiveDate::MIN,
         }
     }
@@ -1939,6 +1939,7 @@ impl RawTrack {
             RawTrack::Vl(t) => t.into_track(yt_id),
             RawTrack::Tx(t) => t.into_track(yt_id),
             RawTrack::Sp(t) => t.into_track(yt_id),
+            RawTrack::Am(t) => t.into_track(yt_id),
             RawTrack::Sz(t) => Track {
                 yt_id,
                 title: t.title,
@@ -2328,33 +2329,31 @@ pub async fn fixup_track(client: Arc<Client>, track: Track) -> anyhow::Result<Op
 }
 
 /// Round-robins result lists from all backends together so no single source hogs the front
-/// of the queue.
-fn interleave(
-    a: Vec<BPTrack>,
-    b: Vec<SCTrack>,
-    c: Vec<VLTrack>,
-    d: Vec<TXTrack>,
-    e: Vec<SpTrack>,
-) -> Vec<RawTrack> {
+/// of the queue. Tracks not yet released (pre-orders) are left out.
+fn interleave(sources: Vec<Vec<RawTrack>>) -> Vec<RawTrack> {
     let cutoff = chrono::Local::now().date_naive() + chrono::Duration::days(1);
-    let mut a = a.into_iter().filter(|t| t.release_date <= cutoff);
-    let mut b = b.into_iter().filter(|t| t.release_date <= cutoff);
-    let mut c = c.into_iter().filter(|t| t.release_date <= cutoff);
-    let mut d = d.into_iter().filter(|t| t.release_date <= cutoff);
-    let mut e = e.into_iter().filter(|t| t.release_date <= cutoff);
+    let mut sources: Vec<_> = sources
+        .into_iter()
+        .map(|tracks| {
+            tracks
+                .into_iter()
+                .filter(move |t| t.release_date() <= cutoff)
+        })
+        .collect();
     let mut out = Vec::new();
     loop {
-        let (v, w, x, y, z) = (a.next(), b.next(), c.next(), d.next(), e.next());
-        if v.is_none() && w.is_none() && x.is_none() && y.is_none() && z.is_none() {
+        let before = out.len();
+        out.extend(sources.iter_mut().filter_map(Iterator::next));
+        if out.len() == before {
             break;
         }
-        out.extend(v.map(RawTrack::Bp));
-        out.extend(w.map(RawTrack::Sc));
-        out.extend(x.map(RawTrack::Vl));
-        out.extend(y.map(RawTrack::Tx));
-        out.extend(z.map(RawTrack::Sp));
     }
     out
+}
+
+/// Wraps one backend's results for `interleave`.
+fn raw<T>(tracks: Vec<T>, wrap: fn(T) -> RawTrack) -> Vec<RawTrack> {
+    tracks.into_iter().map(wrap).collect()
 }
 
 /// Unwraps one backend's results, recording a failure instead of silently returning nothing.
@@ -2523,7 +2522,7 @@ pub async fn search_fuzzy(
     sources: Vec<TrackSource>,
 ) {
     run_search(&tx, query_id, "search_fuzzy", || async {
-        let (bp_res, sc_res, vl_res, tx_res, sp_res) = tokio::join!(
+        let (bp_res, sc_res, vl_res, tx_res, sp_res, am_res) = tokio::join!(
             async {
                 if sources.contains(&TrackSource::Beatport) {
                     bp_search_tracks(&client, &query).await
@@ -2559,6 +2558,19 @@ pub async fn search_fuzzy(
                     Ok(vec![])
                 }
             },
+            async {
+                if sources.contains(&TrackSource::AppleMusic) {
+                    apple_music::search_tracks(
+                        &client,
+                        &query,
+                        apple_music::SearchField::Any,
+                        limit,
+                    )
+                    .await
+                } else {
+                    Ok(vec![])
+                }
+            },
         );
         let mut failures = Vec::new();
         let bp_tracks = source_results(bp_res, "Beatport", "track search", &mut failures);
@@ -2566,13 +2578,21 @@ pub async fn search_fuzzy(
         let vl_tracks = source_results(vl_res, "Volumo", "track search", &mut failures);
         let tx_tracks = source_results(tx_res, "Traxsource", "track search", &mut failures);
         let sp_tracks = source_results(sp_res, "Spotify", "track search", &mut failures);
+        let am_tracks = source_results(am_res, "Apple Music", "track search", &mut failures);
         report_source_failures(&tx, &failures).await;
         stream_raw_tracks(
             &client,
             &tx,
             query_id,
             limit,
-            interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks, sp_tracks),
+            interleave(vec![
+                raw(bp_tracks, RawTrack::Bp),
+                raw(sc_tracks, RawTrack::Sc),
+                raw(vl_tracks, RawTrack::Vl),
+                raw(tx_tracks, RawTrack::Tx),
+                raw(sp_tracks, RawTrack::Sp),
+                raw(am_tracks, RawTrack::Am),
+            ]),
         )
         .await;
         Ok(())
@@ -2639,12 +2659,20 @@ pub async fn search_by_label(
         let tx_tracks = source_results(tx_res, "Traxsource", "label search", &mut failures);
         let sp_tracks = source_results(sp_res, "Spotify", "label search", &mut failures);
         report_source_failures(&tx, &failures).await;
+        // Apple Music isn't asked: its search doesn't index labels and its results don't name
+        // them, so a text search for a label's name would find only unrelated tracks.
         stream_raw_tracks(
             &client,
             &tx,
             query_id,
             limit,
-            interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks, sp_tracks),
+            interleave(vec![
+                raw(bp_tracks, RawTrack::Bp),
+                raw(sc_tracks, RawTrack::Sc),
+                raw(vl_tracks, RawTrack::Vl),
+                raw(tx_tracks, RawTrack::Tx),
+                raw(sp_tracks, RawTrack::Sp),
+            ]),
         )
         .await;
         Ok(())
@@ -2662,7 +2690,7 @@ pub async fn search_by_artist(
     known_bp_tracks: KnownBpTracks,
 ) {
     run_search(&tx, query_id, "search_by_artist", || async {
-        let (bp_res, sc_res, vl_res, tx_res, sp_res) = tokio::join!(
+        let (bp_res, sc_res, vl_res, tx_res, sp_res, am_res) = tokio::join!(
             async {
                 if !sources.contains(&TrackSource::Beatport) {
                     return Ok(vec![]);
@@ -2703,6 +2731,21 @@ pub async fn search_by_artist(
                     Ok(vec![])
                 }
             },
+            async {
+                // Apple Music can search artist names only, though by text, so its results are
+                // still checked for the artist below.
+                if sources.contains(&TrackSource::AppleMusic) {
+                    apple_music::search_tracks(
+                        &client,
+                        &artist_name,
+                        apple_music::SearchField::Artist,
+                        limit,
+                    )
+                    .await
+                } else {
+                    Ok(vec![])
+                }
+            },
         );
         let mut failures = Vec::new();
         let bp_tracks = source_results(bp_res, "Beatport", "artist search", &mut failures);
@@ -2710,16 +2753,32 @@ pub async fn search_by_artist(
         let mut vl_tracks = source_results(vl_res, "Volumo", "artist search", &mut failures);
         let mut tx_tracks = source_results(tx_res, "Traxsource", "artist search", &mut failures);
         let mut sp_tracks = source_results(sp_res, "Spotify", "artist search", &mut failures);
+        let mut am_tracks = source_results(am_res, "Apple Music", "artist search", &mut failures);
         report_source_failures(&tx, &failures).await;
         vl_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, &t.mix_name, &artist_name));
         tx_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, &t.mix_name, &artist_name));
         sp_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, "", &artist_name));
+        // Apple joins its artists into one credit, whose separators also occur within names
+        // ("Earth, Wind & Fire"), so it is matched as written too.
+        am_tracks.retain_mut(|t| {
+            t.regroup_artist(|name| is_same_name(name, &artist_name)) || {
+                let mix_name = t.mix_name.as_deref().unwrap_or_default();
+                credits_artist(&t.artists, &t.track_name, mix_name, &artist_name)
+            }
+        });
         stream_raw_tracks(
             &client,
             &tx,
             query_id,
             limit,
-            interleave(bp_tracks, sc_tracks, vl_tracks, tx_tracks, sp_tracks),
+            interleave(vec![
+                raw(bp_tracks, RawTrack::Bp),
+                raw(sc_tracks, RawTrack::Sc),
+                raw(vl_tracks, RawTrack::Vl),
+                raw(tx_tracks, RawTrack::Tx),
+                raw(sp_tracks, RawTrack::Sp),
+                raw(am_tracks, RawTrack::Am),
+            ]),
         )
         .await;
         Ok(())
@@ -2729,7 +2788,9 @@ pub async fn search_by_artist(
 
 /// Fetches releases by a single artist or label name across the selected sources, dropping
 /// anything released before `cutoff`. Beatport supports a native date-range query; the other
-/// backends only offer plain-text search, so their results are filtered client-side.
+/// backends only offer plain-text search, so their results are filtered client-side. Apple Music
+/// is left out, since this runs for many names at once and it allows only about 20 searches a
+/// minute.
 async fn gather_new_release_raw_tracks(
     client: &Client,
     name: &str,
@@ -3177,6 +3238,27 @@ mod remix_match_tests {
         let other_remix = video("Aquarius Heaven - Just Like Magic (Other Artist Remix)");
         assert!(match_score(&raw, &matching_remix).total > match_score(&raw, &original).total);
         assert!(match_score(&raw, &matching_remix).total > match_score(&raw, &other_remix).total);
+    }
+
+    #[test]
+    fn apple_music_remix_matches_its_video_with_a_featured_credit_after_the_version() {
+        // Apple's song 499472452.
+        let song = crate::apple_music::parse_track(&serde_json::json!({
+            "kind": "song",
+            "trackId": 499472452_i64,
+            "artistName": "Above & Beyond",
+            "artistViewUrl": "https://music.apple.com/us/artist/above-beyond/20318188?uo=4",
+            "trackName": "You Got To Go (Seven Lions Remix) [feat. Zoë Johnston]",
+            "releaseDate": "2012-02-06T12:00:00Z",
+        }))
+        .unwrap();
+        let raw = RawTrack::Am(song);
+        let score = match_score(
+            &raw,
+            &video("Above & Beyond - You Got To Go (Seven Lions Remix)"),
+        );
+        assert_eq!(score.version, VersionMatch::Match);
+        assert!(score.acceptable(), "{score:?}");
     }
 
     #[test]

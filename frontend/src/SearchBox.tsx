@@ -64,6 +64,7 @@ const ALL_SEARCH_SOURCES: { value: TrackSource; label: string }[] = [
   { value: "volumo", label: "Volumo" },
   { value: "traxsource", label: "Traxsource" },
   { value: "spotify", label: "Spotify" },
+  { value: "apple-music", label: "Apple Music" },
 ];
 
 const DAY_OPTIONS = [1, 7, 14, 30, 60, 90, 180, 365];

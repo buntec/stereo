@@ -271,6 +271,7 @@ pub enum TrackSource {
     Volumo,
     Traxsource,
     Spotify,
+    AppleMusic,
     Shazam,
 }
 

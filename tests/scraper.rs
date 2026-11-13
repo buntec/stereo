@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use stereo_backend::{
+    apple_music,
     message::MsgServer,
     models::{Track, TrackSource},
     scraper::{
@@ -39,7 +40,23 @@ fn all_sources() -> Vec<TrackSource> {
 #[ignore = "hits all external search providers"]
 async fn test_health_check() {
     let checks = stereo_backend::health::run(&client()).await;
-    assert_eq!(checks.len(), 10);
+    let names: Vec<&str> = checks.iter().map(|check| check.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "Beatport",
+            "SoundCloud",
+            "Volumo",
+            "Traxsource",
+            "Spotify",
+            "Apple Music",
+            "YouTube",
+            "Shazam",
+            "Shazam lookup",
+            "Beatport charts",
+            "Traxsource charts",
+        ]
+    );
     for check in &checks {
         println!(
             "{:?} {} ({} ms): {}",
@@ -176,6 +193,36 @@ async fn test_shazam_similar_tracks() {
 }
 
 #[tokio::test]
+#[ignore = "hits the iTunes Search API"]
+async fn test_am_search_tracks() {
+    let c = client();
+    let tracks = apple_music::search_tracks(&c, "Solomun", apple_music::SearchField::Artist, 10)
+        .await
+        .unwrap();
+    assert!(!tracks.is_empty(), "expected Apple Music results");
+    assert!(tracks
+        .iter()
+        .all(|t| !t.track_name.is_empty() && !t.artists.is_empty()));
+    assert!(tracks
+        .iter()
+        .any(|t| t.artists.iter().any(|a| a == "Solomun")));
+}
+
+#[tokio::test]
+#[ignore = "hits Apple Music and Shazam"]
+async fn test_shazam_id_for_extended_mix() {
+    let c = client();
+    let track = Track {
+        title: "Jamaican (Bam Bam)".to_string(),
+        mix_name: Some("Extended Mix".to_string()),
+        artists: vec!["HUGEL".to_string(), "SOLTO (FR)".to_string()],
+        ..Default::default()
+    };
+    let id = scraper::shazam_id_for_track(&c, &track).await.unwrap();
+    assert!(id > 0);
+}
+
+#[tokio::test]
 #[ignore = "hits Apple Music and Shazam pages"]
 async fn test_shazam_similar_tracks_for_track() {
     let c = client();
@@ -200,8 +247,9 @@ async fn test_search_shazam_similar() {
         artists: vec!["HUGEL & SOLTO (FR)".to_string()],
         ..Default::default()
     };
+    // Not every similar song has a YouTube match, so asking for just one can come back empty.
     let (tx, mut rx) = mpsc::channel(20);
-    tokio::spawn(scraper::search_shazam_similar(c, tx, track, 1, 1));
+    tokio::spawn(scraper::search_shazam_similar(c, tx, track, 1, 5));
 
     let mut results = vec![];
     while let Some(message) = rx.recv().await {
@@ -248,6 +296,47 @@ async fn test_search_fuzzy() {
 
     assert!(!tracks.is_empty(), "expected fuzzy search results");
     assert!(!tracks[0].yt_id.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "hits the iTunes Search API + YouTube"]
+async fn test_search_fuzzy_apple_music() {
+    let c = client();
+    let (tx, mut rx) = mpsc::channel(100);
+
+    tokio::spawn(scraper::search_fuzzy(
+        c,
+        tx,
+        "HUGEL SOLTO Jamaican".to_string(),
+        1,
+        3,
+        vec![TrackSource::AppleMusic],
+    ));
+
+    let mut results = vec![];
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            MsgServer::SearchResult { track, source, .. } => results.push((track, source)),
+            MsgServer::SearchComplete { .. } => break,
+            MsgServer::Notification { message, .. } => panic!("{message}"),
+            _ => {}
+        }
+    }
+
+    assert!(!results.is_empty(), "expected Apple Music search results");
+    for (track, source) in &results {
+        assert_eq!(*source, TrackSource::AppleMusic);
+        assert!(!track.yt_id.is_empty());
+        println!(
+            "{} – {} [{:?}] {:?} {:?} -> {}",
+            track.artists.join(", "),
+            track.title,
+            track.mix_name,
+            track.release_date,
+            track.genre,
+            track.yt_id
+        );
+    }
 }
 
 /// Equivalent to Python's test_get_label_releases

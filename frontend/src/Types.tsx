@@ -23,7 +23,13 @@ export type Tempo = {
 };
 
 export type TrackSource =
-  "beatport" | "soundcloud" | "volumo" | "traxsource" | "spotify" | "shazam";
+  | "beatport"
+  | "soundcloud"
+  | "volumo"
+  | "traxsource"
+  | "spotify"
+  | "apple-music"
+  | "shazam";
 
 export interface ITrack {
   title: string;

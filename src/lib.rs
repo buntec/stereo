@@ -1,3 +1,4 @@
+pub mod apple_music;
 pub mod audio;
 pub mod beatport;
 pub mod beats;
