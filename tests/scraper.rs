@@ -231,8 +231,9 @@ async fn test_search_shazam_similar() {
         artists: vec!["HUGEL & SOLTO (FR)".to_string()],
         ..Default::default()
     };
+    // Not every similar song has a YouTube match, so asking for just one can come back empty.
     let (tx, mut rx) = mpsc::channel(20);
-    tokio::spawn(scraper::search_shazam_similar(c, tx, track, 1, 1));
+    tokio::spawn(scraper::search_shazam_similar(c, tx, track, 1, 5));
 
     let mut results = vec![];
     while let Some(message) = rx.recv().await {
