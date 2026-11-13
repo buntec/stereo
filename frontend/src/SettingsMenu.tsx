@@ -1,3 +1,4 @@
+import { Divider } from "@astryxdesign/core/Divider";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Popover } from "@astryxdesign/core/Popover";
 import { Slider } from "@astryxdesign/core/Slider";
@@ -5,6 +6,7 @@ import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { GearIcon } from "@radix-ui/react-icons";
 import type { ReactNode } from "react";
+import type { AirSettings } from "./Types.tsx";
 
 /** How strongly the background pulses with the beats by default, in %. */
 export const DEFAULT_BACKGROUND_PULSE = 50;
@@ -14,6 +16,9 @@ type SettingsMenuProps = {
   backgroundShown: boolean;
   backgroundPulse: number;
   setBackgroundPulse: (pulse: number) => void;
+  /** The air the header's dance stacks push with the beats. */
+  air: AirSettings;
+  setAir: (air: AirSettings) => void;
   /** Controls that live in the nav bar on wide screens (e.g. the appearance switch). */
   header?: ReactNode;
   footer?: ReactNode;
@@ -25,9 +30,35 @@ function SettingsMenu({
   backgroundShown,
   backgroundPulse,
   setBackgroundPulse,
+  air,
+  setAir,
   header,
   footer,
 }: SettingsMenuProps) {
+  const airSlider = (
+    key: keyof AirSettings,
+    label: string,
+    tooltip: string,
+    min: number,
+    max: number,
+    step: number,
+    formatValue: (v: number) => string,
+  ) => (
+    <Slider
+      label={label}
+      labelTooltip={tooltip}
+      value={air[key]}
+      onChange={(v: number) => setAir({ ...air, [key]: v })}
+      min={min}
+      max={max}
+      step={step}
+      formatValue={formatValue}
+      valueDisplay="text"
+    />
+  );
+  const ms = (v: number) => `${v} ms`;
+  const px = (v: number) => (v === 0 ? "Off" : v.toFixed(1));
+
   return (
     <Popover
       label="Settings"
@@ -53,6 +84,55 @@ function SettingsMenu({
             isDisabled={!backgroundShown}
             disabledMessage="Background is off"
           />
+          <Divider />
+          <Text type="label" weight="bold">
+            Speaker air
+          </Text>
+          {airSlider(
+            "waveDuration",
+            "Wave duration",
+            "How long each beat's pressure wave travels before it fades.",
+            200,
+            1500,
+            50,
+            ms,
+          )}
+          {airSlider(
+            "waveTravel",
+            "Wave travel",
+            "How far each wave travels from the speakers, in cabinet widths.",
+            0.2,
+            3,
+            0.1,
+            (v) => `${v.toFixed(1)}×`,
+          )}
+          {airSlider(
+            "calmTurbulence",
+            "Calm turbulence",
+            "How much the air wobbles the waves between beats.",
+            0,
+            10,
+            0.5,
+            px,
+          )}
+          {airSlider(
+            "beatTurbulence",
+            "Beat turbulence",
+            "How much the air wobbles the waves on a full beat.",
+            0,
+            20,
+            0.5,
+            px,
+          )}
+          {airSlider(
+            "settleTime",
+            "Settle time",
+            "How quickly the air calms down after a beat.",
+            50,
+            600,
+            10,
+            ms,
+          )}
           {footer}
         </VStack>
       }

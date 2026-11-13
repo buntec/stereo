@@ -13,6 +13,49 @@ const subscribeReducedMotion = (onChange: () => void) => {
 };
 const prefersReducedMotion = () => window.matchMedia(reducedMotion).matches;
 
+/** Whether the user prefers reduced motion, following changes. */
+export const usePrefersReducedMotion = () =>
+  useSyncExternalStore(subscribeReducedMotion, prefersReducedMotion);
+
+/** How far the observed position runs on between the browser's updates of it, at most, in ms. */
+const MAX_EXTRAPOLATION_MS = 250;
+/** How far the clock may be off before it jumps (a seek, a stall), in ms. */
+const SNAP_MS = 150;
+/** How much of its error the clock makes up on each frame. */
+const CORRECTION = 0.1;
+
+/**
+ * A playback clock for animation: `(now) => ms`, the engine's position at the
+ * animation frame `now` (its `requestAnimationFrame` timestamp). Browsers may
+ * advance `currentTime` in steps of tens of milliseconds (Chrome's is smooth),
+ * so the clock runs with the frames and is nudged toward the position seen
+ * (extrapolated since its last update), jumping only when far off.
+ */
+export const playbackClock = (playback: PlaybackEngine) => {
+  let raw = NaN;
+  let rawAt = 0;
+  let ms = NaN;
+  let last = 0;
+  return (now: number): number => {
+    const position = playback.currentTime() * 1000;
+    if (position !== raw) {
+      raw = position;
+      rawAt = now;
+    }
+    const playing = playback.status() === "playing";
+    const seen = playing
+      ? raw + Math.min(Math.max(now - rawAt, 0), MAX_EXTRAPOLATION_MS)
+      : raw;
+    const predicted = ms + (playing ? now - last : 0);
+    ms =
+      Math.abs(seen - predicted) < SNAP_MS
+        ? predicted + (seen - predicted) * CORRECTION
+        : seen;
+    last = now;
+    return ms;
+  };
+};
+
 /** The index of the last beat at or before `ms`, or -1 before the first. */
 export const lastBeatIndex = (beats: Beat[], ms: number): number => {
   let low = 0;
@@ -47,21 +90,17 @@ export function useBeatPulse(
   beats: Beat[] | undefined,
   active: boolean,
 ) {
-  const still = useSyncExternalStore(
-    subscribeReducedMotion,
-    prefersReducedMotion,
-  );
+  const still = usePrefersReducedMotion();
   useEffect(() => {
     const element = ref.current;
     if (!(element instanceof HTMLElement || element instanceof SVGElement))
       return;
     if (!playback || !id || !beats?.length || !active || still) return;
-    let frame = requestAnimationFrame(function tick() {
+    const clock = playbackClock(playback);
+    let frame = requestAnimationFrame(function tick(now) {
       // The beats are those of `id`; the engine may already be loading another track.
       const pulse =
-        playback.currentId() === id
-          ? beatPulse(beats, playback.currentTime() * 1000)
-          : 0;
+        playback.currentId() === id ? beatPulse(beats, clock(now)) : 0;
       element.style.setProperty("--beat", pulse.toFixed(3));
       frame = requestAnimationFrame(tick);
     });

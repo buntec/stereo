@@ -22,6 +22,7 @@ import {
   youTubeConnection,
   type AppearanceType,
   type RequestReply,
+  type AirSettings,
   type TailscaleStatus,
   type YouTubeConnection,
 } from "./Types.tsx";
@@ -33,6 +34,8 @@ type NavBarControlsProps = {
   backgroundShown: boolean;
   backgroundPulse: number;
   setBackgroundPulse: (pulse: number) => void;
+  air: AirSettings;
+  setAir: (air: AirSettings) => void;
   isConnected: boolean;
   requestReply: RequestReply;
   tailscale?: TailscaleStatus;
@@ -101,6 +104,8 @@ function NavBarControls({
   backgroundShown,
   backgroundPulse,
   setBackgroundPulse,
+  air,
+  setAir,
   isConnected,
   requestReply,
   tailscale,
@@ -225,6 +230,8 @@ function NavBarControls({
           backgroundShown={backgroundShown}
           backgroundPulse={backgroundPulse}
           setBackgroundPulse={setBackgroundPulse}
+          air={air}
+          setAir={setAir}
           header={isCompact ? appearanceControl : undefined}
           footer={isCompact && version ? versionText : undefined}
         />

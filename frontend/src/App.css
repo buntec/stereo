@@ -16,11 +16,20 @@
    the background artwork. Nothing between it and the app shell is a stacking context,
    so the negative z-index puts it under all of the app's content. */
 .dance-stack {
+  display: block;
   flex-shrink: 0;
   position: relative;
   z-index: -1;
-  overflow: visible;
   pointer-events: none;
+}
+.dance-stack > svg {
+  display: block;
+}
+/* The air its speakers push out with the beats: pressure waves through turbulence. */
+.dance-stack-air {
+  position: absolute;
+  display: none;
+  color: #b9b4f5;
 }
 /* Its mirror image at the other end of the header, growing toward the middle. */
 .dance-stack-mirrored {

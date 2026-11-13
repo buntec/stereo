@@ -670,6 +670,29 @@ export type AppNotification = {
   kind?: "info" | "warn" | "warning" | "error";
 };
 
+/** The air the header's dance stacks push out with the beats (DanceStack.tsx). */
+export type AirSettings = {
+  /** How long a beat's pressure wave travels, in ms. */
+  waveDuration: number;
+  /** How far it travels, in cabinet widths. */
+  waveTravel: number;
+  /** The turbulence's displacement in still air, in logo units (64 to the logo). */
+  calmTurbulence: number;
+  /** The turbulence's displacement at a full beat, in logo units. */
+  beatTurbulence: number;
+  /** How quickly the turbulence settles after a beat: its time constant in ms. */
+  settleTime: number;
+};
+
+/** The air's defaults; SettingsMenu.tsx adjusts them. */
+export const DEFAULT_AIR: AirSettings = {
+  waveDuration: 650,
+  waveTravel: 1.6,
+  calmTurbulence: 3,
+  beatTurbulence: 8,
+  settleTime: 180,
+};
+
 export type Settings = {
   appearance: AppearanceType;
   repoPath: string;
@@ -678,6 +701,8 @@ export type Settings = {
   backgroundVideo: boolean;
   /** How strongly the background pulses with the beats, 0–100 (%); unset in older stored settings. */
   backgroundPulse?: number;
+  /** The air the header's dance stacks push with the beats; unset in older stored settings. */
+  air?: Partial<AirSettings>;
   shufflePlay: boolean;
   /** Playback volume, 0–100 (%, perceptual); unset in older stored settings. */
   volume?: number;

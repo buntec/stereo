@@ -68,6 +68,7 @@ import type {
   TailscaleStatus,
 } from "./Types.tsx";
 import {
+  DEFAULT_AIR,
   isChartSearchKind,
   isQuerylessSearchKind,
   playlistSyncKey,
@@ -2190,6 +2191,37 @@ function App() {
       backgroundPulse > 0,
   );
 
+  // With every beat, the stacks push air out of their speakers, as hard as the
+  // volume says (at full strength where the page can't set it).
+  const air = useMemo(
+    () => ({ ...DEFAULT_AIR, ...settings.air }),
+    [settings.air],
+  );
+  const stackBeats = useMemo(
+    () => ({
+      air,
+      playback,
+      id: state.current_id,
+      beats: currentWaveform?.beats,
+      strength:
+        state.player_state !== "playing" || muted
+          ? 0
+          : canSetVolume
+            ? Math.sqrt(volume / 100)
+            : 1,
+    }),
+    [
+      air,
+      playback,
+      state.current_id,
+      currentWaveform?.beats,
+      state.player_state,
+      muted,
+      canSetVolume,
+      volume,
+    ],
+  );
+
   const hasSearchInput =
     isQuerylessSearchKind(state.search_kind) || !!state.search_box_input;
   const isSearchGridActive =
@@ -2797,7 +2829,7 @@ function App() {
               className="app-header"
             >
               <HStack vAlign="center" gap={2} className="collection-controls">
-                <DanceStack level={stackLevel} />
+                <DanceStack level={stackLevel} beats={stackBeats} />
                 <CollectionSelector
                   isValid={state.collection_is_valid ?? true}
                   collections={state.collections ?? []}
@@ -2904,6 +2936,8 @@ function App() {
                   setBackgroundPulse={(backgroundPulse) =>
                     setSettings((s) => ({ ...s, backgroundPulse }))
                   }
+                  air={air}
+                  setAir={(air) => setSettings((s) => ({ ...s, air }))}
                   isConnected={backendReady}
                   requestReply={requestReply}
                   tailscale={state.tailscale}
@@ -2915,7 +2949,7 @@ function App() {
                   onSpotifyBackfill={backfillSpotifyIds}
                 />
                 {/* The other speaker of the stereo pair, at the header's other end. */}
-                <DanceStack level={stackLevel} isMirrored />
+                <DanceStack level={stackLevel} beats={stackBeats} isMirrored />
               </HStack>
             </HStack>
           }
