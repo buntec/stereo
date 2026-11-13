@@ -46,6 +46,10 @@ export interface ITrack {
   source?: TrackSource;
   // Like `source`, only set on search results — and only for chart searches (Beatport/Traxsource top 100).
   chart_position?: number;
+  // Client-only: identifies a search result for as long as it is shown, independently of
+  // its `yt_id`, which the user can change (see `set-search-result-video`). Assigned by
+  // App.tsx's reducer as results arrive, unique across searches.
+  result_id?: number;
 }
 
 export interface ISearchResult {
@@ -271,7 +275,13 @@ export type ServerMsg =
       sp_id: string;
       exists: boolean;
     }
-  | { type: "set-playlist"; ids: string[] }
+  | {
+      type: "set-playlist";
+      ids: string[];
+      // For a queue of search results: the `result_id` of each entry, so that changing a
+      // result's video also changes its queued entry.
+      result_ids?: number[];
+    }
   | { type: "play-id"; id: string }
   | { type: "play-next-track" }
   | { type: "play-prev-track" }
@@ -565,7 +575,7 @@ export type Action =
   | { type: "search-results-selection-changed"; selected: ITrack[] }
   | { type: "set-track-rating"; yt_id: string; rating: number | null }
   // Replaces the YouTube video matched to a search result.
-  | { type: "set-search-result-video"; old_yt_id: string; yt_id: string }
+  | { type: "set-search-result-video"; result_id: number; yt_id: string }
   | { type: "clear-search-results" }
   | { type: "set-search-failure" }
   // `is_chart` marks a chart search, whose results are shown in chart order.

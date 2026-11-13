@@ -361,9 +361,18 @@ const SearchPlayControlRenderer: React.FC<
   const handlePlay = useCallback(() => {
     if (data) {
       context.dispatch({ type: "track-info", track: data });
-      const idx = context.tracks.findIndex((t) => t.yt_id === data.yt_id);
-      const ids = context.tracks.slice(idx >= 0 ? idx : 0).map((t) => t.yt_id);
-      context.dispatch({ type: "set-playlist", ids });
+      // By result, not video: results can share one (see `set-search-result-video`).
+      const idx = context.tracks.findIndex(
+        (t) => t.result_id === data.result_id,
+      );
+      const queue = context.tracks.slice(idx >= 0 ? idx : 0);
+      context.dispatch({
+        type: "set-playlist",
+        ids: queue.map((t) => t.yt_id),
+        result_ids: queue.flatMap((t) =>
+          t.result_id === undefined ? [] : [t.result_id],
+        ),
+      });
       context.playId(data.yt_id);
     }
   }, [data, context]);
@@ -663,12 +672,14 @@ export const SearchResultsGrid = ({
 
   const [changingVideo, setChangingVideo] = useState<ITrack | null>(null);
   const changeVideo = useCallback(
-    (track: ITrack, yt_id: string) =>
+    (track: ITrack, yt_id: string) => {
+      if (track.result_id === undefined) return;
       dispatch({
         type: "set-search-result-video",
-        old_yt_id: track.yt_id,
+        result_id: track.result_id,
         yt_id,
-      }),
+      });
+    },
     [dispatch],
   );
 
@@ -696,9 +707,10 @@ export const SearchResultsGrid = ({
     tracks,
   ]);
 
+  // Not from `yt_id`, which changing a result's video changes: the row (and its selection)
+  // must stay the same.
   const getRowId = useCallback(
-    (params: GetRowIdParams<ITrack>) =>
-      `${params.data.yt_id}:${params.data.bp_id}:${params.data.sp_id}:${params.data.mb_id}`,
+    (params: GetRowIdParams<ITrack>) => String(params.data.result_id),
     [],
   );
 

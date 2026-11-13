@@ -165,6 +165,11 @@ const wsProtocols = (): string[] | undefined => {
   return token ? [`stereo.auth.${hex(token)}`] : undefined;
 };
 
+/** Whether both are absent, or have the same items in the same order. */
+const sameItems = <T,>(a: T[] | undefined, b: T[] | undefined): boolean =>
+  a === b ||
+  (!!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]));
+
 /** The track after `current` in the playlist, wrapping around. */
 const nextTrackId = (
   playlist: string[],
@@ -210,6 +215,8 @@ type State = {
   duration?: number;
   current_time?: number;
   playlist: string[];
+  /** Set while the playlist is a queue of search results: each entry's `result_id`. */
+  playlist_result_ids?: number[];
   player_state: PlaybackStatus;
   /** Playback was asked for but can't start or continue yet (buffering, downloading). */
   player_loading: boolean;
@@ -222,6 +229,8 @@ type State = {
   search_query_id?: number;
   search_results?: ITrack[];
   search_results_selection?: ITrack[];
+  /** The `result_id` for the next search result to arrive. */
+  search_result_next_id: number;
   search_error_message?: string;
   search_box_input?: string;
   search_limit: number;
@@ -352,8 +361,8 @@ const reducer = (state: State, action: Action): State => {
     case "set-playlist": {
       if (
         (state.current_id || action.ids.length === 0) &&
-        action.ids.length === state.playlist.length &&
-        action.ids.every((id, index) => id === state.playlist[index])
+        sameItems(action.ids, state.playlist) &&
+        sameItems(action.result_ids, state.playlist_result_ids)
       )
         return state;
       if (!state.current_id && action.ids.length > 0) {
@@ -361,11 +370,16 @@ const reducer = (state: State, action: Action): State => {
         return {
           ...state,
           playlist: action.ids,
+          playlist_result_ids: action.result_ids,
           current_id: action.ids[0],
           current_autoplay: false,
         };
       }
-      return { ...state, playlist: action.ids };
+      return {
+        ...state,
+        playlist: action.ids,
+        playlist_result_ids: action.result_ids,
+      };
     }
 
     case "play-id":
@@ -519,16 +533,38 @@ const reducer = (state: State, action: Action): State => {
     }
 
     case "set-search-result-video": {
+      // Only this result: others may have the same video (an earlier change can make them).
       const updateTrack = (track: ITrack): ITrack =>
-        track.yt_id === action.old_yt_id
+        track.result_id === action.result_id
           ? { ...track, yt_id: action.yt_id }
           : track;
-      return {
+      const next = {
         ...state,
         search_results: state.search_results?.map(updateTrack),
         search_results_selection:
           state.search_results_selection?.map(updateTrack),
       };
+      // A queue of search results plays the corrected video too, from where it is.
+      const resultIds = state.playlist_result_ids;
+      const queued = resultIds?.indexOf(action.result_id) ?? -1;
+      if (!resultIds || queued < 0) return next;
+      const currentIndex = state.current_id
+        ? state.playlist.indexOf(state.current_id)
+        : -1;
+      const playlist = state.playlist.map((id, i) =>
+        resultIds[i] === action.result_id ? action.yt_id : id,
+      );
+      if (currentIndex >= 0 && resultIds[currentIndex] === action.result_id) {
+        // The playing result's video changed: switch to the new one, so the queue keeps its
+        // place (and the row stays the current one), playing only if it was.
+        return {
+          ...next,
+          playlist,
+          current_id: action.yt_id,
+          current_autoplay: state.player_state === "playing",
+        };
+      }
+      return { ...next, playlist };
     }
 
     case "clear-search-results":
@@ -549,10 +585,12 @@ const reducer = (state: State, action: Action): State => {
         ...action.track,
         source: action.source,
         chart_position: action.chart_position,
+        result_id: state.search_result_next_id,
       };
       return {
         ...state,
         search_results: [...(state.search_results ?? []), track],
+        search_result_next_id: state.search_result_next_id + 1,
       };
     }
 
@@ -560,7 +598,15 @@ const reducer = (state: State, action: Action): State => {
       if (action.query_id !== state.search_query_id) return state;
       return {
         ...state,
-        search_results: [...(state.search_results ?? []), ...action.tracks],
+        search_results: [
+          ...(state.search_results ?? []),
+          ...action.tracks.map((track, i) => ({
+            ...track,
+            result_id: state.search_result_next_id + i,
+          })),
+        ],
+        search_result_next_id:
+          state.search_result_next_id + action.tracks.length,
       };
 
     case "set-search-failure":
@@ -933,6 +979,7 @@ function App() {
     search_busy: false,
     search_is_chart: false,
     search_limit: 100,
+    search_result_next_id: 0,
     search_kind: "fuzzy",
     search_sources: ["beatport", "volumo", "traxsource"],
     new_releases_days: 7,
