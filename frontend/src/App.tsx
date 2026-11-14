@@ -112,6 +112,7 @@ import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
 import NowPlayingMenu from "./NowPlayingMenu.tsx";
+import { NowPlayingThumbnail } from "./NowPlayingThumbnail.tsx";
 import CollectionSummary from "./CollectionSummary.tsx";
 import NewReleasesDialog, {
   type NewReleasesOverrides,
@@ -2755,6 +2756,9 @@ function App() {
   // Title and track menu of the playing track, for the footer.
   const nowPlaying = state.track_info ? (
     <HStack width="100%" vAlign="center" hAlign="start" gap={2}>
+      {state.current_id ? (
+        <NowPlayingThumbnail key={state.current_id} ytId={state.current_id} />
+      ) : null}
       <StackItem className="now-playing-text">
         <Title
           title={state.track_info.title}

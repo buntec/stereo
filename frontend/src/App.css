@@ -381,6 +381,45 @@
   flex: 1 1 16rem;
 }
 
+/* The playing track's thumbnail at the start of the footer (NowPlayingThumbnail.tsx),
+   and on hover its largest size: natural size, but never larger than the window
+   leaves room for above the footer. */
+.now-playing-thumbnail {
+  flex: none;
+  height: var(--spacing-10);
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: var(--radius-inner);
+  background: var(--color-background-muted);
+  cursor: zoom-in;
+}
+.playback-footer.touch .now-playing-thumbnail {
+  height: var(--spacing-12);
+}
+.now-playing-thumbnail:focus-visible {
+  outline: var(--border-width) solid var(--color-accent);
+  outline-offset: var(--border-width);
+}
+/* The card pads its content with an inner wrapper; the image goes edge to edge. */
+.astryx-hover-card.now-playing-thumbnail-card,
+.astryx-hover-card.now-playing-thumbnail-card > * {
+  padding: 0;
+  max-width: none;
+}
+.astryx-hover-card.now-playing-thumbnail-card {
+  overflow: hidden;
+}
+.now-playing-thumbnail-large {
+  display: block;
+  /* hqdefault, the fallback, is 4:3 with the video letterboxed in it. */
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  max-width: calc(100vw - var(--spacing-8));
+  max-height: calc(100dvh - var(--spacing-12) * 4);
+  width: auto;
+  height: auto;
+}
+
 /* Shrinks to truncate the title but does not push the track menu away from it. */
 .now-playing-text {
   flex: 0 1 auto;
