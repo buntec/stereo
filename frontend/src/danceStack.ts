@@ -535,7 +535,10 @@ export const danceStack = (level: number): DanceStackDrawing => {
   // the far end of the row (the camera is off the logo's end) to the logo.
   const cabinets: CabinetDrawing[] = [];
   const fronts: Front[] = [];
-  const binPose: Pose = { x: (TOPS - 1) / 2, w: 0, angle: 0 };
+  // The bins stand square under the row's middle cabinet, so the row splays
+  // out evenly to both ends over them.
+  const poses = arc();
+  const binPose = poses[(TOPS - 1) / 2];
   for (let i = bins.length - 1; i >= 0; i--)
     if (bins[i] > 0) {
       const top = MAIN.height + i * BASS_BIN.height;
@@ -548,7 +551,6 @@ export const danceStack = (level: number): DanceStackDrawing => {
         opacity: bins[i],
       });
     }
-  const poses = arc();
   for (let i = TOPS - 1; i >= 0; i--)
     if (tops[i] > 0) {
       cabinets.push(drawCabinet(MAIN, poses[i], 0, tops[i]));
