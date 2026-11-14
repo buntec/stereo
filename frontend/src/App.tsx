@@ -760,6 +760,11 @@ const reducer = (state: State, action: Action): State => {
     case "pairing-code":
     case "health-check-progress":
     case "health-check":
+    case "collection-track": // a reply, for BpmCheck
+    case "waveform": // a reply, for useWaveform
+    case "audio-cached": // these three are kept in AudioCache.ts's store
+    case "audio-evicted":
+    case "audio-download":
     case "error-reply": // the server also sends a notification with the reason
       return state;
 
