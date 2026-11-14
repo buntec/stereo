@@ -1,6 +1,6 @@
 [package]
 name = "stereo-backend"
-version = "0.1.59"
+version = "0.1.60"
 edition = "2021"
 publish = false
 
