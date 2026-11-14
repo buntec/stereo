@@ -1177,7 +1177,19 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             let client = Arc::clone(client);
             let tx = tx.clone();
             state.health_check_task = Some(tokio::spawn(async move {
-                let checks = health::run(&client).await;
+                let checks = health::run(&client, |checks| {
+                    let tx = tx.clone();
+                    async move {
+                        let _ = tx
+                            .send(MsgServer::HealthCheckProgress {
+                                id,
+                                partial: true,
+                                checks,
+                            })
+                            .await;
+                    }
+                })
+                .await;
                 let _ = tx
                     .send(MsgServer::HealthCheck {
                         id,

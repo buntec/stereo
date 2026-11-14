@@ -26,6 +26,8 @@ const SHAZAM_SONG_URL: &str = "https://www.shazam.com/song/1243689211/fiore-and-
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum CheckStatus {
+    /// Still running; only in progress reports, never in the final one.
+    Running,
     Passed,
     Failed,
 }
@@ -251,29 +253,53 @@ fn probes(client: &Client) -> Vec<Probe> {
 /// Run independently of the user's enabled sources, search results and collection. Each probe
 /// is its own task, so one probe's parsing doesn't hold up the others or count towards their
 /// time; the `JoinSet` aborts them all when this future is dropped (the session's task aborted).
-pub async fn run(client: &Client) -> Vec<CheckResult> {
-    run_probes(probes(client), CHECK_TIMEOUT).await
+/// `progress` gets every check's state, in order, first with all of them running and then
+/// each time one finishes, so the client can show results as they come in.
+pub async fn run<F, Fut>(client: &Client, progress: F) -> Vec<CheckResult>
+where
+    F: FnMut(Vec<CheckResult>) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    run_probes(probes(client), CHECK_TIMEOUT, progress).await
 }
 
-async fn run_probes(probes: Vec<Probe>, timeout: Duration) -> Vec<CheckResult> {
+async fn run_probes<F, Fut>(
+    probes: Vec<Probe>,
+    timeout: Duration,
+    mut progress: F,
+) -> Vec<CheckResult>
+where
+    F: FnMut(Vec<CheckResult>) -> Fut,
+    Fut: Future<Output = ()>,
+{
     let mut results: Vec<CheckResult> = probes
         .iter()
         .map(|p| CheckResult {
             name: p.name.to_string(),
             probe: p.probe.clone(),
-            status: CheckStatus::Failed,
-            message: "The check crashed".to_string(),
+            status: CheckStatus::Running,
+            message: String::new(),
             duration_ms: 0,
         })
         .collect();
+    progress(results.clone()).await;
     let mut tasks = JoinSet::new();
     for (index, p) in probes.into_iter().enumerate() {
         tasks.spawn(async move { (index, check(p.name, &p.probe, timeout, p.run).await) });
     }
     while let Some(joined) = tasks.join_next().await {
-        // A panicked probe keeps its "crashed" placeholder.
+        // A panicked probe stays running here and is reported as crashed below.
         if let Ok((index, result)) = joined {
             results[index] = result;
+            if !tasks.is_empty() {
+                progress(results.clone()).await;
+            }
+        }
+    }
+    for result in &mut results {
+        if result.status == CheckStatus::Running {
+            result.status = CheckStatus::Failed;
+            result.message = "The check crashed".to_string();
         }
     }
     results
@@ -309,6 +335,7 @@ mod tests {
 
     #[tokio::test]
     async fn probes_keep_their_order_and_a_panic_fails_only_its_check() {
+        let mut snapshots = Vec::new();
         let results = run_probes(
             vec![
                 probe("slow", "a", async {
@@ -319,8 +346,22 @@ mod tests {
                 probe("fast", "c", async { Ok("fast done".into()) }),
             ],
             CHECK_TIMEOUT,
+            |checks| {
+                snapshots.push(checks.iter().map(|c| c.status).collect::<Vec<_>>());
+                std::future::ready(())
+            },
         )
         .await;
+        use CheckStatus::*;
+        // All running at first, then after each finished probe but the last (whose result is
+        // the final report); the panicked one is never reported as finished early.
+        assert_eq!(
+            snapshots,
+            [
+                vec![Running, Running, Running],
+                vec![Running, Running, Passed]
+            ]
+        );
         let summary: Vec<_> = results
             .iter()
             .map(|r| (r.name.as_str(), r.status, r.message.as_str()))

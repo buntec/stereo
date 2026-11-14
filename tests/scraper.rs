@@ -39,7 +39,7 @@ fn all_sources() -> Vec<TrackSource> {
 #[tokio::test]
 #[ignore = "hits all external search providers"]
 async fn test_health_check() {
-    let checks = stereo_backend::health::run(&client()).await;
+    let checks = stereo_backend::health::run(&client(), |_| async {}).await;
     let names: Vec<&str> = checks.iter().map(|check| check.name.as_str()).collect();
     assert_eq!(
         names,

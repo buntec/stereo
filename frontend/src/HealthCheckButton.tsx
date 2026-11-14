@@ -5,6 +5,7 @@ import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { List, ListItem } from "@astryxdesign/core/List";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
@@ -13,14 +14,25 @@ import {
   CheckIcon,
   CopyIcon,
   Cross2Icon,
+  DotsHorizontalIcon,
   ReloadIcon,
 } from "@radix-ui/react-icons";
 // Radix has no health/diagnostics glyph. Lucide is the icon set Astryx's Neutral theme draws its
 // own icons with, so it matches the dialogs and menus around it.
 import { Stethoscope } from "lucide-react";
-import type { RequestReply, ServerMsg } from "./Types.tsx";
+import type { HealthCheckResult, RequestReply, ServerMsg } from "./Types.tsx";
 
 type HealthReport = Extract<ServerMsg, { type: "health-check" }>;
+
+const STATUS_DOT = {
+  running: {
+    variant: "neutral",
+    label: "Running",
+    icon: <DotsHorizontalIcon />,
+  },
+  passed: { variant: "success", label: "Passed", icon: <CheckIcon /> },
+  failed: { variant: "error", label: "Failed", icon: <Cross2Icon /> },
+} as const;
 
 function reportText(report: HealthReport, version?: string) {
   return [
@@ -44,6 +56,8 @@ export default function HealthCheckButton({
   const [isOpen, setIsOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [report, setReport] = useState<HealthReport | null>(null);
+  // While a check runs: every check's state so far, from the backend's progress replies.
+  const [progress, setProgress] = useState<HealthCheckResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -51,12 +65,18 @@ export default function HealthCheckButton({
     if (isRunning || !isConnected) return;
     setIsRunning(true);
     setReport(null);
+    setProgress(null);
     setError(null);
     setCopied(false);
     requestReply(
       { type: "run-health-check" },
       (reply) => {
+        if (reply.type === "health-check-progress" && "checks" in reply) {
+          setProgress(reply.checks);
+          return;
+        }
         setIsRunning(false);
+        setProgress(null);
         if (reply.type === "health-check" && "checks" in reply) {
           setReport(reply);
         } else if ("message" in reply) {
@@ -75,8 +95,11 @@ export default function HealthCheckButton({
     );
   };
 
+  const checks = report?.checks ?? progress;
   const failed =
-    report?.checks.filter((check) => check.status === "failed").length ?? 0;
+    checks?.filter((check) => check.status === "failed").length ?? 0;
+  const finished =
+    checks?.filter((check) => check.status !== "running").length ?? 0;
 
   return (
     <>
@@ -117,7 +140,23 @@ export default function HealthCheckButton({
                   />
                 )}
                 {error && <Banner status="error" title={error} role="status" />}
-                {isRunning && <Spinner label="Checking search services…" />}
+                {isRunning && !progress && (
+                  <Spinner label="Checking search services…" />
+                )}
+                {isRunning && progress && (
+                  <ProgressBar
+                    label={
+                      failed === 0
+                        ? "Checking search services…"
+                        : `Checking search services… ${failed} failed so far`
+                    }
+                    value={finished}
+                    max={progress.length}
+                    hasValueLabel
+                    formatValueLabel={(value, max) => `${value} of ${max}`}
+                    variant={failed === 0 ? "accent" : "error"}
+                  />
+                )}
                 <VStack role="status" aria-live="polite">
                   {report && (
                     <Text weight="semibold">
@@ -127,51 +166,43 @@ export default function HealthCheckButton({
                     </Text>
                   )}
                 </VStack>
-                {report && (
+                {checks && (
                   <>
-                    <Text type="supporting">
-                      Checked {new Date(report.checked_at).toLocaleString()}
-                    </Text>
+                    {report && (
+                      <Text type="supporting">
+                        Checked {new Date(report.checked_at).toLocaleString()}
+                      </Text>
+                    )}
                     <List
                       header="Search providers and charts"
                       edge="flush"
                       hasDividers
                     >
-                      {report.checks.map((check) => (
+                      {checks.map((check) => (
                         <ListItem
                           key={check.name}
                           align="first-line"
                           startContent={
                             // The icon gives the status a shape, so it doesn't rest on
                             // color and needs no text repeating the dot's label.
-                            <StatusDot
-                              variant={
-                                check.status === "passed" ? "success" : "error"
-                              }
-                              label={
-                                check.status === "passed" ? "Passed" : "Failed"
-                              }
-                              icon={
-                                check.status === "passed" ? (
-                                  <CheckIcon />
-                                ) : (
-                                  <Cross2Icon />
-                                )
-                              }
-                            />
+                            <StatusDot {...STATUS_DOT[check.status]} />
                           }
                           label={
                             <HStack gap={2} wrap="wrap" vAlign="center">
                               <Text weight="semibold">{check.name}</Text>
                               <Text type="supporting">
-                                {`${(check.duration_ms / 1000).toFixed(1)} s`}
+                                {check.status === "running"
+                                  ? "Checking…"
+                                  : `${(check.duration_ms / 1000).toFixed(1)} s`}
                               </Text>
                             </HStack>
                           }
                           description={
                             <VStack gap={1}>
                               <Text type="supporting">{check.probe}</Text>
-                              <Text type="supporting">{check.message}</Text>
+                              {check.message && (
+                                <Text type="supporting">{check.message}</Text>
+                              )}
                             </VStack>
                           }
                         />
