@@ -269,6 +269,14 @@ export type ClientMsg =
 
 export type ServerMsg =
   | {
+      /** Every check's state while a health check runs; replies to its request ahead of
+       * the final `health-check`. */
+      type: "health-check-progress";
+      id: number;
+      partial: true;
+      checks: HealthCheckResult[];
+    }
+  | {
       type: "health-check";
       id: number;
       checked_at: string;
@@ -624,7 +632,8 @@ export type RequestReply = (
 export type HealthCheckResult = {
   name: string;
   probe: string;
-  status: "passed" | "failed";
+  /** "running" only in progress reports. */
+  status: "running" | "passed" | "failed";
   message: string;
   duration_ms: number;
 };

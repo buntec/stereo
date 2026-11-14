@@ -50,10 +50,12 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
       };
 
       // A throwing reply callback must not stop the rest of the batch from being handled.
-      const resolveCallback = (msg: { id?: unknown }) => {
+      // A reply marked `partial` (progress) is one of several: the callback stays registered
+      // for the replies after it, until one without the mark.
+      const resolveCallback = (msg: { id?: unknown; partial?: unknown }) => {
         if (typeof msg.id !== "number") return;
         const cb = callbacks.current.get(msg.id);
-        callbacks.current.delete(msg.id);
+        if (msg.partial !== true) callbacks.current.delete(msg.id);
         try {
           cb?.(msg as TMsgI);
         } catch (err) {

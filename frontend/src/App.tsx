@@ -758,6 +758,7 @@ const reducer = (state: State, action: Action): State => {
     case "clone-repo-reply":
     case "new-releases-candidates":
     case "pairing-code":
+    case "health-check-progress":
     case "health-check":
     case "error-reply": // the server also sends a notification with the reason
       return state;

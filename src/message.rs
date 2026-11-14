@@ -116,6 +116,13 @@ pub enum MsgServer {
     Heartbeat {
         timestamp: i64,
     },
+    /// Every check's state while a health check runs, sent at its start and whenever a check
+    /// finishes; `partial` keeps the client's reply callback for the final `HealthCheck`.
+    HealthCheckProgress {
+        id: i64,
+        partial: bool,
+        checks: Vec<crate::health::CheckResult>,
+    },
     /// Read-only diagnostics of the search providers, returned after all bounded probes finish.
     HealthCheck {
         id: i64,
@@ -862,6 +869,16 @@ mod tests {
         assert_eq!(reply["id"], 42);
         assert_eq!(reply["checks"][0]["status"], "failed");
         assert_eq!(reply["checks"][0]["duration_ms"], 100);
+        let progress = serde_json::to_value(MsgServer::HealthCheckProgress {
+            id: 42,
+            partial: true,
+            checks: vec![],
+        })
+        .unwrap();
+        assert_eq!(progress["type"], "health-check-progress");
+        assert_eq!(progress["id"], 42);
+        // The client keeps the request's callback for the final reply only on this mark.
+        assert_eq!(progress["partial"], true);
     }
 
     #[test]
