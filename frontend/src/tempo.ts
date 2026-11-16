@@ -13,15 +13,23 @@ const OCTAVE_TOLERANCE = 0.04;
  * The measured tempo in BPM, at the octave of the metadata's `bpm` if half or
  * double of it is close to that.
  */
-export const measuredBpm = (tempo: Tempo, bpm?: number | null): number => {
-  if (!bpm) return tempo.bpm;
-  const near = (value: number) => Math.abs(value / bpm - 1) <= OCTAVE_TOLERANCE;
+export const measuredBpm = (tempo: Tempo, bpm?: number | null): number =>
+  atOctaveOf(tempo.bpm, bpm);
+
+/**
+ * `value` at the octave of `reference`: doubled or halved if that's close to
+ * it and `value` itself isn't.
+ */
+export const atOctaveOf = (
+  value: number,
+  reference?: number | null,
+): number => {
+  if (!reference) return value;
+  const near = (v: number) => Math.abs(v / reference - 1) <= OCTAVE_TOLERANCE;
   for (const factor of [2, 0.5]) {
-    if (!near(tempo.bpm) && near(tempo.bpm * factor)) {
-      return tempo.bpm * factor;
-    }
+    if (!near(value) && near(value * factor)) return value * factor;
   }
-  return tempo.bpm;
+  return value;
 };
 
 /** The measured tempo for display, e.g. "124 BPM", "126.4 BPM" or "~128 BPM". */

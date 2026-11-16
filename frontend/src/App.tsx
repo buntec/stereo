@@ -82,6 +82,8 @@ import { setRowProgress } from "./rowProgress.ts";
 import { forgetMissingWaveforms, useWaveform } from "./useWaveform.ts";
 import BpmCheck from "./BpmCheck.tsx";
 import { formatTempo } from "./tempo.ts";
+import TapTempoButton, { TAP_TEMPO_KEY } from "./TapTempo.tsx";
+import { tapTempo } from "./tapTempo.ts";
 import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
 import { useAudioPlayback, useCanSetVolume } from "./AudioPlayback.ts";
@@ -2572,6 +2574,7 @@ function App() {
     m: () => toggleMuted(),
     c: () => centerGridAroundCurrentTrack(),
     t: () => scrollActiveGridToTop(),
+    [TAP_TEMPO_KEY]: () => tapTempo.tap(),
     p: () => togglePlayback(),
     Space: () => togglePlayback(),
     Backspace: () => stopPlayback(),
@@ -2744,6 +2747,10 @@ function App() {
   const playingTrack =
     state.track_info?.yt_id === state.current_id ? state.track_info : undefined;
   const playingTempo = currentWaveform?.tempo;
+  // Taps for one track say nothing about the next.
+  useEffect(() => {
+    tapTempo.reset();
+  }, [state.current_id]);
   const tempoLabel = playingTempo && (
     <Tooltip
       content={
@@ -3281,6 +3288,12 @@ function App() {
                             onPressedChange={toggleBackgroundVideo}
                           />
                         </Tooltip>
+
+                        <TapTempoButton
+                          tempo={playingTrack ? playingTempo : undefined}
+                          bpm={playingTrack?.bpm}
+                          size={footerButtonSize}
+                        />
                       </HStack>
 
                       {touch ? null : <Divider orientation="vertical" />}
