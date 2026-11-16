@@ -381,6 +381,17 @@
   flex: 1 1 16rem;
 }
 
+/* The tap tempo button (TapTempo.tsx): taps in quick succession are not a double-tap zoom,
+   and its width holds while the value changes from "Tap" to e.g. "127.8". */
+.tap-tempo-button {
+  touch-action: manipulation;
+}
+.tap-tempo-value {
+  display: inline-block;
+  min-width: 5ch;
+  text-align: start;
+}
+
 /* The playing track's thumbnail at the start of the footer (NowPlayingThumbnail.tsx),
    and on hover its largest size: natural size, but never larger than the window
    leaves room for above the footer. */
