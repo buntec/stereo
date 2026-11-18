@@ -1,4 +1,4 @@
-# Stereo 📻
+# Stereo
 
 Curate and play music in your browser. Search Beatport, Spotify, SoundCloud and more by artist,
 label, BPM, key or release date, keep what you like in collections, rate and filter them, and
