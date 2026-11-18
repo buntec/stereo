@@ -44,9 +44,9 @@ audio with yt-dlp the first time you play it. Downloads are cached (10 GB by def
 background and with a phone's screen locked.
 
 **Sync.** Collections live in git repositories in `~/.local/share/stereo`. To sync them across
-machines, create a repository with a remote (e.g. a private GitHub repo) and add it on each
-machine with *Clone repository…* in the collection menu. From then on, every change is committed
-and pushed a few minutes later.
+machines, create an empty repository (e.g. a private one on GitHub), add it with *Set remote…* in
+the collection menu, and use *Clone repository…* on your other machines. From then on, every
+change is committed and pushed a few minutes later.
 
 **Playlists.** Save the current filter and sort as a playlist, and export it to Spotify or
 YouTube; while Stereo is open, exports are kept up to date. Connect your accounts with the

@@ -2856,6 +2856,9 @@ function App() {
                       }
                     });
                   }}
+                  onSetRemote={(url) =>
+                    sendMsg({ type: "set-git-remote", url })
+                  }
                   syncState={state.git_sync_state}
                   syncMessage={state.git_sync_message}
                   onShowStats={

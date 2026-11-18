@@ -2,108 +2,98 @@ import { useState, useEffect } from "react";
 import { Button } from "@astryxdesign/core/Button";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
-import { IconButton } from "@astryxdesign/core/IconButton";
 import { FormLayout } from "@astryxdesign/core/FormLayout";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { HStack } from "@astryxdesign/core/Stack";
-import { GitHubLogoIcon } from "@radix-ui/react-icons";
 
 type GitRemoteDialogProps = {
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  // The repository whose remote is edited, for the title.
+  repoName: string | undefined;
   currentRemote: string | null | undefined;
-  onOpen: () => void;
   onSave: (url: string | null) => void;
 };
 
 function GitRemoteDialog({
+  isOpen,
+  onOpenChange,
+  repoName,
   currentRemote,
-  onOpen,
   onSave,
 }: GitRemoteDialogProps) {
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [value, setValue] = useState("");
 
+  // Start from the current remote on every opening.
   useEffect(() => {
-    setValue(currentRemote ?? "");
-  }, [currentRemote]);
+    if (isOpen) setValue(currentRemote ?? "");
+  }, [isOpen, currentRemote]);
 
-  const closeDialog = () => setDialogOpen(false);
+  const close = () => onOpenChange(false);
+  const url = value.trim();
+  const canSave = url !== (currentRemote ?? "");
+
+  const save = () => {
+    if (!canSave) return;
+    onSave(url || null);
+    close();
+  };
 
   return (
-    <>
-      <IconButton
-        variant={currentRemote ? "primary" : "secondary"}
-        label="Git remote"
-        tooltip="Git remote"
-        icon={<GitHubLogoIcon />}
-        onClick={() => {
-          setDialogOpen(true);
-          onOpen();
-        }}
-      />
-
-      <Dialog
-        isOpen={dialogOpen}
-        onOpenChange={(open) => {
-          if (open) {
-            setDialogOpen(true);
-            onOpen();
-          } else {
-            closeDialog();
-          }
-        }}
-        purpose="form"
-        width={480}
-      >
-        <Layout
-          header={
-            <DialogHeader title="Git Remote" onOpenChange={closeDialog} />
-          }
-          content={
-            <LayoutContent>
-              <FormLayout>
-                <TextInput
-                  label="Remote URL"
-                  labelTooltip="Collections are pushed here after changes. Use an empty repository."
-                  placeholder="git@github.com:you/stereo-collections.git"
-                  value={value}
-                  onChange={setValue}
-                />
-              </FormLayout>
-            </LayoutContent>
-          }
-          footer={
-            <LayoutFooter>
-              <HStack gap={2} hAlign="end">
-                {currentRemote && (
-                  <Button
-                    label="Remove"
-                    variant="destructive"
-                    onClick={() => {
-                      onSave(null);
-                      closeDialog();
-                    }}
-                  />
-                )}
+    <Dialog
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+      purpose="form"
+      width={480}
+    >
+      <Layout
+        header={
+          <DialogHeader
+            title={repoName ? `Remote for ${repoName}` : "Git remote"}
+            onOpenChange={close}
+          />
+        }
+        content={
+          <LayoutContent>
+            <FormLayout>
+              <TextInput
+                label="Remote URL"
+                labelTooltip="Collections are pushed here after changes. Use an empty repository."
+                placeholder="git@github.com:you/stereo-collections.git"
+                value={value}
+                onChange={setValue}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter") save();
+                }}
+              />
+            </FormLayout>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack gap={2} hAlign="end">
+              {currentRemote && (
                 <Button
-                  label="Cancel"
-                  variant="secondary"
-                  onClick={closeDialog}
-                />
-                <Button
-                  label="Save"
-                  variant="primary"
-                  isDisabled={value.trim() === (currentRemote ?? "")}
+                  label="Remove"
+                  variant="destructive"
                   onClick={() => {
-                    onSave(value.trim() || null);
-                    closeDialog();
+                    onSave(null);
+                    close();
                   }}
                 />
-              </HStack>
-            </LayoutFooter>
-          }
-        />
-      </Dialog>
-    </>
+              )}
+              <Button label="Cancel" variant="secondary" onClick={close} />
+              <Button
+                label="Save"
+                variant="primary"
+                isDisabled={!canSave}
+                onClick={save}
+              />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
   );
 }
 

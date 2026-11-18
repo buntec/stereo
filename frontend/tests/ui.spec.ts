@@ -674,6 +674,41 @@ test("empty collections offer search and import", async ({ page }) => {
   ).toBeFocused();
 });
 
+test("the collection menu sets, changes and removes the repository's remote", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  const remoteUpdates = () =>
+    messages.filter((message) => message.type === "set-git-remote");
+  const openMenu = () =>
+    page.locator(".collection-controls").getByRole("button").first().click();
+
+  await openMenu();
+  await page.getByRole("menuitem", { name: "Set remote…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Remote for audit" });
+  const url = dialog.getByRole("textbox", { name: /Remote URL/ });
+  await expect(url).toHaveValue("");
+  await url.fill("git@example.com:me/sets.git");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect
+    .poll(remoteUpdates)
+    .toEqual([{ type: "set-git-remote", url: "git@example.com:me/sets.git" }]);
+
+  send({
+    type: "repos",
+    repos: [{ path: "/audit", remote: "git@example.com:me/sets.git" }],
+  });
+  await openMenu();
+  await page.getByRole("menuitem", { name: "Change remote…" }).click();
+  await expect(url).toHaveValue("git@example.com:me/sets.git");
+  await expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect
+    .poll(() => remoteUpdates().at(-1))
+    .toEqual({ type: "set-git-remote", url: null });
+});
+
 test("unloaded rows do not expose ratings or playback highlights", async ({
   page,
 }) => {
