@@ -81,9 +81,16 @@ format:
     cargo fmt --manifest-path desktop/src-tauri/Cargo.toml
     bun run prettier --write "frontend/src/**/*.{ts,tsx,css}"
 
+# Bump the version (patch, minor or major) of both crates, commit that and tag it. Pushing the tag
+# (`git push --follow-tags`) starts the release workflow.
 bump part="patch":
     #!/usr/bin/env sh
     set -eu
     cargo set-version --bump {{ part }}
     version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
     cargo set-version --manifest-path desktop/src-tauri/Cargo.toml "$version"
+    # Only the version files, whatever else is staged.
+    git commit -m "bump version to $version" -- Cargo.toml Cargo.lock desktop/src-tauri/Cargo.toml desktop/src-tauri/Cargo.lock
+    # Annotated, so that `git push --follow-tags` pushes it.
+    git tag -a "v$version" -m "v$version"
+    echo "Tagged v$version; push it with: git push --follow-tags"
