@@ -485,7 +485,7 @@ fn show_error(window: &WebviewWindow, start_page: &Url, message: &str, details: 
 }
 
 /// The `PATH` of the user's login shell. Apps started from the Finder or Dock get launchd's
-/// minimal one, without e.g. Homebrew, where yt-dlp and the Deno it needs usually live.
+/// minimal one, without e.g. Homebrew, where yt-dlp usually lives.
 #[cfg(target_os = "macos")]
 fn login_path() -> Option<String> {
     use std::ffi::CStr;

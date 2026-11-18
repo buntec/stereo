@@ -2950,7 +2950,7 @@ function App() {
                 container="section"
                 status="error"
                 title="Playback needs yt-dlp"
-                description="Install yt-dlp and Deno (brew install yt-dlp deno) and restart Stereo, or pass --yt-dlp <path>."
+                description="Install yt-dlp (brew install yt-dlp) and restart Stereo, or pass --yt-dlp <path>."
               />
             ) : state.collection_is_valid === false ? (
               <Banner

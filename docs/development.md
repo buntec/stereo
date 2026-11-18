@@ -1,7 +1,7 @@
 # Development
 
 Prerequisites: [Rust](https://rustup.rs), [Bun](https://bun.sh), [just](https://github.com/casey/just).
-For playback you also need [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [Deno](https://deno.com).
+For playback you also need [yt-dlp](https://github.com/yt-dlp/yt-dlp).
 
 ```sh
 bun install        # install frontend dependencies

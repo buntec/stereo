@@ -132,10 +132,7 @@ pub async fn init(settings: &Settings) {
     let version = match yt_dlp_version(&settings.yt_dlp).await {
         Ok(version) => version,
         Err(e) => {
-            tracing::warn!(
-                "Playback is unavailable: {e:#}. Install yt-dlp (and Deno, which it needs \
-                 for YouTube) or pass --yt-dlp."
-            );
+            tracing::warn!("Playback is unavailable: {e:#}. Install yt-dlp or pass --yt-dlp.");
             return;
         }
     };

@@ -44,7 +44,7 @@ app, and on macOS the launchd service's (from its plist). Failing those, the sta
 it; the app checks it and keeps it in its config directory.
 
 **PATH.** Apps opened from the Finder or Dock get a minimal `PATH`, without e.g. Homebrew's
-yt-dlp and Deno, so on macOS the backend gets the `PATH` of the user's login shell.
+yt-dlp, so on macOS the backend gets the `PATH` of the user's login shell.
 
 **Links** to other sites, and new windows, open in the default browser.
 

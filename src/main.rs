@@ -137,7 +137,7 @@ fn plist_content(settings: &Settings, exe: &std::path::Path, log_path: &std::pat
         .join("\n");
 
     let mut env_vars = Vec::new();
-    // launchd's default PATH lacks e.g. Homebrew, where yt-dlp and the Deno it needs live.
+    // launchd's default PATH lacks e.g. Homebrew, where yt-dlp lives.
     if let Ok(path) = std::env::var("PATH") {
         env_vars.push(("PATH", path));
     }

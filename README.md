@@ -29,9 +29,9 @@ stereo
 Then open `localhost:8005` in any modern browser. On macOS, `stereo install` runs it as a
 service that starts when you log in.
 
-**For playback**, install [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [Deno](https://deno.com)
-(e.g. `brew install yt-dlp deno`), and keep yt-dlp up to date: YouTube changes often, and older
-versions stop working. Without them, Stereo still works for curating, but won't play anything.
+**For playback**, install [yt-dlp](https://github.com/yt-dlp/yt-dlp), e.g. `brew install yt-dlp`
+(if you install it some other way, also install [Deno](https://deno.com)), and keep it up to
+date: YouTube changes often, and older versions stop working. Without them, Stereo still works for curating, but won't play anything.
 
 ## Using Stereo
 
