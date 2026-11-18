@@ -54,7 +54,10 @@ impl InFlight {
     pub fn start(playlist_id: &str, service: Service) -> Option<Self> {
         let key = (playlist_id.to_string(), service);
         let mut in_flight = IN_FLIGHT.lock().expect("in-flight syncs poisoned");
-        in_flight.insert(key.clone()).then_some(Self(key))
+        // Lazily: a `Self` built for nothing would be dropped right here, and its `drop` would
+        // lock `IN_FLIGHT` again (deadlocking, with the guard still held) and remove the key of
+        // the sync that is running.
+        in_flight.insert(key.clone()).then(|| Self(key))
     }
 }
 
@@ -397,5 +400,22 @@ async fn save_sp_ids(repo: &Path, playlist: &Playlist, found: &[(String, String)
             tracing::warn!("Saving Spotify ids of {} failed: {e:#}", playlist.name);
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_in_flight_refuses_a_second_sync_of_the_same_playlist() {
+        let first = InFlight::start("test-in-flight", Service::Spotify).expect("first sync");
+        // Used to deadlock: the refused `InFlight` was built anyway and dropped with the lock held.
+        assert!(InFlight::start("test-in-flight", Service::Spotify).is_none());
+        // The refusal leaves the running sync's entry alone.
+        assert!(InFlight::start("test-in-flight", Service::Spotify).is_none());
+        assert!(InFlight::start("test-in-flight", Service::YouTube).is_some());
+        drop(first);
+        assert!(InFlight::start("test-in-flight", Service::Spotify).is_some());
     }
 }
