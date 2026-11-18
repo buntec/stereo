@@ -14,12 +14,13 @@
 }
 
 /* On macOS the desktop app's page reaches up under a transparent title bar, so the
-   background artwork fills the window (`desktop/src-tauri/src/lib.rs` sets the
-   attribute). The header starts below the title bar's 28px strip, which is left to the
-   traffic lights and to moving the window (the header is its drag region); in full
-   screen the title bar is gone until it slides in over the page. */
-:root[data-title-bar="overlay"] .stereo-app .app-header {
-  padding-block-start: calc(1.75rem + var(--spacing-2));
+   background artwork fills the window, while its root element has
+   `data-title-bar="overlay"` (`desktop/src-tauri/src/title_bar.rs`, which looks for
+   `title-bar-overlay` in the backend's `/info` features). The title bar's 28px strip
+   stays clear, above the banners and the header: it keeps the traffic lights, and the
+   app moves the window from it. In full screen the attribute is `hidden`. */
+:root[data-title-bar="overlay"] .stereo-app {
+  padding-block-start: 1.75rem;
 }
 
 .collection-controls {

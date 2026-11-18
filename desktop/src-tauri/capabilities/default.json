@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Only moving and zooming the window, from the page's title bar area (`data-tauri-drag-region`): the window shows Stereo's own web UI, served by its backend on loopback, beside the app's start page",
+  "description": "Only what the title bar's strip over the page does (src/title_bar.rs): moving, zooming and minimizing the window. It shows the app's start page and Stereo's own web UI, served by its backend on loopback",
   "windows": ["main"],
   "local": true,
   "remote": {
@@ -10,6 +10,7 @@
   "platforms": ["macOS"],
   "permissions": [
     "core:window:allow-start-dragging",
-    "core:window:allow-internal-toggle-maximize"
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-minimize"
   ]
 }

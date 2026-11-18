@@ -374,11 +374,15 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-/// What the desktop app looks for to tell a running Stereo from another server on its port.
+/// What the desktop app looks for to tell a running Stereo from another server on its port, and
+/// what its UI supports that the app adapts to: `title-bar-overlay`, a UI that leaves the top
+/// 28px clear for a transparent title bar while its root element has `data-title-bar="overlay"`
+/// (`desktop/src-tauri/src/title_bar.rs`).
 async fn info() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
         "app": "stereo",
         "version": env!("CARGO_PKG_VERSION"),
+        "features": ["title-bar-overlay"],
     }))
 }
 

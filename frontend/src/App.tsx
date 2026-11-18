@@ -88,12 +88,7 @@ import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
 import { useAudioPlayback, useCanSetVolume } from "./AudioPlayback.ts";
 import VolumeControl, { DEFAULT_VOLUME } from "./VolumeControl.tsx";
-import {
-  useLocalStorage,
-  shuffleArray,
-  hasCollectionStats,
-  inDesktopApp,
-} from "./Utils.tsx";
+import { useLocalStorage, shuffleArray, hasCollectionStats } from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
 import { scrollGridToTop } from "./useGridScrollState.ts";
 import SearchBox from "./SearchBox.tsx";
@@ -2818,10 +2813,6 @@ function App() {
               gap={2}
               wrap="wrap"
               className="app-header"
-              // The desktop app's window moves by the header's empty parts (and the
-              // logo), as by a title bar: the page reaches up under its own, see
-              // `data-title-bar` in App.css.
-              data-tauri-drag-region={inDesktopApp ? "deep" : undefined}
             >
               <HStack vAlign="center" gap={2} className="collection-controls">
                 <DanceStack level={stackLevel} beats={stackBeats} />
