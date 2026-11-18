@@ -79,6 +79,8 @@
       }
     </style>
   </head>
+  <!-- On macOS the page reaches up under a transparent title bar, whose strip the app moves
+       the window from (src-tauri/src/title_bar.rs): nothing interactive goes there. -->
   <body>
     <main>
       <img src="logo.svg" width="72" height="72" alt="" />

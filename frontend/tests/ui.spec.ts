@@ -1185,6 +1185,41 @@ test("explains that playback needs yt-dlp when the backend can't download audio"
   ).toBeVisible();
 });
 
+for (const banner of [false, true])
+  test(`under the macOS desktop app's title bar, its strip stays clear${banner ? ", above a banner" : ""}`, async ({
+    page,
+  }) => {
+    await openApp(page, { audio: banner ? "off" : "hold" });
+    // What desktop/src-tauri/src/title_bar.rs sets while the title bar is over the page
+    // (WebKit runs the app's script with the root element there, Chromium before it is).
+    await page.evaluate(() => {
+      document.documentElement.dataset.titleBar = "overlay";
+    });
+    const top = async (locator: Locator) => (await locator.boundingBox())!.y;
+    const header = page.locator(".app-header");
+    // The first thing under the strip: the banner, when there is one, else the header.
+    const first = banner
+      ? page.getByText("Playback needs yt-dlp", { exact: true })
+      : header;
+    await expect(first).toBeVisible();
+    expect(await top(first)).toBeGreaterThanOrEqual(28);
+    expect(await top(header)).toBeGreaterThanOrEqual(28);
+    // Still exactly as tall as the window: nothing scrolls the strip away.
+    const [scrollHeight, innerHeight] = await page.evaluate(() => [
+      document.scrollingElement!.scrollHeight,
+      window.innerHeight,
+    ]);
+    expect(scrollHeight).toBe(innerHeight);
+    const footer = page.getByRole("button", { name: "Play", exact: true });
+    expect((await footer.boundingBox())!.y).toBeLessThan(innerHeight);
+
+    // In full screen there is no title bar until it slides in, and no strip.
+    await page.evaluate(() => {
+      document.documentElement.dataset.titleBar = "hidden";
+    });
+    await expect.poll(() => top(first)).toBeLessThan(28);
+  });
+
 test("shows the playing track's download progress in its waveform, and each track's in its row", async ({
   page,
 }) => {

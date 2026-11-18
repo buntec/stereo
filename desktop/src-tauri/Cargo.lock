@@ -3348,6 +3348,7 @@ name = "stereo-desktop"
 version = "0.1.64"
 dependencies = [
  "libc",
+ "objc2-foundation",
  "serde_json",
  "tauri",
  "tauri-build",

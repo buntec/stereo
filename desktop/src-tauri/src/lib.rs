@@ -20,6 +20,9 @@ use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+#[cfg(target_os = "macos")]
+mod title_bar;
+
 /// The CLI's default port. Besides finding a `stereo` started there, the app's own backend uses
 /// it when free: the page's origin, and with it everything the UI keeps in localStorage (grid
 /// state, settings), then stays the same across launches, and a browser tab can share it.
@@ -160,16 +163,43 @@ fn probe(port: u16) -> Probe {
 /// Whether `stream` is connected to Stereo: its `/info`, or, from versions before that route,
 /// the web UI it serves for any path.
 fn is_stereo(stream: &mut TcpStream, port: u16) -> bool {
+    looks_like_stereo(&get_info(stream, port))
+}
+
+/// The response to `GET /info` on `stream`, empty if there is none.
+fn get_info(stream: &mut TcpStream, port: u16) -> String {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
     let request =
         format!("GET /info HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n");
     if stream.write_all(request.as_bytes()).is_err() {
-        return false;
+        return String::new();
     }
     let mut response = Vec::new();
     let _ = stream.take(256 * 1024).read_to_end(&mut response);
-    looks_like_stereo(&String::from_utf8_lossy(&response))
+    String::from_utf8_lossy(&response).into_owned()
+}
+
+/// The response to `GET /info` from the backend on `port`, empty if there is none.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn backend_info(port: u16) -> String {
+    loopback_addrs(port)
+        .iter()
+        .find_map(|addr| TcpStream::connect_timeout(addr, Duration::from_millis(300)).ok())
+        .map_or(String::new(), |mut stream| get_info(&mut stream, port))
+}
+
+/// Whether an `/info` response lists `feature` among the backend's `features`: what its UI
+/// supports, for what the app does differently with it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn has_feature(response: &str, feature: &str) -> bool {
+    let Some((_, body)) = response.split_once("\r\n\r\n") else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|info| info.get("features")?.as_array().cloned())
+        .is_some_and(|features| features.iter().any(|f| f.as_str() == Some(feature)))
 }
 
 fn looks_like_stereo(response: &str) -> bool {
@@ -368,7 +398,7 @@ fn open_ui(app: &AppHandle, window: &WebviewWindow, start_page: &Url, port: u16)
         }
         _ => None,
     };
-    if let Err(error) = window.navigate(ui_url(port, token.as_deref())) {
+    if let Err(error) = show_ui(window, port, token.as_deref()) {
         let message = "Could not open Stereo.";
         show_error(window, start_page, message, &error.to_string());
     }
@@ -399,7 +429,7 @@ fn ask_for_token(
         )
     };
     let page = serde_json::json!({ "message": message, "token": true, "attempt": rejections });
-    if let Err(error) = window.navigate(start_page_with(start_page, &page)) {
+    if let Err(error) = show_start_page(window, start_page_with(start_page, &page)) {
         eprintln!("could not show the start page: {error}");
     }
 }
@@ -432,7 +462,7 @@ fn submit_token(app: &AppHandle, token: &str) {
         Some(Auth::Accepted) => {
             app.state::<TokenPrompt>().0.lock().unwrap().take();
             save_token(app, token);
-            if let Err(error) = window.navigate(ui_url(port, Some(token))) {
+            if let Err(error) = show_ui(&window, port, Some(token)) {
                 let message = "Could not open Stereo.";
                 show_error(&window, &start_page, message, &error.to_string());
             }
@@ -444,6 +474,29 @@ fn submit_token(app: &AppHandle, token: &str) {
             show_error(&window, &start_page, &message, "");
         }
     }
+}
+
+/// Run in every page before its own scripts: lets the UI adapt where the desktop app differs
+/// from a browser tab.
+#[cfg(not(target_os = "macos"))]
+fn init_script() -> String {
+    "window.__STEREO_DESKTOP__ = true;".to_string()
+}
+#[cfg(target_os = "macos")]
+use title_bar::init_script;
+
+/// Shows the start page at `url`, under the title bar, as the page leaves room for it.
+fn show_start_page(window: &WebviewWindow, url: Url) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    title_bar::set_overlay(window, true);
+    window.navigate(url)
+}
+
+/// Opens the UI of the backend on `port`, under the title bar if it leaves room for it.
+fn show_ui(window: &WebviewWindow, port: u16, token: Option<&str>) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    title_bar::set_overlay(window, has_feature(&backend_info(port), title_bar::FEATURE));
+    window.navigate(ui_url(port, token))
 }
 
 /// Stereo's own pages, the app's bundled start page (`tauri://localhost` on macOS and Linux,
@@ -479,7 +532,7 @@ fn start_page_with(start_page: &Url, page: &serde_json::Value) -> Url {
 /// Shows the start page with an error, for good: the app has to be restarted to try again.
 fn show_error(window: &WebviewWindow, start_page: &Url, message: &str, details: &str) {
     let error = serde_json::json!({ "message": message, "details": details });
-    if let Err(error) = window.navigate(start_page_with(start_page, &error)) {
+    if let Err(error) = show_start_page(window, start_page_with(start_page, &error)) {
         eprintln!("could not show the error page: {error}");
     }
 }
@@ -717,33 +770,57 @@ pub fn run() {
         .manage(Backend::default())
         .manage(TokenPrompt::default())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.manage(title_bar::TitleBar::default());
             let handle = app.handle().clone();
-            let window =
+            let builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Stereo")
                     .inner_size(1400.0, 900.0)
                     .min_inner_size(480.0, 480.0)
-                    // Lets the UI adapt where the desktop app differs from a browser tab.
-                    .initialization_script("window.__STEREO_DESKTOP__ = true;")
-                    // Links to other sites open in the default browser, as do new windows
-                    // (`window.open`, `target="_blank"`).
-                    .on_navigation(move |url| {
-                        if let Some(token) = submitted_token(&handle, url) {
-                            let app = handle.clone();
-                            std::thread::spawn(move || submit_token(&app, &token));
-                            return false;
-                        }
-                        let allowed = is_app_url(url);
-                        if !allowed {
-                            open_in_browser(url);
-                        }
-                        allowed
-                    })
-                    .on_new_window(|url, _| {
-                        open_in_browser(&url);
-                        NewWindowResponse::Deny
-                    })
-                    .build()?;
+                    .initialization_script(init_script());
+            // Starts under the title bar, on the start page (`title_bar.rs`).
+            #[cfg(target_os = "macos")]
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .on_page_load(|window, payload| {
+                    if let tauri::webview::PageLoadEvent::Finished = payload.event() {
+                        title_bar::sync(&window);
+                    }
+                });
+            let window = builder
+                // Links to other sites open in the default browser, as do new windows
+                // (`window.open`, `target="_blank"`).
+                .on_navigation(move |url| {
+                    if let Some(token) = submitted_token(&handle, url) {
+                        let app = handle.clone();
+                        std::thread::spawn(move || submit_token(&app, &token));
+                        return false;
+                    }
+                    let allowed = is_app_url(url);
+                    if !allowed {
+                        open_in_browser(url);
+                    }
+                    allowed
+                })
+                .on_new_window(|url, _| {
+                    open_in_browser(&url);
+                    NewWindowResponse::Deny
+                })
+                .build()?;
+            // Into or out of full screen, and back from System Settings.
+            #[cfg(target_os = "macos")]
+            {
+                let w = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(true) =
+                        event
+                    {
+                        title_bar::sync(&w);
+                    }
+                });
+            }
             let start_page = window.url()?;
             let app = app.handle().clone();
             std::thread::spawn(move || connect(app, window, start_page));
@@ -781,6 +858,23 @@ mod tests {
         assert!(!looks_like_stereo(
             "HTTP/1.1 200 OK\r\n\r\n<title>Something else</title>"
         ));
+    }
+
+    #[test]
+    fn reads_the_backends_features_from_its_info() {
+        let info =
+            |body: &str| format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{body}");
+        let new = info(r#"{"app":"stereo","version":"0.1.65","features":["title-bar-overlay"]}"#);
+        assert!(has_feature(&new, "title-bar-overlay"));
+        assert!(!has_feature(&new, "something-else"));
+        // Versions before features, before `/info`, and no answer at all.
+        assert!(!has_feature(
+            &info(r#"{"app":"stereo","version":"0.1.64"}"#),
+            "title-bar-overlay"
+        ));
+        let ui = "HTTP/1.1 200 OK\r\n\r\n<!doctype html><title>Stereo</title>";
+        assert!(!has_feature(ui, "title-bar-overlay"));
+        assert!(!has_feature("", "title-bar-overlay"));
     }
 
     #[test]

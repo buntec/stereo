@@ -1,7 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "No IPC: the window shows Stereo's own web UI, served by its backend",
+  "description": "Only what the title bar's strip over the page does (src/title_bar.rs): moving, zooming and minimizing the window. It shows the app's start page and Stereo's own web UI, served by its backend on loopback",
   "windows": ["main"],
-  "permissions": []
+  "local": true,
+  "remote": {
+    "urls": ["http://localhost:*"]
+  },
+  "platforms": ["macOS"],
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-minimize"
+  ]
 }

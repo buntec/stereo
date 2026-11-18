@@ -56,6 +56,15 @@ window gets focus again. **YouTube** connects from the app: with no browser to g
 looks for a login in every browser, and offers the ones it finds to pick from. Spotify connects
 from the app as from a browser.
 
+**Title bar.** On macOS the page reaches up under a transparent title bar, so the background
+artwork fills the whole window: the start page, and the UI of a Stereo whose `/info` lists the
+`title-bar-overlay` feature, which keeps the title bar's strip clear (the app sets `data-title-bar`
+on the page's root element: `overlay`, or `hidden` in full screen). An older Stereo's UI, which
+doesn't, gets the native title bar. The strip moves the window, and a double-click on it does what
+System Settings says (Desktop & Dock: zoom, minimize or nothing), from a script the app runs in
+each page (`src-tauri/src/title_bar.rs`). That takes the only IPC the pages may use: moving,
+zooming and minimizing the window (`capabilities/default.json`).
+
 The app sets `window.__STEREO_DESKTOP__`; the UI checks it with `inDesktopApp` (`Utils.tsx`).
 
 Each target architecture needs its own bundled `stereo` binary. The release workflow
