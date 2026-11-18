@@ -43,17 +43,23 @@ function CloneRepoDialog({
         }
         content={
           <LayoutContent>
-            <FormLayout>
-              <TextInput
-                label="Git URL"
-                value={url}
-                placeholder="https://github.com/user/my-sets.git"
-                onChange={(v) => setUrl(v.trim())}
-                onKeyDown={(ev) => {
-                  if (ev.key === "Enter") clone();
-                }}
-              />
-            </FormLayout>
+            {/* A native form (Astryx has none), so that Enter submits only once an input
+                method editor has committed its text. */}
+            <form
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                clone();
+              }}
+            >
+              <FormLayout>
+                <TextInput
+                  label="Git URL"
+                  value={url}
+                  placeholder="https://github.com/user/my-sets.git"
+                  onChange={(v) => setUrl(v.trim())}
+                />
+              </FormLayout>
+            </form>
           </LayoutContent>
         }
         footer={

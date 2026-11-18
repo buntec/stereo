@@ -733,6 +733,26 @@ test("the collection menu sets, changes and removes the repository's remote", as
   await expect(dialog).toHaveCount(0);
 });
 
+test("Enter in the clone dialog clones the repository", async ({ page }) => {
+  const { messages } = await openApp(page);
+  await page
+    .locator(".collection-controls")
+    .getByRole("button")
+    .first()
+    .click();
+  await page.getByRole("menuitem", { name: "Clone repository…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Clone a repository" });
+  const url = dialog.getByRole("textbox", { name: "Git URL" });
+  await url.fill("https://example.com/me/sets.git");
+  await url.press("Enter");
+  await expect(dialog).toHaveCount(0);
+  await expect
+    .poll(() => messages.filter((message) => message.type === "clone-repo"))
+    .toEqual([
+      expect.objectContaining({ url: "https://example.com/me/sets.git" }),
+    ]);
+});
+
 test("unloaded rows do not expose ratings or playback highlights", async ({
   page,
 }) => {
