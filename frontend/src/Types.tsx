@@ -206,7 +206,7 @@ export type ClientMsg =
     }
   | { type: "search-traxsource-top100"; query_id: number; limit: number }
   | { type: "get-git-remote" }
-  | { type: "set-git-remote"; url: string | null }
+  | { type: "set-git-remote"; repo: string; url: string | null }
   | { type: "retry-git-sync" }
   | {
       type: "resolve-git-conflict";
@@ -419,6 +419,7 @@ export type ServerMsg =
     }
   | { type: "repos"; repos: IRepo[] }
   | { type: "clone-repo-reply"; id: number; path: string | null }
+  | { type: "set-git-remote-reply"; id: number; url: string | null }
   | { type: "error-reply"; id: number; message: string }
   | { type: "collections"; collections: ICollection[] }
   | {

@@ -105,6 +105,11 @@ pub enum MsgServer {
         id: i64,
         message: String,
     },
+    /// Reply to `SetGitRemote`: the repo's remote now.
+    SetGitRemoteReply {
+        id: i64,
+        url: Option<String>,
+    },
     /// Reply to `CloneRepo`: the path of the repo that is now active, or `None` if cloning failed.
     CloneRepoReply {
         id: i64,
@@ -643,7 +648,11 @@ pub enum MsgClient {
         id: i64,
     },
     GetGitRemote,
+    /// Sets (or with `None`, removes) the remote of `repo`, named rather than taken from the
+    /// session, so a request queued across a reconnect can't land on another repository.
     SetGitRemote {
+        id: i64,
+        repo: String,
         url: Option<String>,
     },
     RetryGitSync,
@@ -830,6 +839,7 @@ impl MsgClient {
             | Self::GetYouTubePlaylist { id, .. }
             | Self::SearchYouTubeVideos { id, .. }
             | Self::CloneRepo { id, .. }
+            | Self::SetGitRemote { id, .. }
             | Self::ValidateTrack { id, .. }
             | Self::CheckSpotifyId { id, .. }
             | Self::FixupTrack { id, .. }

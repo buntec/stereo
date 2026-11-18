@@ -44,8 +44,8 @@ export type CollectionSelectorProps = {
   repoPath: string;
   setRepoPath: (path: string) => void;
   onClone: (url: string) => void;
-  // Sets (or with null, removes) the selected repository's remote.
-  onSetRemote: (url: string | null) => void;
+  // Sets (or with null, removes) a repository's remote; resolves once it is set.
+  onSetRemote: (repoPath: string, url: string | null) => Promise<void>;
   syncState?: GitSyncState;
   syncMessage?: string;
   // Undefined when there are no stats to show.
@@ -72,6 +72,11 @@ function CollectionSelector({
   const [createOpen, setCreateOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [remoteOpen, setRemoteOpen] = useState(false);
+  // The repository whose remote the dialog edits: the one selected when it opened, even if
+  // the selection changes meanwhile.
+  const [remoteRepoPath, setRemoteRepoPath] = useState<string>();
+  // Remounts the remote dialog on every opening, so it starts from the current remote.
+  const [remoteKey, setRemoteKey] = useState(0);
   // The collection awaiting delete confirmation.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   // The collection being renamed.
@@ -178,7 +183,11 @@ function CollectionSelector({
           icon={<Link2Icon />}
           label={selectedRepo?.remote ? "Change remote…" : "Set remote…"}
           isDisabled={!selectedRepo}
-          onClick={() => setRemoteOpen(true)}
+          onClick={() => {
+            setRemoteRepoPath(selectedRepo?.path);
+            setRemoteKey((key) => key + 1);
+            setRemoteOpen(true);
+          }}
         />
         <DropdownMenuItem
           icon={<DownloadIcon />}
@@ -215,11 +224,16 @@ function CollectionSelector({
         onClone={onClone}
       />
       <GitRemoteDialog
+        key={remoteKey}
         isOpen={remoteOpen}
         onOpenChange={setRemoteOpen}
-        repoName={selectedRepo && basename(selectedRepo.path)}
-        currentRemote={selectedRepo?.remote}
-        onSave={onSetRemote}
+        repoName={remoteRepoPath && basename(remoteRepoPath)}
+        currentRemote={repos.find((r) => r.path === remoteRepoPath)?.remote}
+        onSave={(url) =>
+          remoteRepoPath
+            ? onSetRemote(remoteRepoPath, url)
+            : Promise.reject(new Error("No repository"))
+        }
       />
       <AlertDialog
         isOpen={pendingDelete !== null}

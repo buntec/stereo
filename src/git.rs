@@ -190,6 +190,16 @@ pub async fn set_remote(home: &Path, url: Option<&str>) -> anyhow::Result<()> {
         }
         (Some(_), Some(url)) => {
             run_git(home, &["remote", "set-url", "origin", url], GIT_TIMEOUT).await?;
+            // `set-url` leaves a separate push URL in place, and pushes would still go there:
+            // the remote shown and set is where collections go.
+            if git_ok(home, &["config", "--get-all", "remote.origin.pushurl"]).await {
+                run_git(
+                    home,
+                    &["config", "--unset-all", "remote.origin.pushurl"],
+                    GIT_TIMEOUT,
+                )
+                .await?;
+            }
         }
         (None, Some(url)) => {
             run_git(home, &["remote", "add", "origin", url], GIT_TIMEOUT).await?;
@@ -1463,6 +1473,38 @@ mod tests {
             .await
             .unwrap();
         assert!(ids.contains("two"));
+    }
+
+    #[tokio::test]
+    async fn changing_the_remote_moves_pushes_to_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let old = temp.path().join("old.git");
+        let new = temp.path().join("new.git");
+        for remote in [&old, &new] {
+            std::fs::create_dir(remote).unwrap();
+            command(remote, &["init", "--bare"]);
+        }
+
+        let repo = temp.path().join("repo");
+        init_if_needed(&repo).await.unwrap();
+        set_remote(&repo, Some(old.to_str().unwrap()))
+            .await
+            .unwrap();
+        command(
+            &repo,
+            &["config", "remote.origin.pushurl", old.to_str().unwrap()],
+        );
+        set_remote(&repo, Some(new.to_str().unwrap()))
+            .await
+            .unwrap();
+        assert!(!git_ok(&repo, &["config", "--get-all", "remote.origin.pushurl"]).await);
+
+        let db_path = repo.join("music.db");
+        create_collection(&db_path, &track("one")).await;
+        let report = sync_repository(repo, Some(db_path), false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+        assert!(git_ok(&new, &["rev-parse", "--verify", "HEAD"]).await);
+        assert!(!git_ok(&old, &["rev-parse", "--verify", "HEAD"]).await);
     }
 
     #[tokio::test]
