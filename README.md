@@ -8,8 +8,8 @@ as playlists to Spotify and YouTube.
 No account, no subscription: a collection is just a small SQLite file of track metadata.
 
 <p>
-  <img src="https://github.com/user-attachments/assets/08e67c2d-58cc-4bee-9829-a7338e20255d" alt="Stereo with the dark theme" width="49%">
-  <img src="https://github.com/user-attachments/assets/6e770cf6-3264-4cb5-a1bb-e5bafe0ceb27" alt="Stereo with the light theme" width="49%">
+  <img src="https://github.com/user-attachments/assets/0b58f6ba-2891-4800-8a0e-9cf61f4813e3" alt="Stereo with the light theme" width="49%">
+  <img src="https://github.com/user-attachments/assets/a77b0524-f409-4684-a301-9ef9e01b4d88" alt="Stereo with the dark theme" width="49%">
 </p>
 
 ## Install
