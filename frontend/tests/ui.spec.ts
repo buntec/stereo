@@ -284,6 +284,18 @@ function toastText(
 }
 
 /**
+ * The keydown of an Enter that commits an input method editor's text, which
+ * mustn't submit a dialog's form.
+ */
+const composingEnter = {
+  key: "Enter",
+  code: "Enter",
+  isComposing: true,
+  bubbles: true,
+  cancelable: true,
+};
+
+/**
  * Plays the collection's first track, which loading the page only selects.
  */
 async function startPlayback(page: Page) {
@@ -690,6 +702,10 @@ test("the collection menu sets, changes and removes the repository's remote", as
   await openMenu();
   await page.getByRole("menuitem", { name: "Set remote…" }).click();
   await expect(url).toHaveValue("");
+  await url.fill("git@example.com:me/se");
+  // The Enter that commits an input method editor's text doesn't save.
+  await url.dispatchEvent("keydown", composingEnter);
+  await expect(dialog).toBeVisible();
   await url.fill("git@example.com:me/sets.git");
   await url.press("Enter");
   await expect.poll(remoteUpdates).toEqual([
@@ -743,11 +759,17 @@ test("Enter in the clone dialog clones the repository", async ({ page }) => {
   await page.getByRole("menuitem", { name: "Clone repository…" }).click();
   const dialog = page.getByRole("dialog", { name: "Clone a repository" });
   const url = dialog.getByRole("textbox", { name: "Git URL" });
+  const clones = () =>
+    messages.filter((message) => message.type === "clone-repo");
+  await url.fill("https://example.com/me/se");
+  // The Enter that commits an input method editor's text doesn't clone.
+  await url.dispatchEvent("keydown", composingEnter);
+  await expect(dialog).toBeVisible();
   await url.fill("https://example.com/me/sets.git");
   await url.press("Enter");
   await expect(dialog).toHaveCount(0);
   await expect
-    .poll(() => messages.filter((message) => message.type === "clone-repo"))
+    .poll(clones)
     .toEqual([
       expect.objectContaining({ url: "https://example.com/me/sets.git" }),
     ]);
