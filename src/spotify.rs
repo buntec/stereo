@@ -2,16 +2,16 @@
 //! here, since that requires an OAuth app + Spotify Premium for some features).
 //!
 //! Two distinct trust levels:
-//! - Search is anonymous: it emulates the web player using a TOTP code derived from a secret
-//!   buried in Spotify's obfuscated JS, plus per-operation persisted-query hashes scraped out
-//!   of the web-player JS bundle at runtime. No login, no cookies.
+//! - Search is anonymous: it emulates the web player using a TOTP code and per-operation
+//!   persisted-query hashes, both read out of the web-player JS bundle at runtime. No login,
+//!   no cookies.
 //! - Playlist creation needs a real logged-in session.
 //!   Stereo asks the user to paste the `Cookie` header from an already-logged-in browser
 //!   session and persists it to disk.
 
 use std::{
     sync::LazyLock,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Context;
@@ -28,66 +28,112 @@ const SPOTIFY_SESSION_FILE: &str = "spotify_session.json";
 
 // ── TOTP secret (anti-bot token for the anonymous `api/token` endpoint) ─────────────────────
 
-// Spotify buries this secret in obfuscated client JS; a third party keeps a reverse-engineered
-// copy up to date. Fall back to a known-good hardcoded value if that's unreachable.
-const SECRET_URL: &str =
-    "https://code.thetadev.de/ThetaDev/spotify-secrets/raw/branch/main/secrets/secretDict.json";
+// The web-player bundle (`AppAuth::js_pack_url`) carries its TOTP secrets as a list of
+// `{secret:"…",version:61}` literals, newest first; we read the highest version out of it.
+// The hardcoded copy is only for when that fails (download error, or the pattern no longer
+// matches) and has to be updated by hand when Spotify rotates the secret.
 const FALLBACK_SECRET_VERSION: u64 = 61;
 const FALLBACK_SECRET: &[u8] = &[
     44, 55, 47, 42, 70, 40, 34, 114, 76, 74, 50, 111, 120, 97, 75, 76, 94, 102, 43, 69, 49, 120,
     118, 80, 64, 78,
 ];
-const SECRET_TTL: Duration = Duration::from_secs(15 * 60);
 
-struct CachedSecret {
+/// The TOTP secret in use, and the web-player bundle it was last looked up in. A deploy
+/// changes the bundle's URL, so the bundle is read again only when that changes.
+struct TotpSecret {
+    bundle_url: Option<String>,
     version: u64,
     bytes: Vec<u8>,
-    fetched_at: std::time::Instant,
 }
 
-static TOTP_SECRET: LazyLock<RwLock<Option<CachedSecret>>> = LazyLock::new(|| RwLock::new(None));
+static TOTP_SECRET: LazyLock<RwLock<TotpSecret>> = LazyLock::new(|| {
+    RwLock::new(TotpSecret {
+        bundle_url: None,
+        version: FALLBACK_SECRET_VERSION,
+        bytes: FALLBACK_SECRET.to_vec(),
+    })
+});
 
-async fn fetch_totp_secret(client: &Client) -> (u64, Vec<u8>) {
-    let result: anyhow::Result<(u64, Vec<u8>)> = async {
-        let body: Value = client.get(SECRET_URL).send().await?.json().await?;
-        let map = body.as_object().context("secret dict is not an object")?;
-        let version: u64 = map
-            .keys()
-            .filter_map(|k| k.parse::<u64>().ok())
-            .max()
-            .context("no numeric secret version found")?;
-        let bytes: Vec<u8> = map[&version.to_string()]
-            .as_array()
-            .context("secret is not an array")?
-            .iter()
-            .map(|v| v.as_u64().unwrap_or(0) as u8)
-            .collect();
-        Ok((version, bytes))
-    }
-    .await;
-
-    match result {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("Failed to fetch Spotify TOTP secret, using fallback: {e}");
-            (FALLBACK_SECRET_VERSION, FALLBACK_SECRET.to_vec())
-        }
-    }
-}
-
-async fn get_totp_secret(client: &Client) -> (u64, Vec<u8>) {
-    if let Some(cached) = TOTP_SECRET.read().await.as_ref() {
-        if cached.fetched_at.elapsed() < SECRET_TTL {
-            return (cached.version, cached.bytes.clone());
-        }
-    }
-    let (version, bytes) = fetch_totp_secret(client).await;
-    *TOTP_SECRET.write().await = Some(CachedSecret {
-        version,
-        bytes: bytes.clone(),
-        fetched_at: std::time::Instant::now(),
+/// Finds the newest TOTP secret in the web-player bundle's source: its version and the
+/// secret string's characters.
+fn extract_totp_secret(js: &str) -> Option<(u64, Vec<u8>)> {
+    static SECRET_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r#"secret\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')\s*,\s*version\s*:\s*(\d+)"#,
+        )
+        .unwrap()
     });
-    (version, bytes)
+    SECRET_RE
+        .captures_iter(js)
+        .filter_map(|c| {
+            let literal = c.get(1).or_else(|| c.get(2))?.as_str();
+            Some((c[3].parse().ok()?, unescape_js_string(literal)?))
+        })
+        .max_by_key(|(version, _)| *version)
+}
+
+/// Unescapes a JS string literal's body. Only single-character escapes of ASCII punctuation
+/// (`\\`, `\"`, `\'`, …) are expected in a secret; anything else (`\n`, `\x41`, `\u0041`,
+/// non-ASCII) gives `None` rather than a wrong secret.
+fn unescape_js_string(literal: &str) -> Option<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(literal.len());
+    let mut chars = literal.chars();
+    while let Some(c) = chars.next() {
+        let c = match c {
+            '\\' => chars.next().filter(|c| c.is_ascii_punctuation())?,
+            c if c.is_ascii() => c,
+            _ => return None,
+        };
+        bytes.push(c as u8);
+    }
+    Some(bytes)
+}
+
+/// Takes the TOTP secret from the web-player bundle at `bundle_url`, whose source is `js`. If it
+/// has none we can read, the secret in use is kept.
+async fn remember_bundle_secret(bundle_url: &str, js: &str) {
+    let found = extract_totp_secret(js);
+    let mut current = TOTP_SECRET.write().await;
+    current.bundle_url = Some(bundle_url.to_string());
+    match found {
+        Some((version, bytes)) => {
+            current.version = version;
+            current.bytes = bytes;
+        }
+        None => tracing::warn!(
+            "No TOTP secret found in Spotify's web-player bundle {bundle_url}, keeping v{}",
+            current.version
+        ),
+    }
+}
+
+/// The TOTP secret of the current web-player bundle (as found by the last `fetch_session`):
+/// read from the bundle the first time it's seen, else the last one found (or the hardcoded
+/// one).
+async fn get_totp_secret(client: &Client) -> (u64, Vec<u8>) {
+    let bundle_url = APP_AUTH.read().await.js_pack_url.clone();
+    let seen = TOTP_SECRET.read().await.bundle_url.clone();
+    if let Some(bundle_url) = bundle_url.filter(|url| seen.as_ref() != Some(url)) {
+        let js = async {
+            client
+                .get(&bundle_url)
+                .send()
+                .await?
+                .error_for_status()?
+                .text()
+                .await
+        }
+        .await;
+        match js {
+            Ok(js) => remember_bundle_secret(&bundle_url, &js).await,
+            // Not remembered as seen, so the next token fetch tries again.
+            Err(e) => tracing::warn!(
+                "Failed to download Spotify's web-player bundle for its TOTP secret: {e}"
+            ),
+        }
+    }
+    let current = TOTP_SECRET.read().await;
+    (current.version, current.bytes.clone())
 }
 
 /// Generates the current TOTP code Spotify expects on `open.spotify.com/api/token`, plus the
@@ -382,6 +428,8 @@ async fn fetch_raw_hashes(client: &Client) -> anyhow::Result<String> {
     };
 
     let mut raw_hashes = client.get(&js_pack_url).send().await?.text().await?;
+    // The token fetch needs this bundle too, for its TOTP secret; spare it the download.
+    remember_bundle_secret(&js_pack_url, &raw_hashes).await;
 
     let (name_map, hash_map) = extract_mappings(&raw_hashes)?;
     let hash_by_key: std::collections::HashMap<i64, &String> =
@@ -921,4 +969,34 @@ pub async fn add_tracks(
         pathfinder_query(client, "addToPlaylist", variables, Some(&session.cookie)).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // From web-player.f9aabf78.js (November 2026); v60's `\\` is one backslash.
+    const BUNDLE_EXCERPT: &str = r#"var eU=r(84765),eM=r(185).hp;let ej=[{secret:',7/*F("rLJ2oxaKL^f+E1xvP@N',version:61},{secret:'OmE{ZA.J^":0FG\\Uz?[@WW',version:60},{secret:"{iOFn;4}<1PFYKPV?5{%u14]M>/V0hDH",version:59}].map(e=>{var t;let r,i;return{secret:(t=e.secret,"#;
+
+    #[test]
+    fn test_extract_totp_secret_takes_newest() {
+        assert_eq!(
+            extract_totp_secret(BUNDLE_EXCERPT),
+            Some((FALLBACK_SECRET_VERSION, FALLBACK_SECRET.to_vec()))
+        );
+    }
+
+    #[test]
+    fn test_extract_totp_secret_unescapes() {
+        let v60 = BUNDLE_EXCERPT.replace("version:61", "version:1");
+        let (version, bytes) = extract_totp_secret(&v60).unwrap();
+        assert_eq!(version, 60);
+        assert_eq!(bytes, br#"OmE{ZA.J^":0FG\Uz?[@WW"#.to_vec());
+    }
+
+    #[test]
+    fn test_extract_totp_secret_rejects_unknown_escapes() {
+        assert_eq!(extract_totp_secret(r#"{secret:"ab\x41",version:62}"#), None);
+        assert_eq!(extract_totp_secret("let t={secret:e,version:n}"), None);
+    }
 }
