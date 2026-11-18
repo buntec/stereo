@@ -10,70 +10,116 @@
 //!   session and persists it to disk.
 
 use std::{
-    sync::LazyLock,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, LazyLock},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Context;
 use chrono::NaiveDate;
 use regex::Regex;
 use serde_json::Value;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use totp_rs::{Algorithm, Builder};
-use wreq::{header::HeaderMap, Client};
+use wreq::{
+    header::{HeaderMap, CONTENT_TYPE},
+    Client,
+};
 
 use crate::{models::Track, utils};
 
 const SPOTIFY_SESSION_FILE: &str = "spotify_session.json";
 
+// ── Web-player bundle: source of the TOTP secret and the persisted-query hashes ─────────────
+
+/// The last web-player bundle downloaded, and its URL. The TOTP secret and the persisted-query
+/// hashes both come from it, needed at different times and in either order; the lock is held
+/// while downloading, so they share one download.
+static BUNDLE: LazyLock<Mutex<Option<CachedBundle>>> = LazyLock::new(|| Mutex::new(None));
+
+struct CachedBundle {
+    url: String,
+    js: Arc<str>,
+}
+
+/// The source of the web-player bundle at `url`, downloaded unless it's the last one downloaded.
+async fn web_player_bundle(client: &Client, url: &str) -> anyhow::Result<Arc<str>> {
+    let mut cached = BUNDLE.lock().await;
+    if let Some(bundle) = cached.as_ref().filter(|bundle| bundle.url == url) {
+        return Ok(bundle.js.clone());
+    }
+    let resp = client.get(url).send().await?.error_for_status()?;
+    // An error page served with a 200 must not stand in for the bundle.
+    let content_type = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    anyhow::ensure!(
+        content_type.contains("javascript"),
+        "web-player bundle {url} served as {content_type:?}, not JavaScript"
+    );
+    let js: Arc<str> = resp.text().await?.into();
+    *cached = Some(CachedBundle {
+        url: url.to_string(),
+        js: js.clone(),
+    });
+    Ok(js)
+}
+
 // ── TOTP secret (anti-bot token for the anonymous `api/token` endpoint) ─────────────────────
 
-// The web-player bundle (`AppAuth::js_pack_url`) carries its TOTP secrets as a list of
-// `{secret:"…",version:61}` literals, newest first; we read the highest version out of it.
-// The hardcoded copy is only for when that fails (download error, or the pattern no longer
-// matches) and has to be updated by hand when Spotify rotates the secret.
+// The web-player bundle carries its TOTP secrets as a list of `{secret:"…",version:61}`
+// literals; we use the highest version. The hardcoded copy is only for when no bundle has
+// given us one (download error, or the pattern no longer matches) and has to be updated by
+// hand when Spotify rotates the secret.
 const FALLBACK_SECRET_VERSION: u64 = 61;
 const FALLBACK_SECRET: &[u8] = &[
     44, 55, 47, 42, 70, 40, 34, 114, 76, 74, 50, 111, 120, 97, 75, 76, 94, 102, 43, 69, 49, 120,
     118, 80, 64, 78,
 ];
 
-/// The TOTP secret in use, and the web-player bundle it was last looked up in. A deploy
-/// changes the bundle's URL, so the bundle is read again only when that changes.
-struct TotpSecret {
-    bundle_url: Option<String>,
-    version: u64,
-    bytes: Vec<u8>,
+/// How long a failed lookup stands before a token fetch for that bundle tries again.
+const SECRET_LOOKUP_RETRY: Duration = Duration::from_secs(5 * 60);
+/// Lookups remembered: one per bundle, i.e. per Spotify deploy seen.
+const MAX_SECRET_LOOKUPS: usize = 8;
+
+enum SecretLookup {
+    Found(u64, Vec<u8>),
+    Failed(Instant),
 }
 
-static TOTP_SECRET: LazyLock<RwLock<TotpSecret>> = LazyLock::new(|| {
-    RwLock::new(TotpSecret {
-        bundle_url: None,
-        version: FALLBACK_SECRET_VERSION,
-        bytes: FALLBACK_SECRET.to_vec(),
-    })
-});
+/// TOTP secret lookups by bundle URL, oldest first. Each token fetch uses the lookup for the
+/// bundle its own `fetch_session` found, so a lookup for an older bundle finishing late can't
+/// stand in for a newer one.
+static SECRET_LOOKUPS: LazyLock<RwLock<Vec<(String, SecretLookup)>>> =
+    LazyLock::new(|| RwLock::new(Vec::new()));
 
 /// Finds the newest TOTP secret in the web-player bundle's source: its version and the
 /// secret string's characters.
-fn extract_totp_secret(js: &str) -> Option<(u64, Vec<u8>)> {
+fn extract_totp_secret(js: &str) -> anyhow::Result<(u64, Vec<u8>)> {
     static SECRET_RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(
             r#"secret\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')\s*,\s*version\s*:\s*(\d+)"#,
         )
         .unwrap()
     });
-    SECRET_RE
+    let (version, literal) = SECRET_RE
         .captures_iter(js)
         .filter_map(|c| {
             let literal = c.get(1).or_else(|| c.get(2))?.as_str();
-            Some((c[3].parse().ok()?, unescape_js_string(literal)?))
+            Some((c[3].parse::<u64>().ok()?, literal))
         })
         .max_by_key(|(version, _)| *version)
+        .context("no TOTP secret found")?;
+    // Decoded only once chosen: an unreadable newest secret must not make way for an older one.
+    let bytes = unescape_js_string(literal)
+        .with_context(|| format!("TOTP secret v{version} has an escape we can't read"))?;
+    Ok((version, bytes))
 }
 
 /// Unescapes a JS string literal's body. Only single-character escapes of ASCII punctuation
-/// (`\\`, `\"`, `\'`, …) are expected in a secret; anything else (`\n`, `\x41`, `\u0041`,
+/// (`\\`, `\"`, `\'`, …) are expected in a secret; anything else (`\n`, `\x41`, `A`,
 /// non-ASCII) gives `None` rather than a wrong secret.
 fn unescape_js_string(literal: &str) -> Option<Vec<u8>> {
     let mut bytes = Vec::with_capacity(literal.len());
@@ -89,57 +135,70 @@ fn unescape_js_string(literal: &str) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// Takes the TOTP secret from the web-player bundle at `bundle_url`, whose source is `js`. If it
-/// has none we can read, the secret in use is kept.
-async fn remember_bundle_secret(bundle_url: &str, js: &str) {
-    let found = extract_totp_secret(js);
-    let mut current = TOTP_SECRET.write().await;
-    current.bundle_url = Some(bundle_url.to_string());
-    match found {
-        Some((version, bytes)) => {
-            current.version = version;
-            current.bytes = bytes;
-        }
-        None => tracing::warn!(
-            "No TOTP secret found in Spotify's web-player bundle {bundle_url}, keeping v{}",
-            current.version
-        ),
-    }
+/// The newest secret any bundle has given us, else the hardcoded one.
+fn newest_known_secret(lookups: &[(String, SecretLookup)]) -> (u64, Vec<u8>) {
+    lookups
+        .iter()
+        .filter_map(|(_, lookup)| match lookup {
+            SecretLookup::Found(version, bytes) => Some((*version, bytes)),
+            SecretLookup::Failed(_) => None,
+        })
+        .max_by_key(|(version, _)| *version)
+        .map(|(version, bytes)| (version, bytes.clone()))
+        .unwrap_or_else(|| (FALLBACK_SECRET_VERSION, FALLBACK_SECRET.to_vec()))
 }
 
-/// The TOTP secret of the current web-player bundle (as found by the last `fetch_session`):
-/// read from the bundle the first time it's seen, else the last one found (or the hardcoded
-/// one).
-async fn get_totp_secret(client: &Client) -> (u64, Vec<u8>) {
-    let bundle_url = APP_AUTH.read().await.js_pack_url.clone();
-    let seen = TOTP_SECRET.read().await.bundle_url.clone();
-    if let Some(bundle_url) = bundle_url.filter(|url| seen.as_ref() != Some(url)) {
-        let js = async {
-            client
-                .get(&bundle_url)
-                .send()
-                .await?
-                .error_for_status()?
-                .text()
-                .await
-        }
-        .await;
-        match js {
-            Ok(js) => remember_bundle_secret(&bundle_url, &js).await,
-            // Not remembered as seen, so the next token fetch tries again.
-            Err(e) => tracing::warn!(
-                "Failed to download Spotify's web-player bundle for its TOTP secret: {e}"
-            ),
+/// The TOTP secret of the web-player bundle at `bundle_url`, looked up the first time it's
+/// asked for (and again a while after a failed lookup). Without one, the newest secret known.
+async fn get_totp_secret(client: &Client, bundle_url: Option<&str>) -> (u64, Vec<u8>) {
+    let Some(bundle_url) = bundle_url else {
+        let secret = newest_known_secret(&SECRET_LOOKUPS.read().await);
+        tracing::warn!(
+            "Spotify's web-player bundle not found, using TOTP secret v{}",
+            secret.0
+        );
+        return secret;
+    };
+    {
+        let lookups = SECRET_LOOKUPS.read().await;
+        match lookups.iter().find(|(url, _)| url == bundle_url) {
+            Some((_, SecretLookup::Found(version, bytes))) => return (*version, bytes.clone()),
+            Some((_, SecretLookup::Failed(at))) if at.elapsed() < SECRET_LOOKUP_RETRY => {
+                return newest_known_secret(&lookups)
+            }
+            _ => {}
         }
     }
-    let current = TOTP_SECRET.read().await;
-    (current.version, current.bytes.clone())
+
+    let found = async { extract_totp_secret(&web_player_bundle(client, bundle_url).await?) }.await;
+    let mut lookups = SECRET_LOOKUPS.write().await;
+    lookups.retain(|(url, _)| url != bundle_url);
+    let secret = match found {
+        Ok((version, bytes)) => {
+            let lookup = SecretLookup::Found(version, bytes.clone());
+            lookups.push((bundle_url.to_string(), lookup));
+            (version, bytes)
+        }
+        Err(e) => {
+            lookups.push((bundle_url.to_string(), SecretLookup::Failed(Instant::now())));
+            let secret = newest_known_secret(&lookups);
+            tracing::warn!(
+                "No TOTP secret from Spotify's web-player bundle {bundle_url}, using v{}: {e:#}",
+                secret.0
+            );
+            secret
+        }
+    };
+    if lookups.len() > MAX_SECRET_LOOKUPS {
+        lookups.remove(0);
+    }
+    secret
 }
 
 /// Generates the current TOTP code Spotify expects on `open.spotify.com/api/token`, plus the
-/// secret version it was generated with.
-async fn generate_totp(client: &Client) -> anyhow::Result<(String, u64)> {
-    let (version, secret) = get_totp_secret(client).await;
+/// secret version it was generated with, for the web-player bundle at `bundle_url`.
+async fn generate_totp(client: &Client, bundle_url: Option<&str>) -> anyhow::Result<(String, u64)> {
+    let (version, secret) = get_totp_secret(client, bundle_url).await;
     let transformed: String = secret
         .iter()
         .enumerate()
@@ -189,7 +248,9 @@ fn extract_between<'a>(haystack: &'a str, start: &str, end: &str) -> Option<&'a 
     after_start.split(end).next()
 }
 
-async fn fetch_session(client: &Client, cookie: Option<&str>) -> anyhow::Result<()> {
+/// Loads open.spotify.com, recording what the token requests need. Returns the URL of the
+/// web-player bundle it uses.
+async fn fetch_session(client: &Client, cookie: Option<&str>) -> anyhow::Result<Option<String>> {
     let mut req = client.get("https://open.spotify.com");
     if let Some(cookie) = cookie {
         req = req.header("Cookie", cookie);
@@ -231,15 +292,15 @@ async fn fetch_session(client: &Client, cookie: Option<&str>) -> anyhow::Result<
         .to_string();
 
     let mut auth = APP_AUTH.write().await;
-    auth.js_pack_url = js_pack_url;
+    auth.js_pack_url = js_pack_url.clone();
     auth.client_version = Some(client_version);
     auth.device_id = device_id;
-    Ok(())
+    Ok(js_pack_url)
 }
 
 async fn fetch_access_token(client: &Client, cookie: Option<&str>) -> anyhow::Result<()> {
-    fetch_session(client, cookie).await?;
-    let (totp, version) = generate_totp(client).await?;
+    let bundle_url = fetch_session(client, cookie).await?;
+    let (totp, version) = generate_totp(client, bundle_url.as_deref()).await?;
 
     let mut req = client.get("https://open.spotify.com/api/token").query(&[
         ("reason", "init"),
@@ -416,20 +477,12 @@ async fn fetch_raw_hashes(client: &Client) -> anyhow::Result<String> {
     };
     let js_pack_url = match js_pack_url {
         Some(url) => url,
-        None => {
-            fetch_session(client, None).await?;
-            APP_AUTH
-                .read()
-                .await
-                .js_pack_url
-                .clone()
-                .context("could not locate web-player JS pack")?
-        }
+        None => fetch_session(client, None)
+            .await?
+            .context("could not locate web-player JS pack")?,
     };
 
-    let mut raw_hashes = client.get(&js_pack_url).send().await?.text().await?;
-    // The token fetch needs this bundle too, for its TOTP secret; spare it the download.
-    remember_bundle_secret(&js_pack_url, &raw_hashes).await;
+    let mut raw_hashes = web_player_bundle(client, &js_pack_url).await?.to_string();
 
     let (name_map, hash_map) = extract_mappings(&raw_hashes)?;
     let hash_by_key: std::collections::HashMap<i64, &String> =
@@ -981,8 +1034,8 @@ mod tests {
     #[test]
     fn test_extract_totp_secret_takes_newest() {
         assert_eq!(
-            extract_totp_secret(BUNDLE_EXCERPT),
-            Some((FALLBACK_SECRET_VERSION, FALLBACK_SECRET.to_vec()))
+            extract_totp_secret(BUNDLE_EXCERPT).unwrap(),
+            (FALLBACK_SECRET_VERSION, FALLBACK_SECRET.to_vec())
         );
     }
 
@@ -996,7 +1049,101 @@ mod tests {
 
     #[test]
     fn test_extract_totp_secret_rejects_unknown_escapes() {
-        assert_eq!(extract_totp_secret(r#"{secret:"ab\x41",version:62}"#), None);
-        assert_eq!(extract_totp_secret("let t={secret:e,version:n}"), None);
+        assert!(extract_totp_secret(r#"{secret:"ab\x41",version:62}"#).is_err());
+        assert!(extract_totp_secret("let t={secret:e,version:n}").is_err());
+    }
+
+    #[test]
+    fn test_extract_totp_secret_unreadable_newest_is_an_error() {
+        let bundle = format!(r#"{{secret:"ab\x41",version:62}},{BUNDLE_EXCERPT}"#);
+        let err = extract_totp_secret(&bundle).unwrap_err();
+        assert!(err.to_string().contains("v62"), "{err}");
+    }
+
+    #[test]
+    fn test_newest_known_secret() {
+        assert_eq!(
+            newest_known_secret(&[]),
+            (FALLBACK_SECRET_VERSION, FALLBACK_SECRET.to_vec())
+        );
+        let lookups = [
+            ("b".to_string(), SecretLookup::Found(62, b"new".to_vec())),
+            ("c".to_string(), SecretLookup::Failed(Instant::now())),
+            ("a".to_string(), SecretLookup::Found(61, b"old".to_vec())),
+        ];
+        assert_eq!(newest_known_secret(&lookups), (62, b"new".to_vec()));
+    }
+
+    /// Serves `responses` (status, content type, body) at a bundle URL in turn, the last one
+    /// from then on. Returns the URL and the number of requests served.
+    async fn serve_bundle(
+        responses: Vec<(u16, &'static str, &'static str)>,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/web-player.js", listener.local_addr().unwrap());
+        let served = Arc::new(AtomicUsize::new(0));
+        let count = served.clone();
+        let handler = move || {
+            let n = count.fetch_add(1, Ordering::SeqCst);
+            let (status, content_type, body) = responses[n.min(responses.len() - 1)];
+            async move {
+                (
+                    axum::http::StatusCode::from_u16(status).unwrap(),
+                    [(axum::http::header::CONTENT_TYPE, content_type)],
+                    body,
+                )
+            }
+        };
+        let router = axum::Router::new().route("/web-player.js", axum::routing::get(handler));
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        (url, served)
+    }
+
+    async fn expire_failed_lookup(bundle_url: &str) {
+        for (url, lookup) in SECRET_LOOKUPS.write().await.iter_mut() {
+            if url == bundle_url {
+                let at = Instant::now().checked_sub(SECRET_LOOKUP_RETRY).unwrap();
+                *lookup = SecretLookup::Failed(at);
+            }
+        }
+    }
+
+    // The only test that records lookups, since they're process-wide.
+    #[tokio::test]
+    async fn test_totp_secret_lookup_retries_failures_and_shares_the_bundle() {
+        use std::sync::atomic::Ordering;
+        let bundle = r#"let ej=[{secret:"abc",version:62}]"#;
+        let (url, served) = serve_bundle(vec![
+            (503, "text/plain", "unavailable"),
+            (200, "text/html", "<html>error</html>"),
+            (200, "text/javascript", bundle),
+        ])
+        .await;
+        let client = crate::scraper::create_client().unwrap();
+        let hardcoded = (FALLBACK_SECRET_VERSION, FALLBACK_SECRET.to_vec());
+
+        // The 503, then no new request until the retry interval is up.
+        assert_eq!(get_totp_secret(&client, Some(&url)).await, hardcoded);
+        assert_eq!(get_totp_secret(&client, Some(&url)).await, hardcoded);
+        assert_eq!(served.load(Ordering::SeqCst), 1);
+
+        // The error page with a 200 isn't taken for the bundle.
+        expire_failed_lookup(&url).await;
+        assert_eq!(get_totp_secret(&client, Some(&url)).await, hardcoded);
+        assert_eq!(served.load(Ordering::SeqCst), 2);
+
+        expire_failed_lookup(&url).await;
+        assert_eq!(
+            get_totp_secret(&client, Some(&url)).await,
+            (62, b"abc".to_vec())
+        );
+        assert_eq!(
+            get_totp_secret(&client, Some(&url)).await,
+            (62, b"abc".to_vec())
+        );
+        // The persisted-query hashes get the bundle the secret came from, without a download.
+        assert_eq!(&*web_player_bundle(&client, &url).await.unwrap(), bundle);
+        assert_eq!(served.load(Ordering::SeqCst), 3);
     }
 }
