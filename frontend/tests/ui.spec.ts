@@ -674,6 +674,65 @@ test("empty collections offer search and import", async ({ page }) => {
   ).toBeFocused();
 });
 
+test("the collection menu sets, changes and removes the repository's remote", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  const remoteUpdates = () =>
+    messages.filter((message) => message.type === "set-git-remote");
+  const lastUpdate = () => remoteUpdates().at(-1) as { id: number };
+  const openMenu = () =>
+    page.locator(".collection-controls").getByRole("button").first().click();
+  const dialog = page.getByRole("dialog", { name: "Remote for audit" });
+  const url = dialog.getByRole("textbox", { name: /Remote URL/ });
+
+  // Enter saves, for the repository selected, and the dialog waits for the backend.
+  await openMenu();
+  await page.getByRole("menuitem", { name: "Set remote…" }).click();
+  await expect(url).toHaveValue("");
+  await url.fill("git@example.com:me/sets.git");
+  await url.press("Enter");
+  await expect.poll(remoteUpdates).toEqual([
+    expect.objectContaining({
+      repo: "/audit",
+      url: "git@example.com:me/sets.git",
+    }),
+  ]);
+  await expect(dialog).toBeVisible();
+  send({
+    type: "set-git-remote-reply",
+    id: lastUpdate().id,
+    url: "git@example.com:me/sets.git",
+  });
+  await expect(dialog).toHaveCount(0);
+
+  // A replacement that fails keeps the dialog open with the draft.
+  send({
+    type: "repos",
+    repos: [{ path: "/audit", remote: "git@example.com:me/sets.git" }],
+  });
+  await openMenu();
+  await page.getByRole("menuitem", { name: "Change remote…" }).click();
+  await expect(url).toHaveValue("git@example.com:me/sets.git");
+  await expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
+  await url.fill("git@example.com:me/private-sets.git");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => remoteUpdates().length).toBe(2);
+  expect(lastUpdate()).toMatchObject({
+    repo: "/audit",
+    url: "git@example.com:me/private-sets.git",
+  });
+  send({ type: "error-reply", id: lastUpdate().id, message: "no access" });
+  await expect(dialog.getByRole("button", { name: "Save" })).toBeEnabled();
+  await expect(url).toHaveValue("git@example.com:me/private-sets.git");
+
+  await dialog.getByRole("button", { name: "Remove" }).click();
+  await expect.poll(() => remoteUpdates().length).toBe(3);
+  expect(lastUpdate()).toMatchObject({ repo: "/audit", url: null });
+  send({ type: "set-git-remote-reply", id: lastUpdate().id, url: null });
+  await expect(dialog).toHaveCount(0);
+});
+
 test("unloaded rows do not expose ratings or playback highlights", async ({
   page,
 }) => {

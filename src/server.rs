@@ -1283,44 +1283,61 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 .await;
         }
 
-        MsgClient::SetGitRemote { url } => {
-            let git_dir = state.repo.as_deref().unwrap_or(home);
-            match git::set_remote(git_dir, url.as_deref()).await {
-                Ok(()) => {
-                    let _ = tx
-                        .send(MsgServer::GitRemote {
-                            url: git::get_remote(git_dir).await,
-                        })
-                        .await;
-                    let _ = tx
-                        .send(MsgServer::Repos {
-                            repos: utils::list_repos(home).await,
-                        })
-                        .await;
-                    match state.repo.clone() {
-                        // Pull in whatever the new remote already has.
-                        Some(repo) if !repo_sync_running(state) => {
-                            activate_repo(
-                                state,
-                                tx,
-                                events,
-                                repo,
-                                None,
-                                "Synchronizing with the new remote",
-                            )
-                            .await;
-                        }
-                        _ => {
-                            let tx = tx.clone();
-                            let git_dir = git_dir.to_path_buf();
-                            tokio::spawn(async move {
-                                let report = git::sync_repository(git_dir, None, false, None).await;
-                                send_git_status(&tx, report).await;
-                            });
-                        }
-                    }
-                }
-                Err(e) => notify(tx, &format!("Failed to set git remote: {e}"), "error").await,
+        MsgClient::SetGitRemote { id, repo, url } => {
+            let repo_path = std::path::PathBuf::from(&repo);
+            // Only a repo the client can pick (a git repo in the home dir), not the session's.
+            if !utils::list_repos(home)
+                .await
+                .iter()
+                .any(|r| r.path == repo_path)
+            {
+                anyhow::bail!("Failed to set git remote: no repository at {repo}");
+            }
+            git::set_remote(&repo_path, url.as_deref())
+                .await
+                .context("Failed to set git remote")?;
+            let remote = git::get_remote(&repo_path).await;
+            let _ = tx
+                .send(MsgServer::SetGitRemoteReply {
+                    id,
+                    url: remote.clone(),
+                })
+                .await;
+            let _ = tx
+                .send(MsgServer::Repos {
+                    repos: utils::list_repos(home).await,
+                })
+                .await;
+            if state.repo.as_deref() != Some(repo_path.as_path()) {
+                // Not this session's repo: sync it without reporting it as the active one's.
+                tokio::spawn(async move {
+                    let report = git::sync_repository(repo_path.clone(), None, false, None).await;
+                    tracing::info!(
+                        "Synced {} with its new remote: {}",
+                        repo_path.display(),
+                        report.message
+                    );
+                });
+                return Ok(());
+            }
+            let _ = tx.send(MsgServer::GitRemote { url: remote }).await;
+            if repo_sync_running(state) {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let report = git::sync_repository(repo_path, None, false, None).await;
+                    send_git_status(&tx, report).await;
+                });
+            } else {
+                // Pull in whatever the new remote already has.
+                activate_repo(
+                    state,
+                    tx,
+                    events,
+                    repo_path,
+                    None,
+                    "Synchronizing with the new remote",
+                )
+                .await;
             }
         }
 
@@ -3575,5 +3592,40 @@ mod tests {
             .filter(|m| m["type"] == "notification" && m["kind"] == "error")
             .collect();
         assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[tokio::test]
+    async fn sets_the_remote_of_the_named_repo() {
+        let home = tempfile::tempdir().unwrap();
+        let (repo, port) = start_backend(home.path(), &["music"]).await;
+        let remote = home.path().join("remote.git");
+        std::fs::create_dir(&remote).unwrap();
+        let status = std::process::Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(&remote)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let remote = remote.to_str().unwrap();
+
+        // A session that hasn't selected a repo yet, as right after a reconnect.
+        let mut a = Client::connect(port).await;
+        a.send(json!({ "type": "set-git-remote", "id": 1, "repo": repo, "url": remote }))
+            .await;
+        a.expect("reply", |m| {
+            m["type"] == "set-git-remote-reply" && m["id"] == 1 && m["url"] == remote
+        })
+        .await;
+        assert_eq!(git::get_remote(&repo).await.as_deref(), Some(remote));
+
+        // Only a repo the client can pick, not e.g. the directory holding them.
+        let repos_dir = repo.parent().unwrap();
+        a.send(json!({ "type": "set-git-remote", "id": 2, "repo": repos_dir, "url": remote }))
+            .await;
+        a.expect("error reply", |m| {
+            m["type"] == "error-reply" && m["id"] == 2
+        })
+        .await;
+        assert_eq!(git::get_remote(repos_dir).await, None);
     }
 }

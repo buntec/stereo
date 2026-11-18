@@ -11,6 +11,7 @@ import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import {
   BarChartIcon,
   DownloadIcon,
+  Link2Icon,
   Pencil1Icon,
   PlusIcon,
   TrashIcon,
@@ -19,6 +20,7 @@ import { MenuHeading } from "./Menu.tsx";
 import NewCollectionDialog from "./NewCollectionDialog.tsx";
 import RenameCollectionDialog from "./RenameCollectionDialog.tsx";
 import CloneRepoDialog from "./CloneRepoDialog.tsx";
+import GitRemoteDialog from "./GitRemoteDialog.tsx";
 import { gitSyncLabels, gitSyncVariant } from "./gitSync.ts";
 import type { GitSyncState, ICollection, IRepo } from "./Types.tsx";
 
@@ -42,6 +44,8 @@ export type CollectionSelectorProps = {
   repoPath: string;
   setRepoPath: (path: string) => void;
   onClone: (url: string) => void;
+  // Sets (or with null, removes) a repository's remote; resolves once it is set.
+  onSetRemote: (repoPath: string, url: string | null) => Promise<void>;
   syncState?: GitSyncState;
   syncMessage?: string;
   // Undefined when there are no stats to show.
@@ -60,12 +64,19 @@ function CollectionSelector({
   repoPath,
   setRepoPath,
   onClone,
+  onSetRemote,
   syncState,
   syncMessage,
   onShowStats,
 }: CollectionSelectorProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  // The repository whose remote the dialog edits: the one selected when it opened, even if
+  // the selection changes meanwhile.
+  const [remoteRepoPath, setRemoteRepoPath] = useState<string>();
+  // Remounts the remote dialog on every opening, so it starts from the current remote.
+  const [remoteKey, setRemoteKey] = useState(0);
   // The collection awaiting delete confirmation.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   // The collection being renamed.
@@ -169,6 +180,16 @@ function CollectionSelector({
           ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuItem
+          icon={<Link2Icon />}
+          label={selectedRepo?.remote ? "Change remote…" : "Set remote…"}
+          isDisabled={!selectedRepo}
+          onClick={() => {
+            setRemoteRepoPath(selectedRepo?.path);
+            setRemoteKey((key) => key + 1);
+            setRemoteOpen(true);
+          }}
+        />
+        <DropdownMenuItem
           icon={<DownloadIcon />}
           label="Clone repository…"
           onClick={() => setCloneOpen(true)}
@@ -201,6 +222,18 @@ function CollectionSelector({
         isOpen={cloneOpen}
         onOpenChange={setCloneOpen}
         onClone={onClone}
+      />
+      <GitRemoteDialog
+        key={remoteKey}
+        isOpen={remoteOpen}
+        onOpenChange={setRemoteOpen}
+        repoName={remoteRepoPath && basename(remoteRepoPath)}
+        currentRemote={repos.find((r) => r.path === remoteRepoPath)?.remote}
+        onSave={(url) =>
+          remoteRepoPath
+            ? onSetRemote(remoteRepoPath, url)
+            : Promise.reject(new Error("No repository"))
+        }
       />
       <AlertDialog
         isOpen={pendingDelete !== null}

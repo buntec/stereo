@@ -758,6 +758,7 @@ const reducer = (state: State, action: Action): State => {
     case "youtube-playlist-info":
     case "youtube-videos":
     case "clone-repo-reply":
+    case "set-git-remote-reply":
     case "new-releases-candidates":
     case "pairing-code":
     case "health-check-progress":
@@ -2856,6 +2857,18 @@ function App() {
                       }
                     });
                   }}
+                  onSetRemote={(repo, url) =>
+                    new Promise<void>((resolve, reject) =>
+                      requestReply(
+                        { type: "set-git-remote", repo, url },
+                        (msg) => {
+                          // Else an error reply (the backend notifies why) or a lost connection.
+                          if (msg.type === "set-git-remote-reply") resolve();
+                          else reject(new Error(msg.type));
+                        },
+                      ),
+                    )
+                  }
                   syncState={state.git_sync_state}
                   syncMessage={state.git_sync_message}
                   onShowStats={
