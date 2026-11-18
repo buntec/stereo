@@ -56,6 +56,13 @@ window gets focus again. **YouTube** connects from the app: with no browser to g
 looks for a login in every browser, and offers the ones it finds to pick from. Spotify connects
 from the app as from a browser.
 
+**Title bar.** On macOS the page reaches up under a transparent title bar, so the background
+artwork fills the whole window. The page's header starts below the title bar's strip, which keeps
+the traffic lights (the app sets `data-title-bar` on the page's root element: `overlay`, or `hidden`
+in full screen), and the strip and the header's empty parts move the window, as a title bar would
+(`data-tauri-drag-region`). That takes the only IPC the pages may use: starting a window drag and
+zooming the window (`capabilities/default.json`).
+
 The app sets `window.__STEREO_DESKTOP__`; the UI checks it with `inDesktopApp` (`Utils.tsx`).
 
 Each target architecture needs its own bundled `stereo` binary. The release workflow

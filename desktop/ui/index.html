@@ -79,7 +79,8 @@
       }
     </style>
   </head>
-  <body>
+  <!-- On macOS the page reaches up under a transparent title bar: it moves the window. -->
+  <body data-tauri-drag-region>
     <main>
       <img src="logo.svg" width="72" height="72" alt="" />
       <div id="status">Starting Stereo…</div>

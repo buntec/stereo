@@ -446,6 +446,31 @@ fn submit_token(app: &AppHandle, token: &str) {
     }
 }
 
+/// Run in every page before its own scripts, with the document element already there.
+#[cfg(not(target_os = "macos"))]
+const INIT_SCRIPT: &str = "window.__STEREO_DESKTOP__ = true;";
+#[cfg(target_os = "macos")]
+const INIT_SCRIPT: &str = concat!(
+    "window.__STEREO_DESKTOP__ = true;",
+    "document.documentElement.dataset.titleBar = 'overlay';"
+);
+
+/// Tells the page whether the title bar is over it (`data-title-bar="overlay"` on its root
+/// element), so that its header starts below it, leaving the title bar's strip to the traffic
+/// lights and to moving the window (`data-tauri-drag-region`, with the window permissions in
+/// `capabilities/default.json`), or not (`"hidden"`, in full screen).
+#[cfg(target_os = "macos")]
+fn sync_title_bar(window: &WebviewWindow) {
+    let state = if window.is_fullscreen().unwrap_or(false) {
+        "hidden"
+    } else {
+        "overlay"
+    };
+    let _ = window.eval(format!(
+        "document.documentElement.dataset.titleBar = '{state}';"
+    ));
+}
+
 /// Stereo's own pages, the app's bundled start page (`tauri://localhost` on macOS and Linux,
 /// `http://tauri.localhost` on Windows) and what pages make themselves (`blob:`, e.g. a file
 /// export); anything else, such as `mailto:`, opens in the browser.
@@ -718,32 +743,51 @@ pub fn run() {
         .manage(TokenPrompt::default())
         .setup(|app| {
             let handle = app.handle().clone();
-            let window =
+            let builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Stereo")
                     .inner_size(1400.0, 900.0)
                     .min_inner_size(480.0, 480.0)
                     // Lets the UI adapt where the desktop app differs from a browser tab.
-                    .initialization_script("window.__STEREO_DESKTOP__ = true;")
-                    // Links to other sites open in the default browser, as do new windows
-                    // (`window.open`, `target="_blank"`).
-                    .on_navigation(move |url| {
-                        if let Some(token) = submitted_token(&handle, url) {
-                            let app = handle.clone();
-                            std::thread::spawn(move || submit_token(&app, &token));
-                            return false;
-                        }
-                        let allowed = is_app_url(url);
-                        if !allowed {
-                            open_in_browser(url);
-                        }
-                        allowed
-                    })
-                    .on_new_window(|url, _| {
-                        open_in_browser(&url);
-                        NewWindowResponse::Deny
-                    })
-                    .build()?;
+                    .initialization_script(INIT_SCRIPT);
+            // The page reaches up under a transparent title bar, so the background artwork fills
+            // the whole window; its header starts below the title bar's strip (`data-title-bar`,
+            // see `sync_title_bar`).
+            #[cfg(target_os = "macos")]
+            let builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true)
+                .on_page_load(|window, _| sync_title_bar(&window));
+            let window = builder
+                // Links to other sites open in the default browser, as do new windows
+                // (`window.open`, `target="_blank"`).
+                .on_navigation(move |url| {
+                    if let Some(token) = submitted_token(&handle, url) {
+                        let app = handle.clone();
+                        std::thread::spawn(move || submit_token(&app, &token));
+                        return false;
+                    }
+                    let allowed = is_app_url(url);
+                    if !allowed {
+                        open_in_browser(url);
+                    }
+                    allowed
+                })
+                .on_new_window(|url, _| {
+                    open_in_browser(&url);
+                    NewWindowResponse::Deny
+                })
+                .build()?;
+            // In full screen the title bar is gone until it slides in over the page.
+            #[cfg(target_os = "macos")]
+            {
+                let w = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::Resized(_) = event {
+                        sync_title_bar(&w);
+                    }
+                });
+            }
             let start_page = window.url()?;
             let app = app.handle().clone();
             std::thread::spawn(move || connect(app, window, start_page));
