@@ -1,125 +1,79 @@
 # Stereo 📻
 
-Curate and play music in your browser.
-Find tracks by their metadata (artist, label, BPM, key, release date), organize them into
-collections, and keep those collections in sync across your machines with git.
+Curate and play music in your browser. Search Beatport, Spotify, SoundCloud and more by artist,
+label, BPM, key or release date, keep what you like in collections, rate and filter them, and
+play them back. Collections sync across your machines with git, and saved views can be exported
+as playlists to Spotify and YouTube.
 
-Works across platforms in any reasonably modern browser.
-Tested with Firefox and Chrome.
+No account, no subscription: a collection is just a small SQLite file of track metadata.
 
-# Getting started
+<p>
+  <img src="https://github.com/user-attachments/assets/08e67c2d-58cc-4bee-9829-a7338e20255d" alt="Stereo with the dark theme" width="49%">
+  <img src="https://github.com/user-attachments/assets/6e770cf6-3264-4cb5-a1bb-e5bafe0ceb27" alt="Stereo with the light theme" width="49%">
+</p>
 
-All you need is [Rust](https://rustup.rs) and [Bun](https://bun.sh).
+## Install
+
+**Desktop app** (macOS, Windows, Linux): download it from the
+[latest release](https://github.com/buntec/stereo/releases/latest). The macOS app isn't
+notarized, so the first time, allow it under System Settings › Privacy & Security.
+
+**Command line:** download the `stereo` binary for your platform from the same release, or build
+it with [Rust](https://rustup.rs) and [Bun](https://bun.sh):
 
 ```
 cargo install --git https://github.com/buntec/stereo
 stereo
 ```
 
-Navigate to `localhost:8005` in your browser.
+Then open `localhost:8005` in any modern browser. On macOS, `stereo install` runs it as a
+service that starts when you log in.
 
-Stereo only accepts same-origin WebSocket connections. If you deliberately listen on a
-non-loopback interface, configure both the public browser origin and an authentication token:
+**For playback**, install [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [Deno](https://deno.com)
+(e.g. `brew install yt-dlp deno`), and keep yt-dlp up to date: YouTube changes often, and older
+versions stop working. Without them, Stereo still works for curating, but won't play anything.
 
-```
-STEREO_WS_TOKEN="choose-a-long-random-token" stereo \
-  --host 0.0.0.0 \
-  --allowed-origin http://stereo.local:8005
-```
+## Using Stereo
 
-Then open `http://stereo.local:8005/#stereo-token=choose-a-long-random-token`. The URL fragment
-is not sent in HTTP requests; the frontend presents an encoded form of it during the WebSocket
-handshake. Missing-origin WebSocket clients are rejected.
+Start by searching for music and adding it to a new collection, or import tracks from another
+collection or a YouTube playlist. You can have as many collections as you like.
 
-## As a desktop app
+**Playback.** Stereo doesn't host any audio: it finds each track on YouTube and downloads the
+audio with yt-dlp the first time you play it. Downloads are cached (10 GB by default, see
+`stereo --help`) and upcoming tracks are fetched ahead of time. Playback keeps going in the
+background and with a phone's screen locked.
 
-Stereo also comes as a desktop app (macOS, Linux, Windows), built with [Tauri](https://tauri.app)
-and [just](https://github.com/casey/just):
+**Sync.** Collections live in git repositories in `~/.local/share/stereo`. To sync them across
+machines, create a repository with a remote (e.g. a private GitHub repo) and add it on each
+machine with *Clone repository…* in the collection menu. From then on, every change is committed
+and pushed a few minutes later.
 
-```
-just desktop-build
-```
+**Playlists.** Save the current filter and sort as a playlist, and export it to Spotify or
+YouTube; while Stereo is open, exports are kept up to date. Connect your accounts with the
+buttons in the top bar. YouTube uses the login of a browser on your machine (on macOS, the first connect asks for
+keychain access).
 
-It opens a Stereo that already runs on port 8005 (e.g. the service from `stereo install`), or
-else starts its own, with the same collections, and stops it when you quit. Beatport and YouTube
-are connected from Stereo in your browser, which the app opens for you. See
-[desktop/README.md](desktop/README.md).
+## On your phone
 
-## On your phone, via Tailscale
-
-To use Stereo from your phone or other devices on your [tailnet](https://tailscale.com), start it
-with `--tailscale` (also works with `stereo --tailscale install`):
-
-```
-stereo --tailscale
-```
-
-Stereo then runs `tailscale serve`, which serves it at `https://<machine>.<tailnet>.ts.net:8005`
-with a Tailscale certificate, and removes that route again on shutdown. Click the Tailscale icon
-in the top bar and scan the QR code with your phone: it opens Stereo there and signs it in. Each
-code works once, for two minutes. `localhost:8005` keeps working as before, without a token.
-
-This needs the `tailscale` CLI (on macOS, the app's bundled CLI also works),
-[MagicDNS](https://tailscale.com/kb/1081/magicdns) and
+Start Stereo with `--tailscale` (also works with `stereo --tailscale install`) to reach it from
+any device on your [tailnet](https://tailscale.com). Click the Tailscale icon in the top bar and
+scan the QR code with your phone to open Stereo there, already signed in. This needs the
+`tailscale` CLI, with [MagicDNS](https://tailscale.com/kb/1081/magicdns) and
 [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled for the tailnet.
-Stereo never replaces another route on its port; if Tailscale isn't up yet, it keeps retrying.
 
-Begin by searching for and adding music to a new collection.
-Or by importing from another collection.
-You can create as many collections as you want.
-A collection is just a file on your local hard disk.
-More precisely, it's a SQLite database containing track meta data only - no audio.
-
-## Playback
-
-Stereo doesn't include or host any audio. Playback relies on
-[yt-dlp](https://github.com/yt-dlp/yt-dlp), which you install separately (e.g.
-`brew install yt-dlp`), and you're responsible for using it in line with YouTube's terms and
-the law where you live (see [Disclaimer](#disclaimer)). Without yt-dlp, Stereo still works for
-curating collections, but won't play anything.
-
-Stereo downloads each track's audio from YouTube when it is first played and plays it in the
-browser, which keeps going in the background and with a phone's screen locked. Upcoming tracks
-are downloaded ahead of time; a track that can't be downloaded is skipped.
-
-Downloads are cached in `~/Library/Caches/stereo/audio` on macOS (`~/.cache/stereo/audio`
-elsewhere, or `--cache-dir`), up to 10 GB by default (`--audio-cache-limit-gb`); the least
-recently played tracks are evicted first. Pass `--yt-dlp <path>` if yt-dlp isn't on the `PATH`.
-Keep yt-dlp up to date (`brew upgrade yt-dlp`): YouTube changes often, and older versions stop
-working.
-
-Work in progress! 🚧
-
-<img width="1840" height="1195" alt="Screenshot 2026-01-03 at 18 04 40" src="https://github.com/user-attachments/assets/feb98b68-ef28-4d99-9c86-91da630edddd" />
-
-## Connecting a YouTube account (for playlist export)
-
-Stereo exports playlists to your YouTube account through YouTube's own web API, using
-the YouTube login of the browser you run stereo in: no Google Cloud project, OAuth
-client or API quota needed. Log in to youtube.com in that browser, then connect under
-**Settings → Accounts → YouTube**. If several profiles of that browser are logged in,
-stereo asks which one to use. On macOS, the first connect asks for keychain access
-to the browser's cookie store.
-
-Stereo only remembers which browser profile holds the login and reads its YouTube
-cookies afresh for every export, so logging out of YouTube there disconnects stereo too.
-The API is undocumented, so exports may break until stereo is updated.
+Without Tailscale, Stereo only accepts connections from the same machine; see `stereo --help`
+(`--host`, `--allowed-origin`, `--ws-token`) to change that.
 
 ## Where the metadata comes from
 
-Searches query Beatport, SoundCloud, Traxsource, Volumo and Spotify for track metadata,
-and match the results against YouTube search results. Shazam is used for "similar songs".
-Most of these services have no public API, so Stereo uses the same endpoints as their
-websites. That means a search can break whenever a site changes, and heavy use may get
-rate-limited or blocked.
-
-To get past Beatport's bot protection, Stereo reuses the Cloudflare cookie of your own
-browser: visit beatport.com in that browser once if Beatport searches fail. Like the
-YouTube connection above, it reads the browser's cookie store locally (on macOS, the first
-read asks for keychain access). Cookies are never sent anywhere except to the site they
+Searches query Beatport, SoundCloud, Spotify, Apple Music, Traxsource and Volumo, and match the
+results against YouTube; Shazam finds similar songs. Most of these have no public API, so Stereo
+uses the same endpoints as their websites: a search can break whenever a site changes, and heavy
+use may get rate-limited. If Beatport searches fail, visit beatport.com once in your browser:
+Stereo reuses its Cloudflare cookie. Cookies are read locally and only ever sent to the site they
 belong to.
 
-# Disclaimer
+## Disclaimer
 
 Stereo is a personal, non-commercial hobby project. It isn't affiliated with, endorsed by
 or sponsored by YouTube, Google, Beatport, SoundCloud, Spotify, Shazam, Apple, Traxsource
@@ -133,24 +87,6 @@ listen to. Using these services this way may also get your accounts with them re
 
 The software is provided as is, without warranty of any kind; see [LICENSE](LICENSE).
 
-# Development
+## Development
 
-Prerequisites: [Rust](https://rustup.rs), [Bun](https://bun.sh), [just](https://github.com/casey/just).
-
-```
-bun install        # install frontend dependencies
-just dev           # run backend + frontend dev server concurrently (data in ~/.local/share/stereo-dev, or $STEREO_HOME)
-```
-
-Frontend checks:
-
-```sh
-bun run build
-bun run lint
-bunx playwright install chromium  # once, for browser tests
-bun run test:ui
-```
-
-Browser tests start Vite and mock the WebSocket and YouTube APIs; they do not read
-or modify real collections. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing
-Chromium executable instead of the Playwright browser download.
+See [docs/development.md](docs/development.md).
