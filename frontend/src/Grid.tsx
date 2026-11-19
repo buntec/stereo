@@ -250,21 +250,29 @@ const ThumbnailPlayButton = ({
   </Tooltip>
 );
 
-const PlayControlRenderer: React.FC<
-  CustomCellRendererProps<ITrack, unknown, TracksGridContext>
-> = (params) => {
-  const { data, context } = params;
-
-  const handlePlay = useCallback(() => {
-    if (data) {
-      context.playId(data.yt_id);
-    }
-  }, [context, data]);
-
+// A row's edit dialog, with the edited copy of its track. Each opening starts from the
+// row's current track.
+const RowEditDialog = ({
+  data,
+  context,
+  isOpen,
+  onOpenChange,
+}: {
+  data: ITrack;
+  context: TracksGridContext;
+  isOpen: boolean;
+  onOpenChange: (isOpen: boolean) => void;
+}) => {
   const [value, setValue] = useState(data);
-  const [editOpen, setEditOpen] = useState(false);
-
   const [isValid, setIsValid] = useState<boolean | null>(null);
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) {
+      setValue(data);
+      setIsValid(null);
+    }
+  }
 
   // Compare by content: after every grid refresh `data` is a new but usually identical object,
   // and validating then would send a request for every visible row.
@@ -284,16 +292,44 @@ const PlayControlRenderer: React.FC<
   }, [edited, value, context]);
 
   const commit = useCallback(() => {
-    if (data && value) {
-      context.sendMsg({ type: "update-track", old: data, new: value });
-    }
+    context.sendMsg({ type: "update-track", old: data, new: value });
   }, [context, data, value]);
 
   const resetValue = useCallback(() => {
     setValue(data);
   }, [data]);
 
-  if (!data || !value) return null;
+  return (
+    <EditTrackDialog
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+      isValid={isValid}
+      value={value}
+      setValue={setValue}
+      commit={commit}
+      resetValue={resetValue}
+      requestReply={context.requestReply}
+    />
+  );
+};
+
+const PlayControlRenderer: React.FC<
+  CustomCellRendererProps<ITrack, unknown, TracksGridContext>
+> = (params) => {
+  const { data, context } = params;
+
+  const handlePlay = useCallback(() => {
+    if (data) {
+      context.playId(data.yt_id);
+    }
+  }, [context, data]);
+
+  // The edit dialog is mounted on its first opening, not with the row: a closed Astryx
+  // Dialog still renders its whole form (some 430 components), which made every row
+  // mount slowly, e.g. when scrolling or making the window taller.
+  const [editOpen, setEditOpen] = useState<boolean>();
+
+  if (!data) return null;
 
   return (
     <HStack gap={1} vAlign="center">
@@ -313,10 +349,7 @@ const PlayControlRenderer: React.FC<
           {
             label: "Edit",
             icon: <Pencil1Icon />,
-            onClick: () => {
-              resetValue();
-              setEditOpen(true);
-            },
+            onClick: () => setEditOpen(true),
           },
           {
             label: "Find similar songs on Shazam",
@@ -339,16 +372,14 @@ const PlayControlRenderer: React.FC<
             : []),
         ]}
       />
-      <EditTrackDialog
-        isOpen={editOpen}
-        onOpenChange={setEditOpen}
-        isValid={isValid}
-        value={value}
-        setValue={setValue}
-        commit={commit}
-        resetValue={resetValue}
-        requestReply={context.requestReply}
-      />
+      {editOpen !== undefined && (
+        <RowEditDialog
+          data={data}
+          context={context}
+          isOpen={editOpen}
+          onOpenChange={setEditOpen}
+        />
+      )}
     </HStack>
   );
 };
@@ -873,7 +904,8 @@ interface TracksGridProps {
   requestReply: RequestReply;
   sendMsg: (msg: ClientMsg) => void;
   setGridReady: (ready: boolean) => void;
-  initialState?: GridState;
+  // The saved state to start from, read when the grid mounts.
+  loadInitialState: () => GridState | undefined;
   onStateUpdate: (event: StateUpdatedEvent<ITrack>) => void;
   onRowCountChange?: (count: number) => void;
   onSelectionChanged: (event: SelectionChangedEvent<ITrack>) => void;
@@ -910,7 +942,7 @@ export const TracksGrid = ({
   requestReply,
   sendMsg,
   setGridReady,
-  initialState,
+  loadInitialState,
   onStateUpdate,
   onRowCountChange,
   onSelectionChanged,
@@ -924,6 +956,7 @@ export const TracksGrid = ({
   onShowCurrent,
   isCompact = false,
 }: TracksGridProps) => {
+  const [initialState] = useState(loadInitialState);
   const [colDefs] = useState<ColDef[]>([
     {
       field: "yt_id",
