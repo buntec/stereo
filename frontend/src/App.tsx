@@ -17,7 +17,7 @@ import logger from "./logger.tsx";
 import {
   PlusIcon,
   Cross2Icon,
-  MagicWandIcon,
+  ImageIcon,
   TrashIcon,
   ShuffleIcon,
   PlayIcon,
@@ -3345,7 +3345,7 @@ function App() {
                             size={footerButtonSize}
                             label="Toggle background artwork"
                             isPressed={settings.backgroundVideo}
-                            icon={<MagicWandIcon />}
+                            icon={<ImageIcon />}
                             onPressedChange={toggleBackgroundVideo}
                           />
                         </Tooltip>
