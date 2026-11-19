@@ -69,6 +69,7 @@ import type {
 } from "./Types.tsx";
 import {
   DEFAULT_AIR,
+  DEFAULT_BACKGROUND,
   isChartSearchKind,
   isQuerylessSearchKind,
   playlistSyncKey,
@@ -2191,6 +2192,10 @@ function App() {
   );
   const backgroundRef = useRef<HTMLElement>(null);
   const backgroundPulse = settings.backgroundPulse ?? DEFAULT_BACKGROUND_PULSE;
+  const background = useMemo(
+    () => ({ ...DEFAULT_BACKGROUND, ...settings.background }),
+    [settings.background],
+  );
   useBeatPulse(
     backgroundRef,
     playback,
@@ -2973,6 +2978,10 @@ function App() {
                   setBackgroundPulse={(backgroundPulse) =>
                     setSettings((s) => ({ ...s, backgroundPulse }))
                   }
+                  background={background}
+                  setBackground={(background) =>
+                    setSettings((s) => ({ ...s, background }))
+                  }
                   air={air}
                   setAir={(air) => setSettings((s) => ({ ...s, air }))}
                   isConnected={backendReady}
@@ -3371,6 +3380,9 @@ function App() {
               style={
                 {
                   "--beat-strength": backgroundPulse / 100,
+                  "--background-saturation": background.saturation / 100,
+                  "--background-opacity": background.opacity / 100,
+                  "--background-blur": background.blur / 100,
                   // 16:9 without the letterboxing of the larger thumbnails; blurred anyway.
                   backgroundImage: `url(https://i.ytimg.com/vi/${encodeURIComponent(state.current_id)}/mqdefault.jpg)`,
                 } as CSSProperties

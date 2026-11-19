@@ -701,6 +701,24 @@ export const DEFAULT_AIR: AirSettings = {
   settleTime: 180,
 };
 
+/** How the background artwork looks (App.css's `.background-player`), in % of the
+ * look it was designed with; SettingsMenu.tsx adjusts them. */
+export type BackgroundSettings = {
+  /** Its colour saturation (the animation's range, scaled). */
+  saturation: number;
+  /** Its opacity between beats; the beats brighten it towards full. */
+  opacity: number;
+  /** How strongly it's blurred (the animation's range, scaled); 0 is sharp. */
+  blur: number;
+};
+
+/** The background's defaults: the look it was designed with. */
+export const DEFAULT_BACKGROUND: BackgroundSettings = {
+  saturation: 100,
+  opacity: 50,
+  blur: 100,
+};
+
 export type Settings = {
   appearance: AppearanceType;
   repoPath: string;
@@ -709,6 +727,8 @@ export type Settings = {
   backgroundVideo: boolean;
   /** How strongly the background pulses with the beats, 0–100 (%); unset in older stored settings. */
   backgroundPulse?: number;
+  /** The background's saturation, opacity and blur; unset in older stored settings. */
+  background?: Partial<BackgroundSettings>;
   /** The air the header's dance stacks push with the beats; unset in older stored settings. */
   air?: Partial<AirSettings>;
   shufflePlay: boolean;
