@@ -264,14 +264,10 @@ const RowEditDialog = ({
   onOpenChange: (isOpen: boolean) => void;
 }) => {
   const [value, setValue] = useState(data);
-  const [isValid, setIsValid] = useState<boolean | null>(null);
   const [wasOpen, setWasOpen] = useState(isOpen);
   if (isOpen !== wasOpen) {
     setWasOpen(isOpen);
-    if (isOpen) {
-      setValue(data);
-      setIsValid(null);
-    }
+    if (isOpen) setValue(data);
   }
 
   // Compare by content: after every grid refresh `data` is a new but usually identical object,
@@ -281,15 +277,28 @@ const RowEditDialog = ({
     [value, data],
   );
 
+  // The backend's verdict on a draft. It only counts for the draft it was given: any other
+  // (a newer edit, or the track again after reopening) is unvalidated until its own reply.
+  const [validation, setValidation] = useState<{
+    draft: ITrack;
+    isValid: boolean;
+  }>();
+  const isValid =
+    edited && validation?.draft === value ? validation.isValid : null;
+
   useEffect(() => {
-    if (edited) {
-      context.requestReply({ type: "validate-track", track: value }, (msg) => {
-        if ("is_valid" in msg) {
-          setIsValid(msg.is_valid);
-        }
-      });
-    }
-  }, [edited, value, context]);
+    if (!isOpen || !edited) return;
+    // A reply that arrives after the dialog closed or the draft changed is ignored.
+    let current = true;
+    context.requestReply({ type: "validate-track", track: value }, (msg) => {
+      if (current && "is_valid" in msg) {
+        setValidation({ draft: value, isValid: msg.is_valid });
+      }
+    });
+    return () => {
+      current = false;
+    };
+  }, [isOpen, edited, value, context]);
 
   const commit = useCallback(() => {
     context.sendMsg({ type: "update-track", old: data, new: value });
@@ -904,7 +913,7 @@ interface TracksGridProps {
   requestReply: RequestReply;
   sendMsg: (msg: ClientMsg) => void;
   setGridReady: (ready: boolean) => void;
-  // The saved state to start from, read when the grid mounts.
+  // The state to start from, read when the grid mounts.
   loadInitialState: () => GridState | undefined;
   onStateUpdate: (event: StateUpdatedEvent<ITrack>) => void;
   onRowCountChange?: (count: number) => void;

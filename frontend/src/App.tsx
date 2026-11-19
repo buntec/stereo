@@ -1006,9 +1006,10 @@ const legacyGridState = (): GridState | undefined => {
 };
 
 // The tracks grid's state (filter, sort, column widths and order, scroll position, …),
-// saved as it changes and read when the grid mounts. It isn't React state: it changes with
-// every scroll and with every window resize (the flex columns' widths), and re-rendering
-// the whole app each time took some 100ms. Only its view (`GridView`) is.
+// saved for the next page load. While the page runs, App keeps it in a ref, which the grid
+// starts from whenever it mounts (e.g. back from a search). It isn't React state: it
+// changes with every scroll and with every window resize (the flex columns' widths), and
+// re-rendering the whole app each time took some 100ms. Only its view (`GridView`) is.
 const GRID_STATE_KEY = "stereo_app_grid_state_v2";
 const loadGridState = (): GridState | undefined => {
   try {
@@ -1093,8 +1094,11 @@ function App() {
     DEFAULT_BEATPORT_GENRE_ID,
   );
 
+  const [initialGridState] = useState(loadGridState);
+  const gridState = useRef(initialGridState);
+  const currentGridState = useCallback(() => gridState.current, []);
   const [gridView, setGridView] = useState<GridView>(() =>
-    gridViewOf(loadGridState()),
+    gridViewOf(initialGridState),
   );
 
   const wsOnMessage = useCallback(
@@ -2280,7 +2284,8 @@ function App() {
         filter: { filterModel: p.filter_model },
         sort: { sortModel: p.sort_model },
       };
-      saveGridState({ ...loadGridState(), ...view });
+      gridState.current = { ...gridState.current, ...view };
+      saveGridState(gridState.current);
       setGridView(view);
       const api = gridRef.current?.api;
       if (api) {
@@ -2515,6 +2520,7 @@ function App() {
       if (ev.sources.some((s) => s === "filter" || s === "sort")) {
         updatePlaylist(settings.shufflePlay);
       }
+      gridState.current = ev.state;
       saveGridState(ev.state);
       const view = gridViewOf(ev.state);
       setGridView((prev) =>
@@ -2722,7 +2728,7 @@ function App() {
       requestReply={requestReply}
       sendMsg={sendMsg}
       setGridReady={setGridReady}
-      loadInitialState={loadGridState}
+      loadInitialState={currentGridState}
       onStateUpdate={onTrackGridStateUpdate}
       onRowCountChange={setFilteredRowCount}
       onSelectionChanged={trackSelection.onSelectionChanged}
