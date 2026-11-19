@@ -7,7 +7,7 @@ import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { GearIcon } from "@radix-ui/react-icons";
 import type { ReactNode } from "react";
-import type { AirSettings } from "./Types.tsx";
+import type { AirSettings, BackgroundSettings } from "./Types.tsx";
 
 /** How strongly the background pulses with the beats by default, in %. */
 export const DEFAULT_BACKGROUND_PULSE = 50;
@@ -17,6 +17,9 @@ type SettingsMenuProps = {
   backgroundShown: boolean;
   backgroundPulse: number;
   setBackgroundPulse: (pulse: number) => void;
+  /** The background artwork's saturation, opacity and blur. */
+  background: BackgroundSettings;
+  setBackground: (background: BackgroundSettings) => void;
   /** The air the header's dance stacks push with the beats. */
   air: AirSettings;
   setAir: (air: AirSettings) => void;
@@ -31,6 +34,8 @@ function SettingsMenu({
   backgroundShown,
   backgroundPulse,
   setBackgroundPulse,
+  background,
+  setBackground,
   air,
   setAir,
   header,
@@ -59,6 +64,28 @@ function SettingsMenu({
       disabledMessage="Speaker air is off"
     />
   );
+  const backgroundSlider = (
+    key: keyof BackgroundSettings,
+    label: string,
+    tooltip: string,
+    max: number,
+    formatValue: (v: number) => string,
+  ) => (
+    <Slider
+      label={label}
+      labelTooltip={tooltip}
+      value={background[key]}
+      onChange={(v: number) => setBackground({ ...background, [key]: v })}
+      min={0}
+      max={max}
+      step={5}
+      formatValue={formatValue}
+      valueDisplay="text"
+      isDisabled={!backgroundShown}
+      disabledMessage="Background is off"
+    />
+  );
+  const percent = (v: number) => `${v}%`;
   const ms = (v: number) => `${v} ms`;
   const px = (v: number) => (v === 0 ? "Off" : v.toFixed(1));
 
@@ -87,6 +114,27 @@ function SettingsMenu({
             isDisabled={!backgroundShown}
             disabledMessage="Background is off"
           />
+          {backgroundSlider(
+            "saturation",
+            "Background saturation",
+            "How colourful the background is; 0% is greyscale.",
+            200,
+            percent,
+          )}
+          {backgroundSlider(
+            "opacity",
+            "Background opacity",
+            "How strongly the background shows between beats.",
+            100,
+            percent,
+          )}
+          {backgroundSlider(
+            "blur",
+            "Background blur",
+            "How strongly the background is blurred.",
+            200,
+            (v) => (v === 0 ? "Off" : `${v}%`),
+          )}
           <Divider />
           <Switch
             label="Speaker air"

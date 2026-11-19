@@ -450,7 +450,10 @@
 /* The playing track's thumbnail, blurred and slowly moving behind the app. It
    brightens and swells with the beats (`--beat`, from useBeatPulse.ts), as much as
    the settings' background pulse (`--beat-strength`, 0–1) says; `scale` composes
-   with the animated `transform` rather than replacing it. */
+   with the animated `transform` rather than replacing it. The settings also scale its
+   saturation and blur (`--background-saturation`/`--background-blur`, 1 being the
+   animation's own range) and set its opacity between beats (`--background-opacity`),
+   from which the beats brighten it most of the way to full. */
 .background-player {
   --background-beat: calc(var(--beat-strength, 0) * var(--beat, 0));
   position: fixed;
@@ -459,8 +462,15 @@
   z-index: -2;
   background-size: cover;
   background-position: center;
-  filter: blur(var(--spacing-4));
-  opacity: calc(0.5 + 0.4 * var(--background-beat));
+  --background-saturation: 1;
+  --background-opacity: 0.5;
+  --background-blur: 1;
+  filter: saturate(var(--background-saturation))
+    blur(calc(var(--spacing-4) * var(--background-blur)));
+  opacity: calc(
+    var(--background-opacity) + 0.8 * (1 - var(--background-opacity)) *
+      var(--background-beat)
+  );
   scale: calc(1 + 0.12 * var(--background-beat));
   transform: scale(2);
   pointer-events: none;
@@ -472,10 +482,12 @@
 
 @keyframes player-filter {
   from {
-    filter: saturate(75%) blur(var(--spacing-3));
+    filter: saturate(calc(0.75 * var(--background-saturation)))
+      blur(calc(var(--spacing-3) * var(--background-blur)));
   }
   to {
-    filter: saturate(150%) blur(var(--spacing-6));
+    filter: saturate(calc(1.5 * var(--background-saturation)))
+      blur(calc(var(--spacing-6) * var(--background-blur)));
   }
 }
 
