@@ -16,12 +16,19 @@ use tauri::{Manager, TitleBarStyle, WebviewWindow};
 /// What a backend's `/info` lists among its `features` when its UI leaves the strip clear.
 pub const FEATURE: &str = "title-bar-overlay";
 
-/// Whether the window's title bar is over the page. The window starts with it, on the start page.
-pub struct TitleBar(AtomicBool);
+/// Whether the window's title bar is over the page (the window starts with it, on the start
+/// page), and whether the window was in full screen when the page was last told.
+pub struct TitleBar {
+    overlay: AtomicBool,
+    fullscreen: AtomicBool,
+}
 
 impl Default for TitleBar {
     fn default() -> Self {
-        TitleBar(AtomicBool::new(true))
+        TitleBar {
+            overlay: AtomicBool::new(true),
+            fullscreen: AtomicBool::new(false),
+        }
     }
 }
 
@@ -77,7 +84,7 @@ pub fn init_script() -> String {
 pub fn set_overlay(window: &WebviewWindow, overlay: bool) {
     window
         .state::<TitleBar>()
-        .0
+        .overlay
         .store(overlay, Ordering::SeqCst);
     let style = if overlay {
         TitleBarStyle::Overlay
@@ -91,16 +98,29 @@ pub fn set_overlay(window: &WebviewWindow, overlay: bool) {
 }
 
 /// Tells the page whether the title bar is over it, and what a double-click on it does: after
-/// each page load, resize (e.g. into full screen) and focus (back from System Settings).
+/// each page load and focus (back from System Settings), and on going into or out of full screen
+/// (`sync_fullscreen`).
 pub fn sync(window: &WebviewWindow) {
-    let overlay = window.state::<TitleBar>().0.load(Ordering::SeqCst)
-        && !window.is_fullscreen().unwrap_or(false);
+    let title_bar = window.state::<TitleBar>();
+    let fullscreen = window.is_fullscreen().unwrap_or(false);
+    title_bar.fullscreen.store(fullscreen, Ordering::SeqCst);
+    let overlay = title_bar.overlay.load(Ordering::SeqCst) && !fullscreen;
     let state = if overlay { "overlay" } else { "hidden" };
     let action = double_click_action();
     let _ = window.eval(format!(
         "document.documentElement.dataset.titleBar = '{state}';\
          window.__STEREO_TITLE_BAR_DOUBLE_CLICK__ = '{action}';"
     ));
+}
+
+/// `sync` after a resize, if it went into or out of full screen. A live resize sends a stream of
+/// these, and evaluating a script in the page for each kept the page busy while it had to lay
+/// itself out and paint anew.
+pub fn sync_fullscreen(window: &WebviewWindow) {
+    let fullscreen = window.is_fullscreen().unwrap_or(false);
+    if window.state::<TitleBar>().fullscreen.load(Ordering::SeqCst) != fullscreen {
+        sync(window);
+    }
 }
 
 /// What double-clicking a title bar does, from System Settings (Desktop & Dock).

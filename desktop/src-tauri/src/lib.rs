@@ -813,12 +813,10 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let w = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(true) =
-                        event
-                    {
-                        title_bar::sync(&w);
-                    }
+                window.on_window_event(move |event| match event {
+                    tauri::WindowEvent::Resized(_) => title_bar::sync_fullscreen(&w),
+                    tauri::WindowEvent::Focused(true) => title_bar::sync(&w),
+                    _ => {}
                 });
             }
             let start_page = window.url()?;

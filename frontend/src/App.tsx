@@ -1005,6 +1005,37 @@ const legacyGridState = (): GridState | undefined => {
   }
 };
 
+// The tracks grid's state (filter, sort, column widths and order, scroll position, …),
+// saved for the next page load. While the page runs, App keeps it in a ref, which the grid
+// starts from whenever it mounts (e.g. back from a search). It isn't React state: it
+// changes with every scroll and with every window resize (the flex columns' widths), and
+// re-rendering the whole app each time took some 100ms. Only its view (`GridView`) is.
+const GRID_STATE_KEY = "stereo_app_grid_state_v2";
+const loadGridState = (): GridState | undefined => {
+  try {
+    const item = window.localStorage.getItem(GRID_STATE_KEY);
+    // "undefined": an unset value, as stored by earlier versions.
+    if (item && item !== "undefined") return JSON.parse(item) as GridState;
+  } catch (error) {
+    console.error(`Error reading local storage at "${GRID_STATE_KEY}":`, error);
+  }
+  return legacyGridState();
+};
+const saveGridState = (state: GridState) => {
+  try {
+    window.localStorage.setItem(GRID_STATE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.error(`Error setting local storage at "${GRID_STATE_KEY}":`, error);
+  }
+};
+
+// The part of the grid's state that makes a view, as the playlists save it.
+type GridView = Pick<GridState, "filter" | "sort">;
+const gridViewOf = (state: GridState | undefined): GridView => ({
+  filter: state?.filter,
+  sort: state?.sort,
+});
+
 function App() {
   const [state, dispatch] = useReducer(reducer, {
     playlist: [],
@@ -1063,9 +1094,11 @@ function App() {
     DEFAULT_BEATPORT_GENRE_ID,
   );
 
-  const [gridState, setGridState] = useLocalStorage<GridState | undefined>(
-    "stereo_app_grid_state_v2",
-    legacyGridState,
+  const [initialGridState] = useState(loadGridState);
+  const gridState = useRef(initialGridState);
+  const currentGridState = useCallback(() => gridState.current, []);
+  const [gridView, setGridView] = useState<GridView>(() =>
+    gridViewOf(initialGridState),
   );
 
   const wsOnMessage = useCallback(
@@ -2222,13 +2255,13 @@ function App() {
   const currentView = useMemo(
     () => ({
       collection: settings.collectionPath,
-      filter_model: (gridState?.filter?.filterModel ?? {}) as Record<
+      filter_model: (gridView.filter?.filterModel ?? {}) as Record<
         string,
         unknown
       >,
-      sort_model: (gridState?.sort?.sortModel ?? []) as SortModelItem[],
+      sort_model: (gridView.sort?.sortModel ?? []) as SortModelItem[],
     }),
-    [settings.collectionPath, gridState],
+    [settings.collectionPath, gridView],
   );
   const isPlaylistModified =
     !!activePlaylist && !sameView(activePlaylist, currentView);
@@ -2247,11 +2280,13 @@ function App() {
     (p: IPlaylist) => {
       setActivePlaylistId(p.id);
       // The grid reads its initial state from here if it isn't mounted (e.g. while searching).
-      setGridState((prev) => ({
-        ...prev,
+      const view: GridView = {
         filter: { filterModel: p.filter_model },
         sort: { sortModel: p.sort_model },
-      }));
+      };
+      gridState.current = { ...gridState.current, ...view };
+      saveGridState(gridState.current);
+      setGridView(view);
       const api = gridRef.current?.api;
       if (api) {
         api.setFilterModel(p.filter_model);
@@ -2271,7 +2306,6 @@ function App() {
     },
     [
       setActivePlaylistId,
-      setGridState,
       isSearchGridActive,
       handleExitSearch,
       settings.collectionPath,
@@ -2486,9 +2520,14 @@ function App() {
       if (ev.sources.some((s) => s === "filter" || s === "sort")) {
         updatePlaylist(settings.shufflePlay);
       }
-      setGridState(ev.state);
+      gridState.current = ev.state;
+      saveGridState(ev.state);
+      const view = gridViewOf(ev.state);
+      setGridView((prev) =>
+        JSON.stringify(prev) === JSON.stringify(view) ? prev : view,
+      );
     },
-    [setGridState, updatePlaylist, settings.shufflePlay],
+    [updatePlaylist, settings.shufflePlay],
   );
 
   const handleArtistClick = useCallback(
@@ -2689,7 +2728,7 @@ function App() {
       requestReply={requestReply}
       sendMsg={sendMsg}
       setGridReady={setGridReady}
-      initialState={gridState}
+      loadInitialState={currentGridState}
       onStateUpdate={onTrackGridStateUpdate}
       onRowCountChange={setFilteredRowCount}
       onSelectionChanged={trackSelection.onSelectionChanged}

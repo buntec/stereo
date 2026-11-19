@@ -250,6 +250,78 @@ const ThumbnailPlayButton = ({
   </Tooltip>
 );
 
+// A row's edit dialog, with the edited copy of its track. Each opening starts from the
+// row's current track.
+const RowEditDialog = ({
+  data,
+  context,
+  isOpen,
+  onOpenChange,
+}: {
+  data: ITrack;
+  context: TracksGridContext;
+  isOpen: boolean;
+  onOpenChange: (isOpen: boolean) => void;
+}) => {
+  const [value, setValue] = useState(data);
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) setValue(data);
+  }
+
+  // Compare by content: after every grid refresh `data` is a new but usually identical object,
+  // and validating then would send a request for every visible row.
+  const edited = useMemo(
+    () => JSON.stringify(value) !== JSON.stringify(data),
+    [value, data],
+  );
+
+  // The backend's verdict on a draft. It only counts for the draft it was given: any other
+  // (a newer edit, or the track again after reopening) is unvalidated until its own reply.
+  const [validation, setValidation] = useState<{
+    draft: ITrack;
+    isValid: boolean;
+  }>();
+  const isValid =
+    edited && validation?.draft === value ? validation.isValid : null;
+
+  useEffect(() => {
+    if (!isOpen || !edited) return;
+    // A reply that arrives after the dialog closed or the draft changed is ignored.
+    let current = true;
+    context.requestReply({ type: "validate-track", track: value }, (msg) => {
+      if (current && "is_valid" in msg) {
+        setValidation({ draft: value, isValid: msg.is_valid });
+      }
+    });
+    return () => {
+      current = false;
+    };
+  }, [isOpen, edited, value, context]);
+
+  const commit = useCallback(() => {
+    context.sendMsg({ type: "update-track", old: data, new: value });
+  }, [context, data, value]);
+
+  const resetValue = useCallback(() => {
+    setValue(data);
+  }, [data]);
+
+  return (
+    <EditTrackDialog
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+      isValid={isValid}
+      value={value}
+      setValue={setValue}
+      commit={commit}
+      resetValue={resetValue}
+      requestReply={context.requestReply}
+    />
+  );
+};
+
 const PlayControlRenderer: React.FC<
   CustomCellRendererProps<ITrack, unknown, TracksGridContext>
 > = (params) => {
@@ -261,39 +333,12 @@ const PlayControlRenderer: React.FC<
     }
   }, [context, data]);
 
-  const [value, setValue] = useState(data);
-  const [editOpen, setEditOpen] = useState(false);
+  // The edit dialog is mounted on its first opening, not with the row: a closed Astryx
+  // Dialog still renders its whole form (some 430 components), which made every row
+  // mount slowly, e.g. when scrolling or making the window taller.
+  const [editOpen, setEditOpen] = useState<boolean>();
 
-  const [isValid, setIsValid] = useState<boolean | null>(null);
-
-  // Compare by content: after every grid refresh `data` is a new but usually identical object,
-  // and validating then would send a request for every visible row.
-  const edited = useMemo(
-    () => JSON.stringify(value) !== JSON.stringify(data),
-    [value, data],
-  );
-
-  useEffect(() => {
-    if (edited) {
-      context.requestReply({ type: "validate-track", track: value }, (msg) => {
-        if ("is_valid" in msg) {
-          setIsValid(msg.is_valid);
-        }
-      });
-    }
-  }, [edited, value, context]);
-
-  const commit = useCallback(() => {
-    if (data && value) {
-      context.sendMsg({ type: "update-track", old: data, new: value });
-    }
-  }, [context, data, value]);
-
-  const resetValue = useCallback(() => {
-    setValue(data);
-  }, [data]);
-
-  if (!data || !value) return null;
+  if (!data) return null;
 
   return (
     <HStack gap={1} vAlign="center">
@@ -313,10 +358,7 @@ const PlayControlRenderer: React.FC<
           {
             label: "Edit",
             icon: <Pencil1Icon />,
-            onClick: () => {
-              resetValue();
-              setEditOpen(true);
-            },
+            onClick: () => setEditOpen(true),
           },
           {
             label: "Find similar songs on Shazam",
@@ -339,16 +381,14 @@ const PlayControlRenderer: React.FC<
             : []),
         ]}
       />
-      <EditTrackDialog
-        isOpen={editOpen}
-        onOpenChange={setEditOpen}
-        isValid={isValid}
-        value={value}
-        setValue={setValue}
-        commit={commit}
-        resetValue={resetValue}
-        requestReply={context.requestReply}
-      />
+      {editOpen !== undefined && (
+        <RowEditDialog
+          data={data}
+          context={context}
+          isOpen={editOpen}
+          onOpenChange={setEditOpen}
+        />
+      )}
     </HStack>
   );
 };
@@ -873,7 +913,8 @@ interface TracksGridProps {
   requestReply: RequestReply;
   sendMsg: (msg: ClientMsg) => void;
   setGridReady: (ready: boolean) => void;
-  initialState?: GridState;
+  // The state to start from, read when the grid mounts.
+  loadInitialState: () => GridState | undefined;
   onStateUpdate: (event: StateUpdatedEvent<ITrack>) => void;
   onRowCountChange?: (count: number) => void;
   onSelectionChanged: (event: SelectionChangedEvent<ITrack>) => void;
@@ -910,7 +951,7 @@ export const TracksGrid = ({
   requestReply,
   sendMsg,
   setGridReady,
-  initialState,
+  loadInitialState,
   onStateUpdate,
   onRowCountChange,
   onSelectionChanged,
@@ -924,6 +965,7 @@ export const TracksGrid = ({
   onShowCurrent,
   isCompact = false,
 }: TracksGridProps) => {
+  const [initialState] = useState(loadInitialState);
   const [colDefs] = useState<ColDef[]>([
     {
       field: "yt_id",

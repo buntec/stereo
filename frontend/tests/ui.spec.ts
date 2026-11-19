@@ -37,6 +37,8 @@ async function openApp(
     audioSeconds?: number;
     /** What every search finds. */
     searchResults?: Record<string, unknown>[];
+    /** Leaves `validate-track` unanswered, for the test to answer itself. */
+    holdValidation?: boolean;
   } = {},
 ) {
   let socket: WebSocketRoute;
@@ -191,6 +193,7 @@ async function openApp(
           break;
         }
         case "validate-track":
+          if (options.holdValidation) break;
           send({
             type: "validate-track-reply",
             id: message.id,
@@ -814,6 +817,75 @@ test("metadata editing groups identifiers and explains invalid required fields",
   await expect(
     dialog.getByRole("button", { name: "Save", exact: true }),
   ).toBeDisabled();
+});
+
+test("a validation reply for an abandoned edit doesn't enable saving after reopening", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page, { holdValidation: true });
+  const openEdit = async () => {
+    await page
+      .getByRole("button", { name: "Options for Example track 1", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+  };
+  await openEdit();
+  const dialog = page.getByRole("dialog");
+  const title = dialog.getByRole("textbox", { name: /^Title/ });
+  await title.fill("Edited title");
+  await expect
+    .poll(() => messages.filter((m) => m.type === "validate-track").length)
+    .toBeGreaterThan(0);
+  const validation = messages.findLast((m) => m.type === "validate-track")!;
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await openEdit();
+  await expect(title).toHaveValue("Example track 1");
+  send({ type: "validate-track-reply", id: validation.id, is_valid: true });
+  await page.waitForTimeout(300);
+  await expect(
+    dialog.getByRole("button", { name: "Save", exact: true }),
+  ).toBeDisabled();
+});
+
+test("the collection grid keeps this tab's view after a search, whatever another tab saved", async ({
+  page,
+}) => {
+  await openApp(page);
+  const titleHeader = page.locator('.ag-header-cell[col-id="title"]');
+  await titleHeader.getByText("Title", { exact: true }).click();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+  // Another tab filters the collection down to nothing.
+  await page.evaluate(() =>
+    localStorage.setItem(
+      "stereo_app_grid_state_v2",
+      JSON.stringify({
+        filter: {
+          filterModel: {
+            title: { filterType: "text", type: "contains", filter: "none" },
+          },
+        },
+      }),
+    ),
+  );
+
+  await page
+    .getByRole("textbox", { name: /Search query/ })
+    .fill("missing track");
+  await page.keyboard.press("Enter");
+  await page
+    .getByRole("button", { name: "Back to collection", exact: true })
+    .click();
+  await expect(
+    page
+      .locator('.ag-row[row-index="0"]')
+      .getByText("Example track 1", { exact: true }),
+  ).toBeVisible();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+  await expect(
+    page.getByRole("heading", { name: "No tracks match these filters" }),
+  ).toHaveCount(0);
 });
 
 test("empty search results provide a way back to the collection", async ({
