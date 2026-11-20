@@ -39,8 +39,25 @@ async function openApp(
     searchResults?: Record<string, unknown>[];
     /** Leaves `validate-track` unanswered, for the test to answer itself. */
     holdValidation?: boolean;
+    /** Shows the disco ball, hidden by default (in stored settings, unless there are some already). */
+    discoBall?: boolean;
   } = {},
 ) {
+  if (options.discoBall)
+    await page.addInitScript(() => {
+      if (localStorage.getItem("stereo_app_settings")) return;
+      localStorage.setItem(
+        "stereo_app_settings",
+        JSON.stringify({
+          appearance: "system",
+          repoPath: "",
+          collectionPath: "",
+          backgroundVideo: true,
+          shufflePlay: false,
+          discoBall: { isShown: true },
+        }),
+      );
+    });
   let socket: WebSocketRoute;
   const tracks = options.empty ? [] : structuredClone(exampleTracks);
   const collection = { path: "/audit/collection.db", size: tracks.length };
@@ -905,8 +922,16 @@ async function setDiscoBallSlider(page: Page, name: string, key: string) {
   await page.keyboard.press("Escape");
 }
 
-test("the disco ball hangs still unless asked to turn", async ({ page }) => {
+test("the disco ball is hidden unless asked for", async ({ page }) => {
   await openApp(page);
+  await expect(page.locator("canvas.disco-ball")).toHaveCount(0);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("switch", { name: "Disco ball" }).click();
+  await expect(page.locator("canvas.disco-ball")).toBeVisible();
+});
+
+test("the disco ball hangs still unless asked to turn", async ({ page }) => {
+  await openApp(page, { discoBall: true });
   const still = await discoBallPixels(page);
   await page.waitForTimeout(300);
   expect(await discoBallPixels(page)).toBe(still);
@@ -917,11 +942,45 @@ test("the disco ball hangs still unless asked to turn", async ({ page }) => {
     .not.toBe(still);
 });
 
+test("the settings reset to their defaults", async ({ page }) => {
+  await openApp(page);
+  // Hiding the background leaves its sliders disabled: the reset shows it again.
+  const backgroundToggle = page.getByRole("button", {
+    name: "Toggle background artwork",
+  });
+  await backgroundToggle.click();
+  await expect(backgroundToggle).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "Settings" }).click();
+  const reset = page.getByRole("button", { name: "Reset to defaults" });
+  await reset.click();
+  await expect(backgroundToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(reset).toBeDisabled();
+
+  await page.getByRole("switch", { name: "Disco ball" }).click();
+  const size = page.getByRole("slider", { name: "Ball size" });
+  const blur = page.getByRole("slider", { name: "Background blur" });
+  await size.press("End");
+  await blur.press("Home");
+  await expect(size).toHaveAttribute("aria-valuenow", "100");
+  await expect(blur).toHaveAttribute("aria-valuenow", "0");
+
+  await reset.click();
+  await expect(size).toHaveAttribute("aria-valuenow", "40");
+  await expect(blur).not.toHaveAttribute("aria-valuenow", "0");
+  await expect(reset).toBeDisabled();
+  await expect(page.locator("canvas.disco-ball")).toHaveCount(0);
+  const stored = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("stereo_app_settings")!),
+  );
+  expect(stored.discoBall).toBeUndefined();
+  expect(stored.background).toBeUndefined();
+});
+
 test("the disco ball fits a short window, which keeps its cord setting", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 667, height: 375 });
-  await openApp(page);
+  await openApp(page, { discoBall: true });
   await setDiscoBallSlider(page, "Cord length", "End");
   expect(
     await page.evaluate(
@@ -944,7 +1003,7 @@ test("the disco ball fits a short window, which keeps its cord setting", async (
 test("the disco ball shrinks below its smallest size to fit, then isn't drawn", async ({
   page,
 }) => {
-  await openApp(page);
+  await openApp(page, { discoBall: true });
   const ball = page.locator("canvas.disco-ball");
   await page.setViewportSize({ width: 667, height: 40 });
   await expect
@@ -961,7 +1020,7 @@ test("the disco ball is fainter behind a grid, and behind centred content it rea
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await openApp(page, { empty: true });
+  await openApp(page, { empty: true, discoBall: true });
   const ball = page.locator("canvas.disco-ball");
   // It ends above the empty state's text.
   await expect(ball).not.toHaveClass(/disco-ball-subdued/);
@@ -973,7 +1032,7 @@ test("the disco ball is fainter behind the collection's rows", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await openApp(page);
+  await openApp(page, { discoBall: true });
   await expect(page.locator("canvas.disco-ball")).toHaveClass(
     /disco-ball-subdued/,
   );
@@ -983,7 +1042,7 @@ test("motion settings say they're off for those who prefer reduced motion", asyn
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await openApp(page);
+  await openApp(page, { discoBall: true });
   await page.getByRole("button", { name: "Settings" }).click();
   for (const name of ["Rotation speed", "Background pulse", "Wave duration"])
     await expect(page.getByRole("slider", { name })).toBeDisabled();
@@ -1022,7 +1081,7 @@ test("the disco ball is redrawn for a display of another pixel density", async (
       return list;
     };
   });
-  await openApp(page);
+  await openApp(page, { discoBall: true });
   const ball = page.locator("canvas.disco-ball");
   const bitmapScale = () =>
     ball.evaluate(

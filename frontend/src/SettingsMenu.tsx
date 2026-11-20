@@ -1,3 +1,4 @@
+import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Popover } from "@astryxdesign/core/Popover";
@@ -5,17 +6,26 @@ import { Slider } from "@astryxdesign/core/Slider";
 import { Switch } from "@astryxdesign/core/Switch";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import { GearIcon } from "@radix-ui/react-icons";
+import { GearIcon, ResetIcon } from "@radix-ui/react-icons";
 import type { ReactNode } from "react";
 import { usePrefersReducedMotion } from "./useBeatPulse.ts";
-import type {
-  AirSettings,
-  BackgroundSettings,
-  DiscoBallSettings,
+import {
+  DEFAULT_AIR,
+  DEFAULT_BACKGROUND,
+  DEFAULT_DISCO_BALL,
+  type AirSettings,
+  type BackgroundSettings,
+  type DiscoBallSettings,
 } from "./Types.tsx";
 
 /** How strongly the background pulses with the beats by default, in %. */
 export const DEFAULT_BACKGROUND_PULSE = 50;
+
+/** Whether `settings` has every one of `defaults`' values. */
+const isDefault = <T extends object>(settings: T, defaults: T) =>
+  (Object.keys(defaults) as (keyof T)[]).every(
+    (key) => settings[key] === defaults[key],
+  );
 
 type SettingsMenuProps = {
   /** Whether the background artwork is shown at all (the footer's toggle). */
@@ -31,6 +41,11 @@ type SettingsMenuProps = {
   /** The disco ball hanging from the top. */
   discoBall: DiscoBallSettings;
   setDiscoBall: (discoBall: DiscoBallSettings) => void;
+  /**
+   * Puts the disco ball, background and speaker air settings back to their
+   * defaults, showing the background again (not the appearance).
+   */
+  resetToDefaults: () => void;
   /** Controls that live in the nav bar on wide screens (e.g. the appearance switch). */
   header?: ReactNode;
   footer?: ReactNode;
@@ -48,6 +63,7 @@ function SettingsMenu({
   setAir,
   discoBall,
   setDiscoBall,
+  resetToDefaults,
   header,
   footer,
 }: SettingsMenuProps) {
@@ -254,6 +270,21 @@ function SettingsMenu({
             10,
             ms,
           )}
+          <Divider />
+          <Button
+            label="Reset to defaults"
+            icon={<ResetIcon />}
+            variant="ghost"
+            size="sm"
+            isDisabled={
+              backgroundShown &&
+              backgroundPulse === DEFAULT_BACKGROUND_PULSE &&
+              isDefault(background, DEFAULT_BACKGROUND) &&
+              isDefault(air, DEFAULT_AIR) &&
+              isDefault(discoBall, DEFAULT_DISCO_BALL)
+            }
+            onClick={resetToDefaults}
+          />
           {footer}
         </VStack>
       }

@@ -3002,6 +3002,17 @@ function App() {
                   setDiscoBall={(discoBall) =>
                     setSettings((s) => ({ ...s, discoBall }))
                   }
+                  // Unset rather than the current defaults, so later changes to them apply.
+                  resetDisplaySettings={() =>
+                    setSettings((s) => ({
+                      ...s,
+                      backgroundVideo: defaultSettings.backgroundVideo,
+                      backgroundPulse: undefined,
+                      background: undefined,
+                      air: undefined,
+                      discoBall: undefined,
+                    }))
+                  }
                   isConnected={backendReady}
                   requestReply={requestReply}
                   tailscale={state.tailscale}

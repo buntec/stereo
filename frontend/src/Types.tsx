@@ -735,7 +735,7 @@ export type DiscoBallSettings = {
  * turning: each redraw takes about 1.5ms of main thread, and the compositor
  * blurs the frosted controls over it again. */
 export const DEFAULT_DISCO_BALL: DiscoBallSettings = {
-  isShown: true,
+  isShown: false,
   speed: 0,
   size: 40,
   cord: 8,
