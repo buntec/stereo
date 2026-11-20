@@ -691,9 +691,9 @@ export type AirSettings = {
   settleTime: number;
 };
 
-/** The air's defaults; SettingsMenu.tsx adjusts them. */
+/** The air's defaults; SettingsMenu.tsx adjusts them. Off unless turned on. */
 export const DEFAULT_AIR: AirSettings = {
-  isOn: true,
+  isOn: false,
   waveDuration: 650,
   waveTravel: 1.6,
   calmTurbulence: 3,
