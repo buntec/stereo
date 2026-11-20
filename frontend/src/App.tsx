@@ -17,7 +17,6 @@ import logger from "./logger.tsx";
 import {
   PlusIcon,
   Cross2Icon,
-  ImageIcon,
   TrashIcon,
   ShuffleIcon,
   PlayIcon,
@@ -3005,6 +3004,9 @@ function App() {
                     setSettings({ ...settings, appearance })
                   }
                   backgroundShown={backgroundShown}
+                  setBackgroundShown={(backgroundVideo) =>
+                    setSettings((s) => ({ ...s, backgroundVideo }))
+                  }
                   backgroundPulse={backgroundPulse}
                   setBackgroundPulse={(backgroundPulse) =>
                     setSettings((s) => ({ ...s, backgroundPulse }))
@@ -3387,23 +3389,6 @@ function App() {
                             isPressed={settings.shufflePlay}
                             icon={<ShuffleIcon />}
                             onPressedChange={toggleShuffle}
-                          />
-                        </Tooltip>
-
-                        <Tooltip
-                          content={
-                            <>
-                              Toggle background artwork <Kbd keys="b" />
-                            </>
-                          }
-                        >
-                          <ToggleButton
-                            isIconOnly
-                            size={footerButtonSize}
-                            label="Toggle background artwork"
-                            isPressed={backgroundShown}
-                            icon={<ImageIcon />}
-                            onPressedChange={toggleBackgroundVideo}
                           />
                         </Tooltip>
 

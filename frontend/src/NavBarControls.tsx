@@ -34,6 +34,7 @@ type NavBarControlsProps = {
   appearance: AppearanceType;
   setAppearance: (appearance: AppearanceType) => void;
   backgroundShown: boolean;
+  setBackgroundShown: (shown: boolean) => void;
   backgroundPulse: number;
   setBackgroundPulse: (pulse: number) => void;
   background: BackgroundSettings;
@@ -110,6 +111,7 @@ function NavBarControls({
   appearance,
   setAppearance,
   backgroundShown,
+  setBackgroundShown,
   backgroundPulse,
   setBackgroundPulse,
   background,
@@ -242,6 +244,7 @@ function NavBarControls({
         />
         <SettingsMenu
           backgroundShown={backgroundShown}
+          setBackgroundShown={setBackgroundShown}
           backgroundPulse={backgroundPulse}
           setBackgroundPulse={setBackgroundPulse}
           background={background}

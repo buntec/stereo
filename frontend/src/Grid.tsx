@@ -77,6 +77,7 @@ import { GridScrollButtons } from "./GridScrollButtons.tsx";
 import { scrollGridToTop, useGridScrollState } from "./useGridScrollState.ts";
 import { AudioCacheButton } from "./AudioCacheButton.tsx";
 import logger from "./logger.tsx";
+import { rowProgressStyle } from "./rowProgress.ts";
 import ShazamIcon from "./ShazamIcon.tsx";
 import SpotifyIcon from "./SpotifyIcon.tsx";
 import YouTubeIcon from "./YouTubeIcon.tsx";
@@ -695,6 +696,11 @@ export const SearchResultsGrid = ({
         !!params.data && !!isCurrent?.(params.data),
     };
   }, [isCurrent]);
+  const getRowStyle = useCallback(
+    (params: RowClassParams<ITrack>) =>
+      params.data && isCurrent?.(params.data) ? rowProgressStyle() : undefined,
+    [isCurrent],
+  );
 
   useEffect(() => {
     gridRef.current?.api?.redrawRows();
@@ -799,6 +805,7 @@ export const SearchResultsGrid = ({
         rowSelection={rowSelection}
         selectionColumnDef={isCompact ? compactSelectionColumn : undefined}
         rowClassRules={rowClassRules}
+        getRowStyle={getRowStyle}
         rowHeight={rowHeight}
         context={context}
         onSelectionChanged={onSelectionChanged}
@@ -1149,6 +1156,13 @@ export const TracksGrid = ({
       },
     };
   }, [currentId]);
+  const getRowStyle = useCallback(
+    (params: RowClassParams<ITrack>) =>
+      currentId && params.data?.yt_id === currentId
+        ? rowProgressStyle()
+        : undefined,
+    [currentId],
+  );
 
   const updateRatingAndRefresh = useCallback(
     (yt_id: string, rating: number | null) => {
@@ -1228,6 +1242,7 @@ export const TracksGrid = ({
         ref={gridRef}
         columnTypes={columnTypes}
         rowClassRules={rowClassRules}
+        getRowStyle={getRowStyle}
         initialState={restoredState}
         onStateUpdated={onStateUpdate0}
         columnDefs={columnDefs}

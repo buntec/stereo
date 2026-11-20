@@ -117,9 +117,9 @@ and macOS launchd commands `install`, `uninstall` and `restart`.
   high-refresh-rate displays. It fits the ball and cord below the title bar without
   changing the stored settings, and redraws when the device pixel ratio changes. CSS
   dims it behind grid rows and centered empty states. `SettingsMenu.tsx` exposes the
-  ball's visibility, rotation, size and cord length, plus the artwork's saturation,
-  opacity, blur and pulse. Its Reset visual effects clears these, the speaker air and
-  the artwork's visibility, which are stored only as overrides of their defaults.
+  artwork's visibility (also `b`), saturation, opacity, blur and pulse first, then the
+  ball's visibility, rotation, size and cord length. Its Reset visual effects clears
+  these and the speaker air, which are stored only as overrides of their defaults.
   Reduced motion disables rotation, pulsing and speaker air controls.
 - **Playback.** `AudioPlayback.ts` implements `PlaybackEngine` (`Playback.ts`) with
   one reused `<audio>` element. Its `ended` handler advances playback, so
@@ -144,10 +144,11 @@ and macOS launchd commands `install`, `uninstall` and `restart`.
   in `App.tsx`'s `wsOnMessage`. Each `AudioCacheButton` subscribes to its own
   track. `PlaybackProgress.tsx` owns the footer's once-a-second position updates
   and wraps `Waveform.tsx` with data from `useWaveform.ts`. `rowProgress.ts` applies
-  position to the playing row through a dedicated stylesheet rule. Keeping these
-  updates out of the reducer and off the document root prevents beat animation
-  stalls. `App.css` sets `min-height: 0` on Astryx's layout to avoid relaying out
-  the grid on every change.
+  position inline to the playing row's elements, and `getRowStyle` to rows rendered
+  in between. Keeping these updates out of the reducer, off the document root and
+  out of stylesheets (WebKit restyles the whole page on any rule change, some 90 ms)
+  prevents beat animation and disco ball stalls. `App.css` sets `min-height: 0` on
+  Astryx's layout to avoid relaying out the grid on every change.
 - **Tempo.** `BpmCheck.tsx` offers to save the measured BPM when the stored value
   is missing or differs by more than 0.5 BPM, allowing for half or double time
   (`tempo.ts`). `get-collection-track` and `update-bpm` both name the open

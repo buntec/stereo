@@ -889,6 +889,24 @@ test("Enter in the clone dialog clones the repository", async ({ page }) => {
     ]);
 });
 
+test("the playing row shows how far the track has played", async ({ page }) => {
+  await openApp(page, { audio: "ok", audioSeconds: 4 });
+  const sheets = await page.evaluate(() => document.adoptedStyleSheets.length);
+  await startPlayback(page);
+  // Set on the row itself: WebKit restyles the whole page for a stylesheet change.
+  const progress = () =>
+    page
+      .locator('.ag-row.progress-bar[row-index="0"]')
+      .first()
+      .evaluate((row) =>
+        Number(row.style.getPropertyValue("--stereo-playback-progress")),
+      );
+  await expect.poll(progress, { timeout: 5000 }).toBeGreaterThan(0);
+  expect(await page.evaluate(() => document.adoptedStyleSheets.length)).toBe(
+    sheets,
+  );
+});
+
 test("unloaded rows do not expose ratings or playback highlights", async ({
   page,
 }) => {
@@ -949,19 +967,19 @@ const storedSettings = (page: Page) =>
 test("the visual effects reset to their defaults", async ({ page }) => {
   await openApp(page);
   // Hiding the background leaves its sliders disabled: the reset shows it again.
-  const backgroundToggle = page.getByRole("button", {
-    name: "Toggle background artwork",
+  await page.getByRole("button", { name: "Settings" }).click();
+  const backgroundToggle = page.getByRole("switch", {
+    name: "Background artwork",
   });
   await backgroundToggle.click();
-  await expect(backgroundToggle).toHaveAttribute("aria-pressed", "false");
-  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(backgroundToggle).not.toBeChecked();
   const hint = page.getByText(
     "Resetting also shows the background artwork again.",
   );
   await expect(hint).toBeVisible();
   const reset = page.getByRole("button", { name: "Reset visual effects" });
   await reset.click();
-  await expect(backgroundToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(backgroundToggle).toBeChecked();
   await expect(hint).toBeHidden();
   await expect(reset).toBeDisabled();
 
@@ -1332,17 +1350,13 @@ test("single-key shortcuts still work after clicking a button or a grid row", as
   page,
 }) => {
   await openApp(page);
-  const background = page.getByRole("button", {
-    name: "Toggle background artwork",
-    exact: true,
-  });
   const shuffle = page.getByRole("button", {
     name: "Toggle shuffle play",
     exact: true,
   });
   await page.locator(".play-pause-button").click();
   await page.keyboard.press("b");
-  await expect(background).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator(".background-player")).toHaveCount(0);
   await page.locator('.ag-row[row-index="2"] [col-id="title"]').click();
   await page.keyboard.press("s");
   await expect(shuffle).toHaveAttribute("aria-pressed", "true");
@@ -1520,9 +1534,8 @@ test("shows the playing track's thumbnail, blurred, behind the app", async ({
     "background-image",
     'url("https://i.ytimg.com/vi/audit0/mqdefault.jpg")',
   );
-  await page
-    .getByRole("button", { name: "Toggle background artwork", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("switch", { name: "Background artwork" }).click();
   await expect(background).toHaveCount(0);
 });
 
