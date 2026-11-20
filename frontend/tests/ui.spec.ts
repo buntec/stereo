@@ -45,6 +45,8 @@ async function openApp(
     trackCount?: number;
     /** Sends the repo's and collection's paths as a Windows backend does. */
     windowsPaths?: boolean;
+    /** Further collections the repo has, by path, after the open one. */
+    extraCollections?: string[];
   } = {},
 ) {
   if (options.discoBall)
@@ -149,7 +151,15 @@ async function openApp(
         case "set-repo":
           send({
             type: "collections",
-            collections: options.noCollection ? [] : [collection],
+            collections: options.noCollection
+              ? []
+              : [
+                  collection,
+                  ...(options.extraCollections ?? []).map((path) => ({
+                    path,
+                    size: 0,
+                  })),
+                ],
           });
           break;
         case "set-collection":
@@ -822,6 +832,23 @@ test("collections and repositories are named without their Windows paths", async
   await expect(
     page.getByRole("dialog", { name: "Remote for audit" }),
   ).toBeVisible();
+});
+
+test("a backslash in a Unix collection's file name is part of its name", async ({
+  page,
+}) => {
+  await openApp(page, {
+    extraCollections: ["/audit/A\\House.db", "/audit/House.db"],
+  });
+  await page
+    .locator(".collection-controls")
+    .getByRole("button")
+    .first()
+    .click();
+  const items = page
+    .getByRole("group", { name: "Collections" })
+    .getByRole("menuitemradio");
+  await expect(items).toHaveText(["collection", "A\\House", "House"]);
 });
 
 test("empty collections offer search and import", async ({ page }) => {

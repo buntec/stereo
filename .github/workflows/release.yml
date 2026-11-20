@@ -56,8 +56,22 @@ jobs:
       - name: Build frontend
         run: bun install && bun run build
 
+      # rookie's libesedb is LGPL. Cargo.toml patches in a stub, which a new resolution could drop.
+      - name: Check that libesedb is the stub
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if cargo tree --locked -e normal,build -i libesedb-sys >/dev/null 2>&1; then
+            echo "::error::libesedb-sys is a dependency"
+            exit 1
+          fi
+          if ! cargo tree --locked -e normal,build -i libesedb --depth 0 | grep -q libesedb-stub; then
+            echo "::error::libesedb doesn't resolve to vendor/libesedb-stub"
+            exit 1
+          fi
+
       - name: Build binary
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Strip binary
         if: matrix.os != 'windows-latest'

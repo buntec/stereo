@@ -13,7 +13,8 @@ lints and tests the launcher.
 writes and git syncs, so a `stereo` locks its data directory (`stereo.lock` in it) before it
 touches a collection, and once it listens writes its port to `stereo.port` there; another `stereo`
 on that directory exits with an error. On launch, the app opens the Stereo that has locked its data
-directory (`STEREO_HOME`, else `~/.local/share/stereo`), waiting for one that is still starting up.
+directory (`STEREO_HOME`, else `~/.local/share/stereo`, which on Windows is
+`%USERPROFILE%\.local\share\stereo`), waiting for one that is still starting up.
 Otherwise it looks for a Stereo running on port 8005, the CLI's default, or on the port of the
 launchd service from `stereo install` (from its plist), and opens it. Otherwise it starts its
 bundled `stereo` (a Tauri sidecar) on port 8005, or on a free port if something else holds 8005,
@@ -25,6 +26,16 @@ browser. `STEREO_PORT` picks another port (and is then the only one looked at), 
 another data directory, e.g. to try the bundled backend in development while another Stereo runs;
 the backend also takes the other `STEREO_*` variables (apps opened from the Finder or Dock don't
 see them).
+
+**Older Windows data directories.** Earlier versions, started without `HOME` as the app's backend
+is, kept their data relative to the working directory: `C:\Windows\System32\.local\share\stereo`
+for the app, or `.local\share\stereo` in the folder the CLI ran in. Started without `HOME` or
+`STEREO_HOME`, the backend moves such a directory, with its repositories, to
+`%USERPROFILE%\.local\share\stereo`. If the move fails it keeps using the old directory, and if
+the new one already exists it leaves the old one alone; both are logged. To use the old directory
+anyway, quit Stereo and move it to the new location, or point `STEREO_HOME` at it. The audio cache
+(`.cache\stereo` beside it, now `%USERPROFILE%\.cache\stereo`) isn't moved: it only holds
+downloads.
 
 A port that stays the same keeps the page's origin, and with it what the UI keeps in
 localStorage (grid state, settings), across launches.

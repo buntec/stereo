@@ -261,7 +261,8 @@ async fn main() -> anyhow::Result<()> {
         None => {}
     }
 
-    let settings = cli.settings;
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut settings = cli.settings;
     settings.validate_websocket_security()?;
 
     let level = match settings.verbosity {
@@ -280,6 +281,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    #[cfg(windows)]
+    settings.adopt_legacy_home();
     let home = settings.home_dir();
     std::fs::create_dir_all(&home)?;
     // Before any repository is touched, and held until the process exits.

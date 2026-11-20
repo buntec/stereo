@@ -26,9 +26,11 @@ import { GitConflictDialog, GitSyncStatusButton } from "./GitSyncStatus.tsx";
 import { gitSyncLabels, gitSyncVariant, showGitSyncStatus } from "./gitSync.ts";
 import type { GitSyncState, ICollection, IRepo } from "./Types.tsx";
 
-// Backend paths use the server's separator: backslashes on Windows.
+// Backend paths are absolute and use the server's rules: a Unix path starts with `/`, and a
+// backslash in it is part of a name; a Windows path (`C:\…`, `\\server\…`) never does, and
+// separates with either.
 function basename(path: string): string {
-  return path.split(/[\\/]/).pop() ?? path;
+  return path.split(path.startsWith("/") ? "/" : /[\\/]/).pop() ?? path;
 }
 
 export function collectionLabel(path: string): string {
