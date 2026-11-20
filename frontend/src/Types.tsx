@@ -719,6 +719,28 @@ export const DEFAULT_BACKGROUND: BackgroundSettings = {
   blur: 100,
 };
 
+/** The disco ball hanging from the top of the window (DiscoBall.tsx). */
+export type DiscoBallSettings = {
+  /** Whether it's shown at all. */
+  isShown: boolean;
+  /** How fast it turns, in revolutions per minute; 0 holds it still. */
+  speed: number;
+  /** Its diameter, in % of the window's shorter side. */
+  size: number;
+  /** The length of the cord it hangs from, from the window's top, in px. */
+  cord: number;
+};
+
+/** The disco ball's defaults; SettingsMenu.tsx adjusts them. Still unless set
+ * turning: each redraw takes about 1.5ms of main thread, and the compositor
+ * blurs the frosted controls over it again. */
+export const DEFAULT_DISCO_BALL: DiscoBallSettings = {
+  isShown: true,
+  speed: 0,
+  size: 40,
+  cord: 8,
+};
+
 export type Settings = {
   appearance: AppearanceType;
   repoPath: string;
@@ -731,6 +753,8 @@ export type Settings = {
   background?: Partial<BackgroundSettings>;
   /** The air the header's speaker stacks push with the beats; unset in older stored settings. */
   air?: Partial<AirSettings>;
+  /** The disco ball hanging from the top; unset in older stored settings. */
+  discoBall?: Partial<DiscoBallSettings>;
   shufflePlay: boolean;
   /** Playback volume, 0–100 (%, perceptual); unset in older stored settings. */
   volume?: number;

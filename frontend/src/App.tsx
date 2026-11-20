@@ -70,6 +70,7 @@ import type {
 import {
   DEFAULT_AIR,
   DEFAULT_BACKGROUND,
+  DEFAULT_DISCO_BALL,
   isChartSearchKind,
   isQuerylessSearchKind,
   playlistSyncKey,
@@ -111,6 +112,7 @@ import AddTracksDialog from "./AddTracksDialog.tsx";
 import NavBarControls from "./NavBarControls.tsx";
 import { DEFAULT_BACKGROUND_PULSE } from "./SettingsMenu.tsx";
 import SpeakerStack from "./SpeakerStack.tsx";
+import DiscoBall from "./DiscoBall.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
@@ -2221,6 +2223,10 @@ function App() {
     () => ({ ...DEFAULT_AIR, ...settings.air }),
     [settings.air],
   );
+  const discoBall = useMemo(
+    () => ({ ...DEFAULT_DISCO_BALL, ...settings.discoBall }),
+    [settings.discoBall],
+  );
   const stackBeats = useMemo(
     () => ({
       air,
@@ -2250,6 +2256,10 @@ function App() {
     isQuerylessSearchKind(state.search_kind) || !!state.search_box_input;
   const isSearchGridActive =
     (state.search_results !== undefined || state.search_busy) && hasSearchInput;
+  // Whether search results or the collection's tracks fill the content (see `collectionBody`).
+  const isGridShown =
+    isSearchGridActive ||
+    (backendReady && !!state.collection && state.collection.size > 0);
 
   // ── Dynamic playlists: saved views of a collection ────────────────────────
   const [activePlaylistId, setActivePlaylistId] = useLocalStorage<
@@ -2988,6 +2998,10 @@ function App() {
                   }
                   air={air}
                   setAir={(air) => setSettings((s) => ({ ...s, air }))}
+                  discoBall={discoBall}
+                  setDiscoBall={(discoBall) =>
+                    setSettings((s) => ({ ...s, discoBall }))
+                  }
                   isConnected={backendReady}
                   requestReply={requestReply}
                   tailscale={state.tailscale}
@@ -3395,6 +3409,15 @@ function App() {
                   backgroundImage: `url(https://i.ytimg.com/vi/${encodeURIComponent(state.current_id)}/mqdefault.jpg)`,
                 } as CSSProperties
               }
+            />
+          ) : null}
+          {discoBall.isShown ? (
+            <DiscoBall
+              speed={discoBall.speed}
+              size={discoBall.size}
+              cord={discoBall.cord}
+              appearance={settings.appearance}
+              behind={isGridShown ? "grid" : "centred"}
             />
           ) : null}
           <Notification

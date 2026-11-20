@@ -890,6 +890,158 @@ test("reduced motion disables decorative animation", async ({ page }) => {
   expect(animation).toBe("none");
 });
 
+/** The disco ball's canvas, as drawn: changes whenever it's redrawn differently. */
+const discoBallPixels = (page: Page) =>
+  page
+    .locator("canvas.disco-ball")
+    .evaluate((c: HTMLCanvasElement) => c.toDataURL());
+
+/** Sets one of the disco ball's sliders in the settings menu with the keyboard. */
+async function setDiscoBallSlider(page: Page, name: string, key: string) {
+  await page.getByRole("button", { name: "Settings" }).click();
+  const slider = page.getByRole("slider", { name });
+  await slider.focus();
+  await slider.press(key);
+  await page.keyboard.press("Escape");
+}
+
+test("the disco ball hangs still unless asked to turn", async ({ page }) => {
+  await openApp(page);
+  const still = await discoBallPixels(page);
+  await page.waitForTimeout(300);
+  expect(await discoBallPixels(page)).toBe(still);
+
+  await setDiscoBallSlider(page, "Rotation speed", "End");
+  await expect
+    .poll(() => discoBallPixels(page), { timeout: 2000 })
+    .not.toBe(still);
+});
+
+test("the disco ball fits a short window, which keeps its cord setting", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 667, height: 375 });
+  await openApp(page);
+  await setDiscoBallSlider(page, "Cord length", "End");
+  expect(
+    await page.evaluate(
+      () =>
+        JSON.parse(localStorage.getItem("stereo_app_settings")!).discoBall.cord,
+    ),
+  ).toBe(400);
+  const ball = page.locator("canvas.disco-ball");
+  await expect
+    .poll(() => ball.evaluate((c) => c.getBoundingClientRect().bottom))
+    .toBeLessThanOrEqual(375);
+  // Room again, and it hangs as low as asked.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect
+    .poll(() => ball.evaluate((c) => c.getBoundingClientRect().height))
+    // The cord, the cap (6px), the ball (40% of 900px) and its margin (4px).
+    .toBe(400 + 6 + 360 + 4);
+});
+
+test("the disco ball shrinks below its smallest size to fit, then isn't drawn", async ({
+  page,
+}) => {
+  await openApp(page);
+  const ball = page.locator("canvas.disco-ball");
+  await page.setViewportSize({ width: 667, height: 40 });
+  await expect
+    .poll(() => ball.evaluate((c) => c.getBoundingClientRect().bottom))
+    .toBeLessThanOrEqual(40);
+  await expect(ball).toBeVisible();
+  await page.setViewportSize({ width: 667, height: 20 });
+  await expect(ball).toBeHidden();
+  await page.setViewportSize({ width: 667, height: 375 });
+  await expect(ball).toBeVisible();
+});
+
+test("the disco ball is fainter behind a grid, and behind centred content it reaches", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openApp(page, { empty: true });
+  const ball = page.locator("canvas.disco-ball");
+  // It ends above the empty state's text.
+  await expect(ball).not.toHaveClass(/disco-ball-subdued/);
+  await page.setViewportSize({ width: 667, height: 375 });
+  await expect(ball).toHaveClass(/disco-ball-subdued/);
+});
+
+test("the disco ball is fainter behind the collection's rows", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openApp(page);
+  await expect(page.locator("canvas.disco-ball")).toHaveClass(
+    /disco-ball-subdued/,
+  );
+});
+
+test("motion settings say they're off for those who prefer reduced motion", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  for (const name of ["Rotation speed", "Background pulse", "Wave duration"])
+    await expect(page.getByRole("slider", { name })).toBeDisabled();
+  await expect(
+    page.getByRole("switch", { name: "Speaker air" }),
+  ).toBeDisabled();
+  // Not the others.
+  await expect(page.getByRole("slider", { name: "Ball size" })).toBeEnabled();
+});
+
+test("the disco ball is redrawn for a display of another pixel density", async ({
+  page,
+}) => {
+  // Moving the window to a display with another scale changes the ratio without
+  // resizing it; the page hears of it through a media query on the old ratio.
+  // (Chromium's emulation of another scale tells pages neither way.)
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      testRatio: number;
+      testRatioChanged: () => void;
+    };
+    w.testRatio = 1;
+    const listeners = new Set<() => void>();
+    w.testRatioChanged = () => listeners.forEach((listener) => listener());
+    Object.defineProperty(window, "devicePixelRatio", {
+      get: () => w.testRatio,
+    });
+    const matchMedia = window.matchMedia.bind(window);
+    window.matchMedia = (query: string) => {
+      if (!query.startsWith("(resolution:")) return matchMedia(query);
+      const list = matchMedia("(min-width: 0px)");
+      list.addEventListener = (_type: string, listener: unknown) =>
+        void listeners.add(listener as () => void);
+      list.removeEventListener = (_type: string, listener: unknown) =>
+        void listeners.delete(listener as () => void);
+      return list;
+    };
+  });
+  await openApp(page);
+  const ball = page.locator("canvas.disco-ball");
+  const bitmapScale = () =>
+    ball.evaluate(
+      (c: HTMLCanvasElement) => c.width / c.getBoundingClientRect().width,
+    );
+  await expect.poll(bitmapScale).toBeCloseTo(1, 1);
+  for (const ratio of [2, 3, 1.5]) {
+    await page.evaluate((ratio) => {
+      const w = window as unknown as {
+        testRatio: number;
+        testRatioChanged: () => void;
+      };
+      w.testRatio = ratio;
+      w.testRatioChanged();
+    }, ratio);
+    await expect.poll(bitmapScale).toBeCloseTo(ratio, 1);
+  }
+});
+
 test("metadata editing groups identifiers and explains invalid required fields", async ({
   page,
 }) => {

@@ -24,6 +24,7 @@ import {
   type RequestReply,
   type AirSettings,
   type BackgroundSettings,
+  type DiscoBallSettings,
   type TailscaleStatus,
   type YouTubeConnection,
 } from "./Types.tsx";
@@ -39,6 +40,8 @@ type NavBarControlsProps = {
   setBackground: (background: BackgroundSettings) => void;
   air: AirSettings;
   setAir: (air: AirSettings) => void;
+  discoBall: DiscoBallSettings;
+  setDiscoBall: (discoBall: DiscoBallSettings) => void;
   isConnected: boolean;
   requestReply: RequestReply;
   tailscale?: TailscaleStatus;
@@ -111,6 +114,8 @@ function NavBarControls({
   setBackground,
   air,
   setAir,
+  discoBall,
+  setDiscoBall,
   isConnected,
   requestReply,
   tailscale,
@@ -239,6 +244,8 @@ function NavBarControls({
           setBackground={setBackground}
           air={air}
           setAir={setAir}
+          discoBall={discoBall}
+          setDiscoBall={setDiscoBall}
           header={isCompact ? appearanceControl : undefined}
           footer={isCompact && version ? versionText : undefined}
         />
