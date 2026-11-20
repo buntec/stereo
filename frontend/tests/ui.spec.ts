@@ -1216,6 +1216,44 @@ test("shows the playing track's thumbnail, blurred, behind the app", async ({
   await expect(background).toHaveCount(0);
 });
 
+test("the speakers' clearance doesn't wrap the header where it would fit", async ({
+  page,
+}) => {
+  const { send } = await openApp(page);
+  const oneRow = () =>
+    page.evaluate(() => {
+      const top = (selector: string) =>
+        document.querySelector(selector)!.getBoundingClientRect().top;
+      return Math.abs(top(".collection-controls") - top(".nav-controls")) < 4;
+    });
+  const stackToMenu = () =>
+    page.evaluate(
+      () =>
+        document.querySelector(".collection-group")!.getBoundingClientRect()
+          .left -
+        document
+          .querySelector(".speaker-stack:not(.speaker-stack-mirrored)")!
+          .getBoundingClientRect().right,
+    );
+  // Below its breakpoint there's no clearance, and the header fits as before.
+  await page.setViewportSize({ width: 990, height: 800 });
+  expect(await oneRow()).toBe(true);
+  expect(await stackToMenu()).toBe(8);
+  // From it, the clearance fits even with a sync conflict to resolve.
+  await page.setViewportSize({ width: 1152, height: 800 });
+  send({
+    type: "git-sync-status",
+    state: "conflict-requires-attention",
+    message: "Local and upstream changes conflict",
+    retryable: true,
+  });
+  await expect(
+    page.getByRole("button", { name: "Resolve conflict…", exact: true }),
+  ).toBeVisible();
+  expect(await oneRow()).toBe(true);
+  expect(await stackToMenu()).toBe(24);
+});
+
 test("the rotating background covers the window's corners, even without blur", async ({
   page,
 }) => {

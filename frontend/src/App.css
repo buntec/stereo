@@ -57,8 +57,11 @@
    the logo reach some 15px past its box toward the middle, and the bass bins down
    into the toolbar's row, so the header keeps more space beside each stack, and the
    toolbar starts where the collection menu does. Only the air reaches the controls.
-   On narrow screens the stacks run under the frosted controls instead. */
-@media (min-width: 48rem) {
+   That takes 32px more in the header's row, so it starts where the row still fits
+   with a sync conflict shown (wrapping at about 1045px then, 1085px with the
+   Tailscale button); on narrower screens the stacks run under the frosted controls
+   instead. */
+@media (min-width: 72rem) {
   .stereo-app {
     --speaker-stack-clearance: var(--spacing-4);
   }
