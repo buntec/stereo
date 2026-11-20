@@ -1,71 +1,220 @@
 # AGENTS.md
 
-This file provides guidance to AI agents when working with code in this repository.
-
-## What this is
-
-Stereo is a browser-based music curation app. There's no account/login/subscription — a "collection" is just a SQLite database file (track metadata only, no audio). The Rust backend serves a React SPA and a WebSocket API; playback happens client-side, from audio the backend downloads from YouTube with yt-dlp (`/audio/{yt_id}`). Tracks are found by searching Beatport/SoundCloud for metadata and matching against YouTube search results.
+Stereo is a music curation app for browsers and desktop. A collection is a SQLite file
+of track metadata. The Rust backend serves the React UI, coordinates search across metadata
+providers and matches tracks to YouTube. The frontend plays audio from `/audio/{yt_id}`,
+downloaded and cached by the backend with yt-dlp.
 
 ## Commands
 
-Prerequisites: [Rust](https://rustup.rs), [Bun](https://bun.sh), [just](https://github.com/casey/just).
+Development requires Rust, Bun, just and Git.
 
-```
-bun install              # install frontend deps (also: just init)
-just dev                 # run backend (port 8055, data dir ~/.local/share/stereo-dev or $STEREO_HOME) + frontend dev server concurrently, hot reload both
-just dev-tailscale       # build the frontend, run the backend with --tailscale (test on a phone: scan the Tailscale button's QR code)
+```sh
+bun install              # install frontend dependencies (also via just init)
+just dev                 # run Vite and the debug backend
+just dev-tailscale       # build and serve the app locally and over Tailscale
 just build               # build frontend then backend release binary
 just desktop-dev         # run the Tauri desktop app with a debug backend (desktop/README.md)
 just desktop-build       # package the desktop app with a release backend
 just desktop-check       # clippy + tests for the desktop launcher
-just install             # build + cargo install --path .
+just install             # build and install the standalone binary
 just test                # cargo test
 just lint                # cargo clippy
-just format              # cargo fmt + prettier on frontend/src
+just format              # format both Rust crates and frontend/src
+bun run build            # tsc -b and Vite production build
+bun run lint             # ESLint
+bunx playwright install chromium   # once, if no Chromium executable is configured
+bun run test:ui           # Playwright tests
 ```
 
-Single Rust test: `cargo test <test_name>` (e.g. `cargo test test_init_creates_table`).
+`just dev` serves the UI with hot reload at `http://localhost:5174`. Vite proxies
+`/ws` and `/audio` to the backend on port 8055 via the recipe's `STEREO_PORT`
+override. Restart the backend after Rust changes. The dev data directory defaults to
+`~/.local/share/stereo-dev` and can be set with `STEREO_HOME`. With `just dev-tailscale`,
+open `http://localhost:8055` and use the Tailscale button's pairing QR code.
 
-Frontend-only commands (from `package.json`): `bun run dev`, `bun run build` (`tsc -b && vite build`), `bun run lint` (eslint).
+Run a single Rust test with `cargo test <test_name>`. The external-service tests in
+`tests/scraper.rs` are ignored by default. Run them with `cargo test --test scraper -- --ignored`.
+Playwright starts Vite and mocks the WebSocket and YouTube APIs. Set
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chromium.
 
-`tests/scraper.rs` hits real external APIs (Beatport, YouTube, MusicBrainz) and is `#[ignore]`d by default — run explicitly with `cargo test -- --ignored`.
+Release builds embed `dist/` with `rust-embed` and `axum-embed`. `build.rs` builds
+the frontend with Bun if `dist/index.html` is missing. In `--dev` mode Vite serves
+the frontend separately.
 
-The backend binary embeds the built frontend (`dist/`) via `rust-embed`/`axum-embed` for release builds; in `--dev` mode (`just run-backend-dev`) it does not serve static assets and expects Vite to be running separately (the Vite dev server proxies `/ws` and `/audio` to the backend, see `vite.config.ts`).
+## Commits
+
+Keep commit messages ultra concise. Omit `Co-authored-by` trailers.
 
 ## Architecture
 
 ### Backend (`src/`, crate `stereo-backend`, binary `stereo`)
 
-Everything is driven over a **single WebSocket connection** (`/ws`, handled in `server.rs`). There is no REST API; the only other routes are `/audio/{yt_id}` (`audio.rs`) and `/info` (app name, version and `features`, for the desktop app to recognize a running Stereo and what its UI supports). `main.rs` wires up an axum `Router` with these routes plus a static-file fallback; it also has CLI subcommands (`version`, `install`/`uninstall`/`restart`) for running as a macOS launchd service.
+`main.rs` wires the axum router. Each client uses one WebSocket at `/ws` for app
+operations. HTTP serves the frontend, `/audio/{yt_id}` and `/info`. The desktop app
+reads the name, version and feature flags from `/info`. The CLI provides `version`
+and macOS launchd commands `install`, `uninstall` and `restart`.
 
-- **`message.rs`** — the entire client↔server protocol as two enums, `MsgClient` and `MsgServer`, serialized as JSON with a `type` tag (kebab-case). This is the source of truth for the protocol; the frontend's `Types.tsx` (`ClientMsg`/`ServerMsg`) must be kept in sync by hand — there's no codegen.
-- **`server.rs`** — `handle_socket` owns per-connection `SessionState` (current DB pool, active collection, active git repo, in-flight search/sync/export tasks) and `handle_msg` is one large match over `MsgClient` dispatching to `db`/`git`/`scraper`/`utils`. Messages are handled one at a time, so anything slow (network, git) must run in a spawned task; tasks that need to change session state afterwards post an `InternalEvent` back into the session's queue. A handler error is sent to the client as a notification, plus an `ErrorReply` for request/reply messages (`MsgClient::request_id`). Outgoing messages are batched and flushed by `send_loop` (up to 100 msgs / 100ms) rather than sent one-at-a-time.
-- **`db.rs`** — all SQLite access via `sqlx`. Collections are single-table SQLite files; `get_rows`/`count_rows`/`get_row_index` implement server-side pagination, sorting and filtering compatible with ag-Grid's server-side row model (`FilterModel`/`SortModelItem` in `message.rs` mirror ag-Grid's filter/sort shape almost directly).
+- **`message.rs`** defines the protocol. See [Protocol sync](#protocol-sync) when changing it.
+- **`server.rs`** owns per-connection `SessionState` in `handle_socket`, including the
+  DB pool, active collection and repo, and in-flight tasks. `handle_msg` processes one
+  message at a time. Spawn slow work and send an `InternalEvent` back to the session
+  when it needs to update state. Handler errors produce a notification and, for requests
+  with a `MsgClient::request_id`, an `ErrorReply`. `send_loop` drains up to 100
+  available messages into a JSON array per frame.
+- **`db.rs`** handles SQLite access via `sqlx`. Collections are single-table
+  SQLite files. `get_rows`, `count_rows` and `get_row_index` implement pagination,
+  sorting and filtering for ag-Grid's infinite row model. Protocol types
+  `FilterModel` and `SortModelItem` mirror the grid's filter and sort shapes.
 - **`scraper.rs`** — search backends. Beatport, SoundCloud, Volumo, Traxsource, Spotify (`spotify.rs`) and Apple Music (`apple_music.rs`) are queried in parallel and interleaved (`interleave`) into candidate `RawTrack`s with metadata (artist/label/bpm/key/release date), which are then matched against YouTube search results (`find_best_match`/`score_match`, resolved concurrently and de-duplicated by YouTube id in `stream_matched_tracks`) since actual playback comes from YouTube. A failing backend is reported to the client as a warning rather than silently yielding fewer results. Shazam provides "similar songs" searches (a collection track is found on Shazam through its Apple Music id, which Shazam maps to its own); `fixup_track` fills in missing metadata from Beatport/Traxsource/Volumo. Beatport is scraped via its embedded `__NEXT_DATA__` JSON (no official API); SoundCloud requires first fetching a client_id from SoundCloud's own JS bundle. `create_client()` uses `wreq` (a `reqwest`-like client with Chrome TLS fingerprint impersonation) specifically to get past Beatport's bot detection — a plain `reqwest` client gets blocked. Search results stream back to the client incrementally via `MsgServer::SearchResult`/`SearchComplete` over an mpsc channel, not as one batch response.
-- **`git.rs`** — each git repo under the home dir (`~/.local/share/stereo` by default, or `--home`/`STEREO_HOME`) can optionally track a remote; collection `.db` files are auto-committed and pushed whenever a track is added/edited/rated/deleted, debounced so a burst of changes becomes one sync after `GIT_SYNC_DELAY` = 5 min (`schedule_git_sync` in `server.rs`; uncommitted changes left at shutdown are picked up by the startup sync). This is how collections sync across machines. Two per-repo locks: the repo lock guards the working tree (DB writes, commits, merges); the network lock serializes fetch/push. Background syncs release the repo lock before the network phase so DB writes never wait on the network. Both are process-local; that only one stereo at a time uses a data dir is `data_dir.rs`'s job: an OS lock on its `stereo.lock`, taken before any repo is touched and held until exit, with the port in `stereo.port` once it listens (for the desktop app); a second stereo on the same data dir exits with an error.
+- **`git.rs`** manages repositories under `~/.local/share/stereo/gitrepos` by default.
+  A repo may track a Git remote. `schedule_git_sync` in `server.rs` coalesces edits
+  into a sync five minutes after the first change. Startup sync picks up uncommitted
+  changes. The repo lock guards DB writes, commits and merges. A separate network
+  lock serializes fetch and push, so background sync can drop the repo lock before
+  waiting on the network. Both locks are process-local. `data_dir.rs` locks
+  `stereo.lock` before any repo is opened and records the listening port in
+  `stereo.port` for the desktop app.
 - **`audio.rs`** — `GET`/`HEAD /audio/{yt_id}?key=…` downloads the track's audio with yt-dlp on first request and serves it from a size-limited cache with Range support; concurrent requests share one download, failures are remembered for a few minutes. Download progress (parsed from yt-dlp's `--progress-template` output) is broadcast to every WebSocket session as `MsgServer::AudioDownload`, with a snapshot of unfinished downloads on connect; while the playing track downloads, the footer's waveform shows it (filling up, or pulsing until the size is known). Without a runnable yt-dlp there's no audio key, and the client explains that playback needs it. The key is random per process and only sent to authenticated WebSocket clients in `BackendInfo`, since `<audio>` can't send the WS token; it also keeps other sites from triggering downloads. The cache lives in the OS cache dir (`Settings::audio_cache_dir`), not the data dir, which holds the synced git repos. Sessions also get the cached ids on connect (`AudioCached`) and evictions (`AudioEvicted`); `DownloadAudio` forces a download (retrying a remembered failure). `GetWaveform` returns a track's loudness overview, its beats (`beats.rs`: bass and high-band onsets, tempo by autocorrelation, beats by dynamic programming) and their tempo (`beats::tempo`, fitted over the whole track to a fraction of a BPM; computed from the cached beats on each request), decoded with Symphonia (`waveform.rs`, AAC/MP4 only; it skips the MP4 edit list's priming samples itself, which Symphonia doesn't) on first request and cached in the cache dir's `waveforms/`.
 - **`settings.rs`** — CLI args via `clap`, also settable via env vars (`STEREO_HOME`, `STEREO_HOST`, `STEREO_PORT`, `STEREO_ALLOWED_ORIGINS`, `STEREO_WS_TOKEN`, `STEREO_CACHE_DIR`, `STEREO_AUDIO_CACHE_LIMIT_GB`, `STEREO_YT_DLP`, `STEREO_DEV`, `STEREO_TAILSCALE`). Binding to a non-loopback host or allowing a remote origin requires a WebSocket token.
 - **`tailscale.rs`** — `--tailscale`: `main.rs` opens a second listener on an ephemeral loopback port and `tailscale serve --bg --https=<port>` proxies the tailnet's HTTPS name to it (TLS by Tailscale). Requests on that listener carry the `server::Tailnet` extension: its WebSockets must come from the tailnet origin and present the tailnet token (`--ws-token`, else one generated into the data dir's `tailnet-token`) or a pairing code, whatever the main listener allows — the listener, not a forwarded header, tells tailnet traffic apart, since `tailscale serve` connects from loopback. Pairing: `CreatePairingCode` issues a random code (single use, 2 min, at most 16 pending); the nav bar's `TailscaleButton` shows it as a QR code of `<tailnet url>/#stereo-pair=<code>`, the page connects with a `stereo.pair.<code>` subprotocol and is sent the token (`AuthToken`), which it keeps in localStorage. The page offers the code on every reconnect until the token arrives; a rejected code is told apart from an unreachable backend by an upgrade closed with code 4401 (`PAIRING_REJECTED`), since browsers can't see a failed handshake's status. The Serve config is machine-wide: stereo refuses a port whose root route serves anything else and removes only the root handler it created (`--set-path=/ off`, leaving other subpaths on the port alone). Each tailnet port has a lease, `tailscale-routes/<port>` in the data dir, locked while its stereo runs and recording the route it created: a crashed run's route (on an old ephemeral loopback port, or another tailnet port) is taken over, a running one's never, and a second stereo on the same port with the same data dir is refused. It rechecks every 30 s, and SIGINT/SIGTERM remove the route. Status (`TailscaleStatus`: starting/serving/error) goes to every session as `MsgServer::Tailscale`. Adapted from btmux's `tailscale.rs`.
 - **`apple_music.rs`** — Apple Music search through Apple's public iTunes Search API (JSON, no key or login). No BPM, key or label, so it isn't used for fixups, nor for label searches (its search doesn't index labels); about 20 requests a minute per IP, so not for new releases either, which search many names at once.
-- **`spotify.rs`** / **`youtube.rs`** — Spotify (session cookie) and YouTube accounts, used for playlist export and Spotify ID backfill. YouTube export goes through YouTube's internal web API (InnerTube, `/youtubei/v1/`), signed in with the login cookies of the user's browser (`SAPISIDHASH` auth, as YouTube's web client does); the session only records which browser profile holds the login (the user picks one when several profiles are logged in; a selected brand channel is forwarded as `X-Goog-PageId`), and cookies are re-read for every export since Google rotates them.
-- **`playlists.rs`** / **`playlist_sync.rs`** — dynamic playlists: saved views (collection file name + ag-Grid filter/sort model + optional limit) stored in `playlists.json` at the repo root, committed and pushed by `git.rs` like the collections (always staged with `git add -f`, since older repos' `.gitignore` only allows `*.db`; diverged edits are merged per playlist by `playlists::merge`). Each can be exported to Spotify/YouTube: a sync reads the view's tracks and replaces the remote playlist's contents in place (its id is stored in the playlist). What was last pushed (content hash, times, last error) is machine-local in the data dir's `playlist_sync.json`, so unchanged views aren't pushed again and unforced syncs happen at most hourly. There is no server-side scheduler: the open tab asks for unforced syncs every few minutes (`App.tsx`).
+- **`health.rs`** powers the manual search diagnostics in `HealthCheckButton.tsx`.
+  Probes run concurrently with individual timeouts, independent of enabled sources
+  or the open collection. A new `RunHealthCheck` replaces the session's previous
+  task. The server sends `HealthCheckProgress` snapshots with `partial: true`
+  followed by a final `HealthCheck` reply.
+- **`spotify.rs`** searches anonymously. It reads persisted-query hashes and the
+  newest version of the TOTP secret from Spotify's web-player bundle at runtime,
+  with a cached or built-in fallback for the secret. Playlist writes require the
+  user's imported browser session. Spotify ID lookup also supports backfills.
+- **`youtube.rs`** exports through InnerTube (`/youtubei/v1/`) with `SAPISIDHASH`
+  auth. The session keeps the chosen browser profile and channel. Cookies are
+  re-read on export, and a selected brand channel is sent as `X-Goog-PageId`.
+- **`playlists.rs`** and **`playlist_sync.rs`** manage dynamic playlists. A saved view
+  stores a collection filename, grid filters and sort order, and an optional limit
+  in the repo's `playlists.json`. Git force-stages that file because older repositories
+  only allow `*.db`, and merges diverged edits per playlist. Exports replace the linked
+  Spotify or YouTube playlist's contents in place. The data directory's
+  `playlist_sync.json` records content hashes, times and errors per machine.
+  An open tab requests automatic sync every few minutes. The backend skips unchanged
+  views and throttles automatic checks to once an hour. The in-flight guard keeps
+  two tabs from syncing the same playlist to the same service concurrently.
 - **`beatport.rs`** / **`browser_cookies.rs`** — Beatport's Cloudflare clearance and YouTube's login are read straight from the user's browser cookie stores via `rookie`; `browser_cookies.rs` picks candidate browsers from the requesting tab's User-Agent and enumerates every profile's store. rookie opens databases as immutable, which skips the write-ahead log, so `browser_cookies::read` hands it a copy with the WAL checkpointed in when there is one.
 
 ### Frontend (`frontend/src/`, React 19 + TypeScript + Vite)
 
-- **`App.tsx`** is the root component and largest file — holds most app state via a single `useReducer` (`Action` type in `Types.tsx` covers both server messages and local UI actions), owns the WebSocket connection (`WebSocket.tsx`'s `useWebSocket` hook) and playback (`useAudioPlayback`). Behind the app it shows the playing track's YouTube thumbnail, blurred and slowly animated (`.background-player`), pulsing with the beats as strongly as the settings say (`useBeatPulse.ts`, a `--beat` CSS property set every animation frame from the playback position). A large disco ball hangs on a cord from the window's top in the middle, behind the UI and partly hidden by it, fainter behind a grid's rows and behind centred content (an empty state) where it reaches it (`DiscoBall.tsx`: a monochrome engraving in the text colour on a `<canvas>`: each mirror tile reflects a fixed room of soft light patches, and is solid, hatched or left out by how much light it catches; all tiles go into one `Path2D` built from SVG path text and filled once, since a canvas call per corner costs four times as much). It hangs still by default and is drawn once; set turning, it's redrawn at most 60 times a second, paced against a schedule so 90/144 Hz displays get close to 60 too (about 1.5ms of main thread each, and the compositor re-blurs the frosted controls over it). Cord and size are fitted to the window below the title bar (in a window too short even for its smallest size it isn't drawn), keeping the settings for when it grows, and the bitmap follows the device pixel ratio (a resize, or a media query on the old ratio). The settings menu disables its motion settings (the ball's rotation, the background's pulse, the speakers' air) for those who prefer reduced motion, saying why; its first section shows/hides the ball and sets its rotation speed, size (a share of the window's shorter side) and cord length (`Settings.discoBall`, defaults `DEFAULT_DISCO_BALL` in `Types.tsx`).
-- **Playback** — the app drives playback only through the `PlaybackEngine` interface (`Playback.ts`), implemented by `AudioPlayback.ts` (`useAudioPlayback`): `/audio/{id}` played in a single reused `<audio>` element, which keeps playing in the background / with the screen locked. It starts the next track itself in the `ended` handler (via `PlaybackEvents.nextId`, which must agree with the reducer's `play-next-track`), skips a track whose download fails (stopping after 3 in a row, with yt-dlp's error from the backend's response) and prefetches upcoming tracks with `HEAD` requests. The footer's `VolumeControl` sets the element's volume (squared, for a perceptual scale) and mute, kept in the settings; it's the page's volume, not the OS's. iOS ignores `volume`, so there only mute is offered (`useCanSetVolume`: WebKit reverts an assigned volume in a task it queues, so a probe is read back only after a while, and the slider stays hidden until it is). The header's logo and its mirror image at the header's other end build up into speaker stacks with the volume: two more cabinets beside the logo's, then two bass bins under the three, each fading in where it stands; nothing grows (`SpeakerStack.tsx`; geometry in `speakerStack.ts`: 3D cabinets seen through the camera the logo was drawn with, so at volume 0 it is the logo, path for path). With every beat each cabinet pushes a pressure wave of air out of its front, wobbled by turbulence that flares up with the beat (cheap sine noise on the outline's points: an SVG turbulence filter redrawn every frame is costly, and WebKit renders those in software), as hard as the volume says; drawn every animation frame outside React on a `<canvas>` over the stack (changing anything inside the stack's SVG every frame, even a hidden path, makes the browser repaint the whole SVG: a core's worth of CPU), timed by `useBeatPulse.ts`'s `playbackClock`, which runs on between the browser's `currentTime` updates; it's off by default and the settings menu turns it on (`air.isOn`) and adjusts its timing and turbulence (`Settings.air`, defaults `DEFAULT_AIR` in `Types.tsx`). Each keeps a 28px box in the header, drawn 20% larger around its middle, and overflows it behind the rest of the UI (`z-index: -1`, which works because nothing between the header and the app shell is a stacking context; the background artwork is at -2), so their size never moves the layout; the header and content are always see-through for it. On wide screens the header and toolbar leave room beside them, so the full stacks stay clear of the controls (`--speaker-stack-clearance`); on narrow ones they run under them. All header and toolbar controls (not the search box, nor solid primary/destructive buttons) get the same frosted glass, so they stay readable over the stacks and look alike. Lock-screen controls (`App.tsx`'s Media Session effect): iOS Safari ignores handlers registered before the audio is its "Now Playing" item and then shows ±10s seek buttons instead of previous/next track, so the handlers are registered again on every `playing` event and when the page becomes visible, each time clearing `seekbackward`/`seekforward`. There is also deliberately no YouTube player: its iframe registers Media Session handlers of its own, and WebKit keeps one set of commands per page, shared by all frames.
-- **Audio cache state** — `AudioCache.ts` is a small external store (not the reducer) of which tracks are downloaded and their download progress, fed from `audio-*` messages in `App.tsx`'s `wsOnMessage`; each grid row's `AudioCacheButton` subscribes to its own track. The footer's seek bar is `PlaybackProgress.tsx` around `Waveform.tsx` (SVG bars, data from `useWaveform.ts`; a flat placeholder bar while there is none); it follows the playback position itself, once a second, and the playing grid row's progress bar gets it through a stylesheet rule of its own (`rowProgress.ts`), not the reducer or a property on the document: re-rendering the whole app, or restyling every element, every second stalls the beat-timed animations for 50–150ms. For the same reason the reducer returns `state` itself, not a copy, for messages it ignores (e.g. the heartbeat's reply), and App.css gives Astryx's layout `min-height: 0` (with `auto`, any change re-lays out the whole grid); the footer shows the playing track's measured tempo, and `BpmCheck.tsx` offers a toast to set the BPM (`update-bpm`) when it deviates by more than 0.5 from the BPM stored in the open collection (`get-collection-track`, not the playing track's metadata, which may be a search result's) or there is none (rules in `tempo.ts`: half/double time counts as a match; once per track and session, re-checked when the collection changes, dismissals remembered in localStorage). Both messages name the collection checked against and are refused for any other, and switching collections withdraws the toast. To check either number by ear, the footer's tap tempo button (`TapTempo.tsx`, also `Shift+T`) shows the tempo of the user's taps (least-squares over the taps, counted on pointer-down; a 2 s pause starts over, a new track resets it) and its tooltip compares it with the measured and metadata BPM, allowing for half/double time; the taps live in a small external store (`tapTempo.ts`), not the reducer, so a tap doesn't re-render the app. The previous/play/next buttons float over the waveform's middle on translucent, blurred backgrounds (`.transport-stage` in `App.css`).
-- **`WebSocket.tsx`** — thin reconnecting-WebSocket hook. Supports fire-and-forget `sendMsg` and a request/reply pattern (`requestReply`) that tags outgoing messages with an auto-incrementing `id` and resolves a callback when a reply with the same `id` comes back; also sends a heartbeat every 10s.
-- **`Grid.tsx`** — ag-Grid wrappers (`TracksGrid`, `SearchResultsGrid`) using the server-side row model, calling back into the WS `get-rows`/`get-row-index` protocol for pagination/sort/filter. The search grid checks which results are already in the collection with one batched `collection-contains-ids` request. Each result's options menu opens it in YouTube/Spotify and offers `ChangeVideoDialog.tsx` for a wrong automatic match: it lists YouTube search results (`search-youtube-videos`, `scraper::yt_find_videos`; a pasted video link gives just that video) and replaces the result's `yt_id` in the client's search results (`set-search-result-video`), and in a queue playing from them; nothing changes on the backend. Since that can give results the same video, the client identifies results by `result_id` (assigned by the reducer as they arrive), also as the grid's row id, and the play queue keeps its place by index (`current_index`, `queueIndex` in `App.tsx`) rather than by video. Both float "show playing track" and "back to top" buttons over their bottom-right corner (`GridScrollButtons.tsx`; when they show comes from `useGridScrollState.ts`), also on the `c` and `t` shortcuts.
+- **`App.tsx`** owns the main reducer, WebSocket connection and playback engine.
+  The `Action` type in `Types.tsx` covers server messages and local actions. Return the
+  same state object for ignored messages, such as heartbeat replies, to avoid
+  restarting work across the UI.
+- **Background and motion.** `.background-player` in `App.css` shows the current
+  YouTube thumbnail. `App.tsx` applies the appearance settings as CSS variables,
+  and `useBeatPulse.ts` updates `--beat` from the playback clock outside React.
+  `DiscoBall.tsx` draws the hanging ball in the theme's text color, filling one
+  canvas `Path2D` for all tiles. It draws once when still, the default, and schedules
+  redraws up to 60 Hz when rotating, including on high-refresh-rate displays. It fits
+  the ball and cord below the title bar without changing the stored settings, and
+  redraws when the device pixel ratio changes. CSS dims it behind grid rows and
+  centered empty states. `SettingsMenu.tsx` exposes the ball's visibility, rotation,
+  size and cord length, plus the artwork's saturation, opacity, blur and pulse.
+  Reduced motion disables rotation, pulsing and speaker air controls.
+- **Playback.** `AudioPlayback.ts` implements `PlaybackEngine` (`Playback.ts`) with
+  one reused `<audio>` element. Its `ended` handler advances playback, so
+  `PlaybackEvents.nextId` must agree with the reducer's `play-next-track` logic.
+  It prefetches with `HEAD` and stops after three consecutive playback failures.
+  `VolumeControl` squares the stored slider level for a perceptual scale. On iOS
+  the browser manages volume, so Stereo offers mute. `useCanSetVolume` reads the
+  probe after WebKit has had time to revert it. Register Media Session handlers
+  again on `playing` and when the page becomes visible, clearing `seekbackward`
+  and `seekforward` each time so iOS shows previous and next. Keep playback on
+  the audio element so a YouTube iframe cannot override these handlers in WebKit.
+- **Speaker stacks.** `SpeakerStack.tsx` and `speakerStack.ts` fade in cabinets
+  around the header's mirrored logos as volume increases. At zero they match the logo
+  path for path. The optional beat-driven pressure waves use `useBeatPulse.ts`'s
+  interpolated `playbackClock`. The canvas draws them outside React, using sine noise
+  for turbulence to avoid repainting the SVG and running WebKit's software filter.
+  `SettingsMenu.tsx` adjusts the effect, which defaults to off. The stacks overflow
+  their fixed header boxes behind the UI. Preserve the stacking order (stacks at
+  `z-index: -1`, artwork at `-2`) and `--speaker-stack-clearance` on wide screens.
+  Header and toolbar controls use frosted glass over the stacks.
+- **Playback UI.** `AudioCache.ts` is an external store, fed by `audio-*` messages
+  in `App.tsx`'s `wsOnMessage`. Each `AudioCacheButton` subscribes to its own
+  track. `PlaybackProgress.tsx` owns the footer's once-a-second position updates
+  and wraps `Waveform.tsx` with data from `useWaveform.ts`. `rowProgress.ts` applies
+  position to the playing row through a dedicated stylesheet rule. Keeping these
+  updates out of the reducer and off the document root prevents beat animation
+  stalls. `App.css` sets `min-height: 0` on Astryx's layout to avoid relaying out
+  the grid on every change.
+- **Tempo.** `BpmCheck.tsx` offers to save the measured BPM when the stored value
+  is missing or differs by more than 0.5 BPM, allowing for half or double time
+  (`tempo.ts`). `get-collection-track` and `update-bpm` both name the open
+  collection. Recheck after switching collections and dismiss the old toast.
+  Dismissals persist in localStorage. `TapTempo.tsx` (also Shift+T) compares taps,
+  measured tempo and metadata. The taps live in `tapTempo.ts`, an external store.
+  It fits the taps by least squares and resets on a new track or a two-second pause.
+- **`WebSocket.tsx`** reconnects, sends a heartbeat every 10 seconds and exposes
+  fire-and-forget `sendMsg` and `requestReply`. Requests get an incrementing `id`.
+  A matching reply with `partial: true` delivers progress and keeps the callback
+  registered for the final reply.
+- **`Grid.tsx`** wraps ag-Grid. `TracksGrid` uses the infinite row model and
+  requests pages with `get-rows`. `App.tsx` looks up the playing row using
+  `get-row-index`. `SearchResultsGrid` uses client-side rows and checks membership
+  in the open collection with a batched `collection-contains-ids` request.
+  `ChangeVideoDialog.tsx` searches YouTube via `search-youtube-videos` or looks up
+  a pasted link. The `set-search-result-video` action replaces the match in
+  client state and in a queue playing from the results. Multiple results can
+  share a video. Keep row identity tied to `result_id` and the queue's position
+  tied to its index (`current_index`, `queueIndex`). `GridScrollButtons.tsx`
+  shows controls for the playing track and top of the grid, also bound to
+  `c` and `t`. `useGridScrollState.ts` governs when the controls appear.
 - **Dynamic playlists** — `PlaylistMenu` (collection toolbar) opens/saves views and shows when the grid differs from the active one ("modified"); `PlaylistsDialog` edits a playlist and its Spotify/YouTube exports. Opening a playlist switches the collection and applies its filter/sort to the grid (and to the saved grid state, for when the grid isn't mounted).
 - **Theme** — `theme.ts`: Astryx's Neutral theme (`@astryxdesign/theme-neutral`) plus a few component overrides. Neutral names the Figtree font without loading it; it's self-hosted with Fontsource (`@fontsource-variable/figtree`), which registers it as `"Figtree Variable"`, so the theme's font stacks name that first.
-- Other components are single-purpose dialogs/widgets (`ImportDialog`, `ExportDropDown`, `GitRemoteDialog`, `YouTubePlaylistDialog`, `CollectionSelector` (collection + repo menu), `NavBarControls` (nav-bar version, account status buttons, `TailscaleButton` with `--tailscale`, appearance toggle, `SettingsMenu`: the gear button's popover, home for app settings such as the background's pulse strength, saturation, opacity and blur (`Settings.background`, defaults `DEFAULT_BACKGROUND` in `Types.tsx`, applied as CSS variables on `.background-player`) and the speaker stacks' air), `EditDialog`, `Rating`, `SearchBox`, `NowPlayingMenu`, `CollectionSummary`, `Keyboard` for shortcuts, etc.) — UI is Astryx (`@astryxdesign/core`, see the Astryx notes below); icons come from `@radix-ui/react-icons`, or from `lucide-react` (which the Neutral theme's own icons use) where Radix has no fitting glyph.
-- **Prefer standard Astryx components.** Before building or restyling a widget, check whether Astryx already has one for the job (`bunx @astryxdesign/cli search "<thing>"`), e.g. `ToggleButton` for an on/off button rather than an `IconButton` that switches variants. Hand-roll one only for a very good reason (Astryx has no equivalent, or it can't meet a concrete requirement), and say why in a comment where it's built.
+- **Navigation.** `NavBarControls` groups account connections, Tailscale pairing,
+  health checks, theme and settings. `CollectionSelector` handles collections and
+  repository remotes. It shows routine Git sync state as a status dot and groups
+  actionable states with the menu through `GitSyncStatus.tsx` and `gitSync.ts`.
+  Sync can start immediately, retry, or open the conflict dialog according to the
+  report. The dialog tracks the conflict and repo it was opened for and closes when
+  that conflict clears or changes. `ImportMenu` handles collection and YouTube
+  imports. `Keyboard` defines shortcuts.
+- **Prefer standard Astryx components.** Before building or restyling a widget,
+  run `bunx @astryxdesign/cli@0.7.14 search "<thing>"`. Use `ToggleButton` for an
+  on/off control. A custom widget needs a concrete reason, documented where it is
+  built. Icons come from Radix, with Lucide for glyphs Radix lacks.
 
 ### Desktop app (`desktop/`)
 
-A Tauri app (crate `stereo-desktop`, `desktop/src-tauri/src/lib.rs`) that shows the web UI in a webview; see `desktop/README.md`. On macOS the page reaches up under a transparent title bar (`TitleBarStyle::Overlay`, `title_bar.rs`), so the background fills the window: the start page, and the UI of a backend whose `/info` lists the `title-bar-overlay` feature (older ones get the native title bar). While it does, the app sets `data-title-bar="overlay"` on the root element (`hidden` in full screen) and the UI keeps the strip clear (`.stereo-app`'s top padding, above banners and header); a script the app runs in each page moves the window from the strip and handles double-clicks as System Settings says (the only IPC its capability allows). It runs as a single instance (`tauri-plugin-single-instance`: launching it again focuses its window, since its backend would go away with it), has no other IPC and no UI of its own beyond a start/error page (`desktop/ui/index.html`): it opens the Stereo that locked its data directory (waiting for one still starting to listen on the port in `stereo.port`), or one already running on port 8005 or the launchd service's port (from its plist; recognized by `GET /info`, or the served page's title for older versions), else starts the bundled `stereo` sidecar there (or on a free port) with `--exit-with-stdin` (hidden flag: exits when the app does, even on a crash). Links to other sites and new windows open in the default browser (through `on_navigation`/`on_new_window`; the opener plugin's own link-click script is off, as its IPC command isn't allowed). A backend that wants a WebSocket token gets one in the UI URL's `#stereo-token=` fragment: the app's `STEREO_WS_TOKEN`, one entered on the start page (whose form the app intercepts in `on_navigation`), or the launchd service's. Quitting sends the backend `SIGTERM` and waits for it, so `--tailscale` can remove its route, before killing its process group. It sets `window.__STEREO_DESKTOP__` (`inDesktopApp` in `Utils.tsx`): Beatport connects by reading the cookies of the browser the page runs in, found by its User-Agent, so in the app its dialog opens Stereo in the user's browser instead (`openInBrowser`, passing the WebSocket token along); YouTube's connect leaves out the User-Agent there, and the backend looks in every browser (`browser_cookies::all_browsers`). The sidecar is copied into `desktop/src-tauri/binaries/` by the justfile's desktop recipes (and by the release workflow, which adds the app's bundles to each release); `just bump` keeps the desktop crate's version in step.
+The `stereo-desktop` Tauri crate (`desktop/src-tauri/src/lib.rs`) loads the backend's
+web UI. See [desktop/README.md](desktop/README.md) for packaging and launcher behavior.
+
+- **Backend selection.** The launcher checks the process that owns the data directory,
+  waiting for it to publish its port if needed. Otherwise it checks port 8005 and the
+  launchd service's port, or uses `STEREO_PORT` for the port lookup when set. It recognizes
+  Stereo by `/info`, with the page title as a fallback for older backends. If needed it
+  starts the bundled sidecar, preferring the default or configured port when free.
+- **Lifecycle.** A second launch focuses the existing window. The bundled backend's
+  `--exit-with-stdin` flag ties it to the launcher even on a crash. On Unix, the
+  launcher sends `SIGTERM` on quit and waits for cleanup, such as removal of a
+  Tailscale route, before killing the process group. The justfile and release workflow
+  copy the sidecar into `desktop/src-tauri/binaries/`. `just bump` versions both crates.
+- **WebSocket auth.** The launcher checks whether the backend needs a token. It tries
+  `STEREO_WS_TOKEN`, the saved start-page token, and the launchd token on macOS.
+  If it needs a new token, the start-page form is intercepted in `on_navigation`.
+  Once accepted, the launcher saves it and passes it in the UI URL's
+  `#stereo-token=` fragment.
+- **Title bar.** On macOS, `TitleBarStyle::Overlay` lets the page draw under the
+  transparent title bar on the start page and backends with the `title-bar-overlay`
+  feature. The launcher sets `data-title-bar="overlay"` on the root element, or
+  `"hidden"` in full screen. `.stereo-app` reserves the strip. The script in
+  `title_bar.rs` implements dragging and the system's double-click action with
+  the only window commands that the page's IPC capability permits.
+- **Browser integration.** External links open in the default browser via
+  `on_navigation` or `on_new_window`. The app sets `window.__STEREO_DESKTOP__`
+  for `inDesktopApp` in `Utils.tsx`. Beatport connects from Stereo in the user's
+  browser via `openInBrowser`, which passes along the WebSocket token if needed.
+  YouTube connects from the webview and searches all supported browsers for a
+  login.
 
 ### Protocol sync
 
