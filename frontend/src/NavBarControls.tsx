@@ -42,6 +42,8 @@ type NavBarControlsProps = {
   setAir: (air: AirSettings) => void;
   discoBall: DiscoBallSettings;
   setDiscoBall: (discoBall: DiscoBallSettings) => void;
+  hasVisualOverrides: boolean;
+  resetVisualEffects: () => void;
   isConnected: boolean;
   requestReply: RequestReply;
   tailscale?: TailscaleStatus;
@@ -116,6 +118,8 @@ function NavBarControls({
   setAir,
   discoBall,
   setDiscoBall,
+  hasVisualOverrides,
+  resetVisualEffects,
   isConnected,
   requestReply,
   tailscale,
@@ -246,6 +250,8 @@ function NavBarControls({
           setAir={setAir}
           discoBall={discoBall}
           setDiscoBall={setDiscoBall}
+          hasVisualOverrides={hasVisualOverrides}
+          resetVisualEffects={resetVisualEffects}
           header={isCompact ? appearanceControl : undefined}
           footer={isCompact && version ? versionText : undefined}
         />

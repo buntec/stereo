@@ -1,3 +1,4 @@
+import { Button } from "@astryxdesign/core/Button";
 import { Divider } from "@astryxdesign/core/Divider";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Popover } from "@astryxdesign/core/Popover";
@@ -5,7 +6,7 @@ import { Slider } from "@astryxdesign/core/Slider";
 import { Switch } from "@astryxdesign/core/Switch";
 import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import { GearIcon } from "@radix-ui/react-icons";
+import { GearIcon, ResetIcon } from "@radix-ui/react-icons";
 import type { ReactNode } from "react";
 import { usePrefersReducedMotion } from "./useBeatPulse.ts";
 import type {
@@ -31,6 +32,16 @@ type SettingsMenuProps = {
   /** The disco ball hanging from the top. */
   discoBall: DiscoBallSettings;
   setDiscoBall: (discoBall: DiscoBallSettings) => void;
+  /**
+   * Whether any of the visual effects (the disco ball, the background, the
+   * speaker air) has a stored setting, even one set back to its default.
+   */
+  hasVisualOverrides: boolean;
+  /**
+   * Clears the visual effects' settings, for their defaults; shows the
+   * background again if it's hidden. Not the appearance (light or dark).
+   */
+  resetVisualEffects: () => void;
   /** Controls that live in the nav bar on wide screens (e.g. the appearance switch). */
   header?: ReactNode;
   footer?: ReactNode;
@@ -48,6 +59,8 @@ function SettingsMenu({
   setAir,
   discoBall,
   setDiscoBall,
+  hasVisualOverrides,
+  resetVisualEffects,
   header,
   footer,
 }: SettingsMenuProps) {
@@ -253,6 +266,20 @@ function SettingsMenu({
             600,
             10,
             ms,
+          )}
+          <Divider />
+          <Button
+            label="Reset visual effects"
+            icon={<ResetIcon />}
+            variant="ghost"
+            size="sm"
+            isDisabled={!hasVisualOverrides}
+            onClick={resetVisualEffects}
+          />
+          {backgroundShown ? null : (
+            <Text type="supporting">
+              Resetting also shows the background artwork again.
+            </Text>
           )}
           {footer}
         </VStack>

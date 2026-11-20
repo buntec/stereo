@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { ICollectionStats } from "./Types.tsx";
 import { currentWsToken } from "./wsToken.ts";
 
@@ -51,30 +51,72 @@ export function formatDuration(totalSeconds: number): string {
   return `${paddedMinutes}:${paddedSeconds}`;
 }
 
-export function useLocalStorage<T>(key: string, initialValue: T | (() => T)) {
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The value stored at `key`, parsed; undefined if there's none. */
+const readStored = (key: string): unknown => {
+  const item = window.localStorage.getItem(key);
+  // "undefined": an unset value, as stored by earlier versions.
+  return item && item !== "undefined" ? JSON.parse(item) : undefined;
+};
+
+/**
+ * State kept in localStorage at `key`, `initialValue` until something is
+ * stored there; `migrate` brings a stored value up to date as it's read.
+ *
+ * Other tabs share the storage but each keeps its own state, so an object's
+ * changes are stored as changes to the latest stored object, field by field:
+ * a tab changing one field doesn't overwrite fields another tab has changed
+ * since (say, the visual effects one reset) with what it last saw.
+ */
+export function useLocalStorage<T>(
+  key: string,
+  initialValue: T | (() => T),
+  migrate?: (stored: T) => T,
+) {
   const [storedValue, setStoredValue] = useState<T>(() => {
     const initial = () =>
       initialValue instanceof Function ? initialValue() : initialValue;
     try {
-      const item = window.localStorage.getItem(key);
-      // "undefined": an unset value, as stored by earlier versions.
-      return item && item !== "undefined" ? JSON.parse(item) : initial();
+      const stored = readStored(key) as T | undefined;
+      if (stored === undefined) return initial();
+      return migrate ? migrate(stored) : stored;
     } catch (error) {
       console.error(`Error reading local storage at "${key}":`, error);
       return initial();
     }
   });
+  // What this tab last stored: its changes since are what it stores next.
+  const last = useRef<T | undefined>(undefined);
 
   useEffect(() => {
-    if (setStoredValue !== undefined) {
-      try {
-        // JSON has no undefined (`JSON.stringify` returns undefined, which
-        // `setItem` would store as "undefined"): an unset value is no entry.
-        if (storedValue === undefined) window.localStorage.removeItem(key);
-        else window.localStorage.setItem(key, JSON.stringify(storedValue));
-      } catch (error) {
-        console.error(`Error setting local storage at "${key}":`, error);
+    const previous = last.current;
+    last.current = storedValue;
+    try {
+      // JSON has no undefined (`JSON.stringify` returns undefined, which
+      // `setItem` would store as "undefined"): an unset value is no entry.
+      if (storedValue === undefined) {
+        window.localStorage.removeItem(key);
+        return;
       }
+      let value: unknown = storedValue;
+      const latest = readStored(key);
+      if (isRecord(previous) && isRecord(storedValue) && isRecord(latest)) {
+        const merged: Record<string, unknown> = { ...latest };
+        for (const field of new Set([
+          ...Object.keys(previous),
+          ...Object.keys(storedValue),
+        ])) {
+          if (Object.is(previous[field], storedValue[field])) continue;
+          if (storedValue[field] === undefined) delete merged[field];
+          else merged[field] = storedValue[field];
+        }
+        value = merged;
+      }
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      console.error(`Error setting local storage at "${key}":`, error);
     }
   }, [key, storedValue]);
 

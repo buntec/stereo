@@ -111,13 +111,15 @@ and macOS launchd commands `install`, `uninstall` and `restart`.
 - **Background and motion.** `.background-player` in `App.css` shows the current
   YouTube thumbnail. `App.tsx` applies the appearance settings as CSS variables,
   and `useBeatPulse.ts` updates `--beat` from the playback clock outside React.
-  `DiscoBall.tsx` draws the hanging ball in the theme's text color, filling one
-  canvas `Path2D` for all tiles. It draws once when still, the default, and schedules
-  redraws up to 60 Hz when rotating, including on high-refresh-rate displays. It fits
-  the ball and cord below the title bar without changing the stored settings, and
-  redraws when the device pixel ratio changes. CSS dims it behind grid rows and
-  centered empty states. `SettingsMenu.tsx` exposes the ball's visibility, rotation,
-  size and cord length, plus the artwork's saturation, opacity, blur and pulse.
+  `DiscoBall.tsx` draws the hanging ball, hidden by default, in the theme's text
+  color, filling one canvas `Path2D` for all tiles. It draws once when still, the
+  default, and schedules redraws up to 60 Hz when rotating, including on
+  high-refresh-rate displays. It fits the ball and cord below the title bar without
+  changing the stored settings, and redraws when the device pixel ratio changes. CSS
+  dims it behind grid rows and centered empty states. `SettingsMenu.tsx` exposes the
+  ball's visibility, rotation, size and cord length, plus the artwork's saturation,
+  opacity, blur and pulse. Its Reset visual effects clears these, the speaker air and
+  the artwork's visibility, which are stored only as overrides of their defaults.
   Reduced motion disables rotation, pulsing and speaker air controls.
 - **Playback.** `AudioPlayback.ts` implements `PlaybackEngine` (`Playback.ts`) with
   one reused `<audio>` element. Its `ended` handler advances playback, so
