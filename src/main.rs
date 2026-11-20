@@ -395,13 +395,81 @@ async fn info() -> axum::Json<serde_json::Value> {
 async fn stdin_closed() {
     let (closed, on_closed) = tokio::sync::oneshot::channel::<()>();
     std::thread::spawn(move || {
-        use std::io::Read;
-        let mut stdin = std::io::stdin().lock();
-        let mut buf = [0; 256];
-        while let Ok(1..) = stdin.read(&mut buf) {}
+        wait_for_stdin_eof();
         drop(closed);
     });
     let _ = on_closed.await;
+}
+
+fn read_stdin_until_eof() {
+    use std::io::Read;
+    let mut stdin = std::io::stdin().lock();
+    let mut buf = [0; 256];
+    while let Ok(1..) = stdin.read(&mut buf) {}
+}
+
+#[cfg(not(windows))]
+fn wait_for_stdin_eof() {
+    read_stdin_until_eof();
+}
+
+/// Polls a pipe instead of reading it. Windows serializes I/O on a pipe opened for synchronous
+/// I/O, so while a read waits, a child that inherited stdin can't close it, and can't exit: git
+/// would hang until `GIT_TIMEOUT`, and the session with it.
+#[cfg(windows)]
+fn wait_for_stdin_eof() {
+    use std::ffi::c_void;
+    use std::io::Read;
+    use std::os::windows::io::AsRawHandle;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFileType(file: *mut c_void) -> u32;
+        fn PeekNamedPipe(
+            pipe: *mut c_void,
+            buffer: *mut c_void,
+            buffer_size: u32,
+            bytes_read: *mut u32,
+            total_bytes_available: *mut u32,
+            bytes_left_this_message: *mut u32,
+        ) -> i32;
+    }
+    const FILE_TYPE_PIPE: u32 = 3;
+
+    let stdin = std::io::stdin();
+    let handle = stdin.as_raw_handle();
+    // SAFETY: `handle` is our stdin's, open for the life of the process.
+    if unsafe { GetFileType(handle) } != FILE_TYPE_PIPE {
+        return read_stdin_until_eof();
+    }
+    let mut buf = [0; 256];
+    loop {
+        let mut available = 0;
+        // SAFETY: as above; the other pointers may be null, and `available` outlives the call.
+        let ok = unsafe {
+            PeekNamedPipe(
+                handle,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                &mut available,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            // Closed (`ERROR_BROKEN_PIPE`), or failing as a read would have.
+            return;
+        }
+        if available > 0 {
+            // There's data, so this read returns at once.
+            let len = buf.len().min(available as usize);
+            if !matches!(stdin.lock().read(&mut buf[..len]), Ok(1..)) {
+                return;
+            }
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
 }
 
 /// Ends the other processes of our process group, e.g. yt-dlp downloads, when we lead it, as we do

@@ -112,6 +112,8 @@ async fn run_git(repo: &Path, args: &[&str], timeout: Duration) -> Result<Output
                 "ssh -o BatchMode=yes -o ConnectTimeout=15",
             )
             .current_dir(repo)
+            // A timed-out git is killed, not left running.
+            .kill_on_drop(true)
             .output(),
     )
     .await;
