@@ -405,16 +405,18 @@ function DiscoBall({
     // When the next redraw is due. Paced against this schedule, not the last
     // redraw, so refresh rates that aren't a multiple of MAX_FPS (75, 90, 144 Hz)
     // still get close to it rather than every other frame; after a gap (a hidden
-    // tab) it starts over.
+    // tab) it starts over. A frame drawn early sets it from its own time, though:
+    // where frames come a little faster than MAX_FPS or a multiple of it (WebKit's
+    // 60 Hz is often a bit over), the schedule would otherwise run ahead of them,
+    // bit by bit, until one is skipped, a stutter every second or so.
     let due = 0;
     let frame = requestAnimationFrame(function tick(now) {
       frame = requestAnimationFrame(tick);
       // Frames come every 1000 / refresh rate ms, not quite evenly: allow for that.
       if (last !== undefined && now < due - 2) return;
       due =
-        last === undefined || now - due > frameMs
-          ? now + frameMs
-          : due + frameMs;
+        (last === undefined || now - due > frameMs ? now : Math.min(now, due)) +
+        frameMs;
       // Hidden tabs get no frames; don't make up for them in one leap.
       const elapsed = last === undefined ? 0 : Math.min(now - last, 100);
       last = now;
