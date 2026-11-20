@@ -101,7 +101,7 @@ and macOS launchd commands `install`, `uninstall` and `restart`.
   An open tab requests automatic sync every few minutes. The backend skips unchanged
   views and throttles automatic checks to once an hour. The in-flight guard keeps
   two tabs from syncing the same playlist to the same service concurrently.
-- **`beatport.rs`** / **`browser_cookies.rs`** — Beatport's Cloudflare clearance and YouTube's login are read straight from the user's browser cookie stores via `rookie`; `browser_cookies.rs` picks candidate browsers from the requesting tab's User-Agent and enumerates every profile's store. rookie opens databases as immutable, which skips the write-ahead log, so `browser_cookies::read` hands it a copy with the WAL checkpointed in when there is one.
+- **`beatport.rs`** / **`browser_cookies.rs`** — Beatport's Cloudflare clearance and YouTube's login are read straight from the user's browser cookie stores via `rookie`; `browser_cookies.rs` picks candidate browsers from the requesting tab's User-Agent and enumerates every profile's store. rookie opens databases as immutable, which skips the write-ahead log, so `browser_cookies::read` hands it a copy with the WAL checkpointed in when there is one. On Windows rookie depends on the LGPL `libesedb` for Internet Explorer's store; `Cargo.toml` patches in a stub (`vendor/libesedb-stub`), the release workflow fails unless the stub is what resolves, and `clippy.toml` disallows the rookie functions that reach the IE reader.
 
 ### Frontend (`frontend/src/`, React 19 + TypeScript + Vite)
 
@@ -198,9 +198,10 @@ web UI. See [desktop/README.md](desktop/README.md) for packaging and launcher be
   Stereo by `/info`, with the page title as a fallback for older backends. If needed it
   starts the bundled sidecar, preferring the default or configured port when free.
 - **Lifecycle.** A second launch focuses the existing window. The bundled backend's
-  `--exit-with-stdin` flag ties it to the launcher even on a crash. On Unix, the
-  launcher sends `SIGTERM` on quit and waits for cleanup, such as removal of a
-  Tailscale route, before killing the process group. The justfile and release workflow
+  `--exit-with-stdin` flag ties it to the launcher even on a crash. Give the backend's child
+  processes a null stdin: on Windows, one that inherits the launcher's pipe can't exit while
+  the backend reads it. On Unix, the launcher sends `SIGTERM` on quit and waits for
+  cleanup, such as removal of a Tailscale route, before killing the process group. The justfile and release workflow
   copy the sidecar into `desktop/src-tauri/binaries/`. `just bump` versions both crates.
 - **WebSocket auth.** The launcher checks whether the backend needs a token. It tries
   `STEREO_WS_TOKEN`, the saved start-page token, and the launchd token on macOS.
