@@ -81,3 +81,8 @@ opt-level = 3
 [dev-dependencies]
 # WebSocket client for end-to-end session tests (the version axum already uses).
 tokio-tungstenite = "0.29"
+
+[patch.crates-io]
+# rookie depends on libesedb (LGPL) on Windows for Internet Explorer's cookie store.
+# The stub keeps it out of the build. Only the Internet Explorer reader stops working.
+libesedb = { path = "vendor/libesedb-stub" }
