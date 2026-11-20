@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import {
   airWave,
-  danceStack,
+  speakerStack,
   EDGE_COLOR,
   type Front,
   type Point,
-} from "./danceStack.ts";
+} from "./speakerStack.ts";
 import type { PlaybackEngine } from "./Playback.ts";
 import { DEFAULT_AIR, type AirSettings, type Beat } from "./Types.tsx";
 import {
@@ -34,7 +34,7 @@ const path = (points: Point[]) =>
   `M${points.map(([x, y]) => `${x.toFixed(2)} ${y.toFixed(2)}`).join("L")}`;
 
 /** The track playing, whose beats push air out of the speakers. */
-export type DanceStackBeats = {
+export type SpeakerStackBeats = {
   playback: PlaybackEngine | null;
   id: string | undefined;
   beats: Beat[] | undefined;
@@ -43,7 +43,7 @@ export type DanceStackBeats = {
   air: AirSettings;
 };
 
-type DanceStackProps = {
+type SpeakerStackProps = {
   /** 0–1: the volume, from the logo alone to a full stack. */
   level: number;
   /**
@@ -51,12 +51,12 @@ type DanceStackProps = {
    * only decoration.
    */
   isMirrored?: boolean;
-  beats?: DanceStackBeats;
+  beats?: SpeakerStackBeats;
 };
 
 /**
- * The header's logo, growing into a dance stack with the volume (geometry in
- * `danceStack.ts`). It takes up the logo's place in the layout and draws the
+ * The header's logo, growing into a speaker stack with the volume (geometry in
+ * `speakerStack.ts`). It takes up the logo's place in the layout and draws the
  * rest of the stack over its edges, behind the rest of the UI (App.css), so
  * its size never moves the header. With every beat of the playing track each
  * cabinet pushes a pressure wave out of its front, through churning air: drawn
@@ -64,8 +64,8 @@ type DanceStackProps = {
  * every frame makes the browser repaint all of it (a core's worth of CPU).
  * Hand-drawn SVG and canvas: Astryx has nothing like it.
  */
-function DanceStack({ level, isMirrored = false, beats }: DanceStackProps) {
-  const drawing = useMemo(() => danceStack(level), [level]);
+function SpeakerStack({ level, isMirrored = false, beats }: SpeakerStackProps) {
+  const drawing = useMemo(() => speakerStack(level), [level]);
   const canvasRef = useAirWaves(drawing.fronts, beats);
 
   const points = drawing.cabinets.flatMap((c) =>
@@ -84,7 +84,7 @@ function DanceStack({ level, isMirrored = false, beats }: DanceStackProps) {
   return (
     <span
       className={
-        isMirrored ? "dance-stack dance-stack-mirrored" : "dance-stack"
+        isMirrored ? "speaker-stack speaker-stack-mirrored" : "speaker-stack"
       }
       {...(isMirrored
         ? { "aria-hidden": true }
@@ -113,7 +113,7 @@ function DanceStack({ level, isMirrored = false, beats }: DanceStackProps) {
           ))}
         </svg>
       </svg>
-      <canvas ref={canvasRef} className="dance-stack-air" />
+      <canvas ref={canvasRef} className="speaker-stack-air" />
     </span>
   );
 }
@@ -167,7 +167,7 @@ const airBounds = (fronts: Front[], air: AirSettings) => {
  * from the playback position, outside React; nothing while paused, muted, in
  * the background or for those who prefer reduced motion.
  */
-function useAirWaves(fronts: Front[], source: DanceStackBeats | undefined) {
+function useAirWaves(fronts: Front[], source: SpeakerStackBeats | undefined) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const still = usePrefersReducedMotion();
 
@@ -257,4 +257,4 @@ function useAirWaves(fronts: Front[], source: DanceStackBeats | undefined) {
   return canvasRef;
 }
 
-export default DanceStack;
+export default SpeakerStack;

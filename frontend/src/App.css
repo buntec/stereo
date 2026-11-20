@@ -29,28 +29,28 @@
   min-width: 0;
 }
 
-/* The logo, growing into a dance stack with the volume (DanceStack.tsx): it keeps the
+/* The logo, growing into a speaker stack with the volume (SpeakerStack.tsx): it keeps the
    logo's place in the header and draws the rest over its edges, behind everything but
    the background artwork. Nothing between it and the app shell is a stacking context,
    so the negative z-index puts it under all of the app's content. */
-.dance-stack {
+.speaker-stack {
   display: block;
   flex-shrink: 0;
   position: relative;
   z-index: -1;
   pointer-events: none;
 }
-.dance-stack > svg {
+.speaker-stack > svg {
   display: block;
 }
 /* The air its speakers push out with the beats: pressure waves through turbulence. */
-.dance-stack-air {
+.speaker-stack-air {
   position: absolute;
   display: none;
   color: #b9b4f5;
 }
 /* Its mirror image at the other end of the header, growing toward the middle. */
-.dance-stack-mirrored {
+.speaker-stack-mirrored {
   scale: -1 1;
 }
 /* Where there's room, the full stacks stay clear of the controls: the cabinets beside
@@ -60,19 +60,19 @@
    On narrow screens the stacks run under the frosted controls instead. */
 @media (min-width: 48rem) {
   .stereo-app {
-    --dance-stack-clearance: var(--spacing-4);
+    --speaker-stack-clearance: var(--spacing-4);
   }
-  .dance-stack:not(.dance-stack-mirrored) {
-    margin-inline-end: var(--dance-stack-clearance);
+  .speaker-stack:not(.speaker-stack-mirrored) {
+    margin-inline-end: var(--speaker-stack-clearance);
   }
-  .dance-stack-mirrored {
-    margin-inline-start: var(--dance-stack-clearance);
+  .speaker-stack-mirrored {
+    margin-inline-start: var(--speaker-stack-clearance);
   }
   /* The header's padding, the logo's 28px box, the gap after it and the clearance. */
   .collection-toolbar > .astryx-section {
     padding-inline-start: calc(
       var(--spacing-2) + 1.75rem + var(--spacing-2) +
-        var(--dance-stack-clearance)
+        var(--speaker-stack-clearance)
     );
   }
 }
@@ -89,10 +89,10 @@
     [popover] *
   ),
 .collection-toolbar .astryx-toolbar > * > .astryx-stack > .astryx-text {
-  --dance-stack-glass: rgb(from var(--color-background-surface) r g b / 0.1);
+  --speaker-stack-glass: rgb(from var(--color-background-surface) r g b / 0.1);
   background-image: linear-gradient(
-    var(--dance-stack-glass),
-    var(--dance-stack-glass)
+    var(--speaker-stack-glass),
+    var(--speaker-stack-glass)
   );
   -webkit-backdrop-filter: blur(var(--spacing-2));
   backdrop-filter: blur(var(--spacing-2));
@@ -141,8 +141,7 @@
     order: 1;
     flex-basis: 100%;
   }
-  /* The collection menu, with the sync status grouped with it (CollectionSelector.tsx),
-     shrinks to stay beside the logo, truncating their labels. */
+  /* The collection menu shrinks to stay beside the logo... */
   .collection-controls {
     flex: 1;
     flex-wrap: nowrap;
@@ -492,7 +491,7 @@
   --background-beat: calc(var(--beat-strength, 0) * var(--beat, 0));
   position: fixed;
   inset: calc(-3 * var(--spacing-6) * var(--background-blur));
-  /* Under the dance stack (.dance-stack). */
+  /* Under the speaker stack (.speaker-stack). */
   z-index: -2;
   background-size: cover;
   background-position: center;
@@ -553,7 +552,7 @@
 
 /* A separate decorative layer leaves Astryx surfaces readable over the artwork. The
    header and content are always see-through, onto the app's own surface without the
-   artwork, so the dance stack behind them shows. */
+   artwork, so the speaker stack behind them shows. */
 .stereo-app:has(.background-player) {
   background-color: transparent;
 }

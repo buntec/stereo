@@ -20,7 +20,7 @@ type SettingsMenuProps = {
   /** The background artwork's saturation, opacity and blur. */
   background: BackgroundSettings;
   setBackground: (background: BackgroundSettings) => void;
-  /** The air the header's dance stacks push with the beats. */
+  /** The air the header's speaker stacks push with the beats. */
   air: AirSettings;
   setAir: (air: AirSettings) => void;
   /** Controls that live in the nav bar on wide screens (e.g. the appearance switch). */

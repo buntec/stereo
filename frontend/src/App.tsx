@@ -110,7 +110,7 @@ import SpotifyPlaylistDialog, {
 import AddTracksDialog from "./AddTracksDialog.tsx";
 import NavBarControls from "./NavBarControls.tsx";
 import { DEFAULT_BACKGROUND_PULSE } from "./SettingsMenu.tsx";
-import DanceStack from "./DanceStack.tsx";
+import SpeakerStack from "./SpeakerStack.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
@@ -2170,7 +2170,7 @@ function App() {
     [setSettings],
   );
 
-  // The header's speakers grow into dance stacks with the volume (DanceStack.tsx):
+  // The header's logo and its mirror image grow into speaker stacks with the volume (SpeakerStack.tsx):
   // muted, or where the page can't set the volume (iOS), they're the logo alone.
   const stackLevel = canSetVolume && !muted ? volume / 100 : 0;
 
@@ -2858,7 +2858,7 @@ function App() {
               className="app-header"
             >
               <HStack vAlign="center" gap={2} className="collection-controls">
-                <DanceStack level={stackLevel} beats={stackBeats} />
+                <SpeakerStack level={stackLevel} beats={stackBeats} />
                 <CollectionSelector
                   isValid={state.collection_is_valid ?? true}
                   collections={state.collections ?? []}
@@ -2990,7 +2990,11 @@ function App() {
                   onSpotifyBackfill={backfillSpotifyIds}
                 />
                 {/* The other speaker of the stereo pair, at the header's other end. */}
-                <DanceStack level={stackLevel} beats={stackBeats} isMirrored />
+                <SpeakerStack
+                  level={stackLevel}
+                  beats={stackBeats}
+                  isMirrored
+                />
               </HStack>
             </HStack>
           }

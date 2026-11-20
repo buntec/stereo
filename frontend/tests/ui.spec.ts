@@ -1153,14 +1153,14 @@ test("shows the playing track's thumbnail, blurred, behind the app", async ({
   await expect(background).toHaveCount(0);
 });
 
-test("the logo builds up into a dance stack with the volume, without moving the header", async ({
+test("the logo builds up into a speaker stack with the volume, without moving the header", async ({
   page,
 }) => {
   await openApp(page);
   const stack = page.getByRole("img", { name: "Stereo" });
   const cabinets = stack.locator("svg > g");
   // Its mirror image at the other end of the header: a stereo pair.
-  const mirrored = page.locator(".dance-stack-mirrored");
+  const mirrored = page.locator(".speaker-stack-mirrored");
   const mirroredCabinets = mirrored.locator("svg > g");
   const slider = page.getByRole("slider", { name: "Volume" });
   const mute = page.getByRole("button", { name: "Mute" });
@@ -1243,7 +1243,7 @@ test("offers only mute where the page can't set the volume (iOS)", async ({
   await expect(
     page.getByRole("img", { name: "Stereo" }).locator("svg > g"),
   ).toHaveCount(1);
-  await expect(page.locator(".dance-stack-mirrored svg > g")).toHaveCount(1);
+  await expect(page.locator(".speaker-stack-mirrored svg > g")).toHaveCount(1);
 
   await mute.click();
   await expect(mute).toHaveAttribute("aria-pressed", "true");

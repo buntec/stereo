@@ -1,8 +1,8 @@
 /**
- * The header's speaker, as a dance stack that builds up with the volume: the
+ * The header's logo, as a speaker stack that builds up with the volume: the
  * logo's cabinet alone when quiet, then two more beside it and two bass bins
- * under the three. Pure geometry: `danceStack(level)` returns the SVG
- * polygons, drawn by `DanceStack.tsx`.
+ * under the three. Pure geometry: `speakerStack(level)` returns the SVG
+ * polygons, drawn by `SpeakerStack.tsx`.
  *
  * Every cabinet is a box in 3D, seen through the camera the logo was drawn with
  * (recovered from its corners: a level camera, so vertical edges stay vertical,
@@ -483,7 +483,7 @@ export type Front = {
   opacity: number;
 };
 
-export type DanceStackDrawing = {
+export type SpeakerStackDrawing = {
   /** In drawing order: each cabinet hides the parts of the ones before it behind it. */
   cabinets: CabinetDrawing[];
   /** The fronts of the cabinets drawn, the bass bins' first. */
@@ -527,7 +527,7 @@ export const airWave = (front: Front, distance: number): Point[] => {
  * bin under that by nine tenths. Each fades in where it stands; nothing grows,
  * and the logo stays put.
  */
-export const danceStack = (level: number): DanceStackDrawing => {
+export const speakerStack = (level: number): SpeakerStackDrawing => {
   const tops = [1, stage(level, 0.1, 0.25), stage(level, 0.3, 0.45)];
   const bins = [stage(level, 0.5, 0.65), stage(level, 0.75, 0.9)];
 
