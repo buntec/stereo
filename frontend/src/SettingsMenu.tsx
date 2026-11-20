@@ -19,8 +19,9 @@ import type {
 export const DEFAULT_BACKGROUND_PULSE = 50;
 
 type SettingsMenuProps = {
-  /** Whether the background artwork is shown at all (the footer's toggle). */
+  /** Whether the background artwork is shown at all. */
   backgroundShown: boolean;
+  setBackgroundShown: (shown: boolean) => void;
   backgroundPulse: number;
   setBackgroundPulse: (pulse: number) => void;
   /** The background artwork's saturation, opacity and blur. */
@@ -51,6 +52,7 @@ type SettingsMenuProps = {
 // adjusting how it pulses.
 function SettingsMenu({
   backgroundShown,
+  setBackgroundShown,
   backgroundPulse,
   setBackgroundPulse,
   background,
@@ -130,6 +132,49 @@ function SettingsMenu({
           </Text>
           {header}
           <Switch
+            label="Background artwork"
+            labelTooltip="Whether the playing track's artwork fills the background. Shortcut: B."
+            value={backgroundShown}
+            onChange={setBackgroundShown}
+            labelPosition="start"
+            labelSpacing="spread"
+          />
+          <Slider
+            label="Background pulse"
+            labelTooltip="How strongly the background pulses with the beats."
+            value={backgroundPulse}
+            onChange={(v: number) => setBackgroundPulse(v)}
+            min={0}
+            max={100}
+            step={5}
+            formatValue={(v) => (v === 0 ? "Off" : `${v}%`)}
+            valueDisplay="text"
+            isDisabled={!backgroundShown || still}
+            disabledMessage={still ? reducedMotion : "Background is off"}
+          />
+          {backgroundSlider(
+            "saturation",
+            "Background saturation",
+            "How colourful the background is; 0% is greyscale.",
+            200,
+            percent,
+          )}
+          {backgroundSlider(
+            "opacity",
+            "Background opacity",
+            "How strongly the background shows between beats.",
+            100,
+            percent,
+          )}
+          {backgroundSlider(
+            "blur",
+            "Background blur",
+            "How strongly the background is blurred.",
+            200,
+            (v) => (v === 0 ? "Off" : `${v}%`),
+          )}
+          <Divider />
+          <Switch
             label="Disco ball"
             labelTooltip="Whether a disco ball hangs from the top of the window."
             value={discoBall.isShown}
@@ -176,41 +221,6 @@ function SettingsMenu({
             isDisabled={!discoBall.isShown}
             disabledMessage="Disco ball is hidden"
           />
-          <Divider />
-          <Slider
-            label="Background pulse"
-            labelTooltip="How strongly the background pulses with the beats."
-            value={backgroundPulse}
-            onChange={(v: number) => setBackgroundPulse(v)}
-            min={0}
-            max={100}
-            step={5}
-            formatValue={(v) => (v === 0 ? "Off" : `${v}%`)}
-            valueDisplay="text"
-            isDisabled={!backgroundShown || still}
-            disabledMessage={still ? reducedMotion : "Background is off"}
-          />
-          {backgroundSlider(
-            "saturation",
-            "Background saturation",
-            "How colourful the background is; 0% is greyscale.",
-            200,
-            percent,
-          )}
-          {backgroundSlider(
-            "opacity",
-            "Background opacity",
-            "How strongly the background shows between beats.",
-            100,
-            percent,
-          )}
-          {backgroundSlider(
-            "blur",
-            "Background blur",
-            "How strongly the background is blurred.",
-            200,
-            (v) => (v === 0 ? "Off" : `${v}%`),
-          )}
           <Divider />
           <Switch
             label="Speaker air"

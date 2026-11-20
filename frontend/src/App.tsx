@@ -17,7 +17,6 @@ import logger from "./logger.tsx";
 import {
   PlusIcon,
   Cross2Icon,
-  ImageIcon,
   TrashIcon,
   ShuffleIcon,
   PlayIcon,
@@ -1582,7 +1581,7 @@ function App() {
         const t = Math.max(0.0, playback.currentTime());
         const duration = playback.duration();
         const d = Math.max(1.0, duration);
-        setRowProgress(t / d);
+        setRowProgress(playback.currentId(), t / d);
         if (
           "mediaSession" in navigator &&
           Number.isFinite(t) &&
@@ -1735,7 +1734,7 @@ function App() {
       const d = playback?.duration();
       if (!playback || !d) return;
       playback.seek(seconds);
-      setRowProgress(seconds / d);
+      setRowProgress(playback.currentId(), seconds / d);
     },
     [playback],
   );
@@ -3005,6 +3004,9 @@ function App() {
                     setSettings({ ...settings, appearance })
                   }
                   backgroundShown={backgroundShown}
+                  setBackgroundShown={(backgroundVideo) =>
+                    setSettings((s) => ({ ...s, backgroundVideo }))
+                  }
                   backgroundPulse={backgroundPulse}
                   setBackgroundPulse={(backgroundPulse) =>
                     setSettings((s) => ({ ...s, backgroundPulse }))
@@ -3387,23 +3389,6 @@ function App() {
                             isPressed={settings.shufflePlay}
                             icon={<ShuffleIcon />}
                             onPressedChange={toggleShuffle}
-                          />
-                        </Tooltip>
-
-                        <Tooltip
-                          content={
-                            <>
-                              Toggle background artwork <Kbd keys="b" />
-                            </>
-                          }
-                        >
-                          <ToggleButton
-                            isIconOnly
-                            size={footerButtonSize}
-                            label="Toggle background artwork"
-                            isPressed={backgroundShown}
-                            icon={<ImageIcon />}
-                            onPressedChange={toggleBackgroundVideo}
                           />
                         </Tooltip>
 

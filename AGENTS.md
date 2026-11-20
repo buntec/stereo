@@ -23,7 +23,7 @@ just lint                # cargo clippy
 just format              # format both Rust crates and frontend/src
 bun run build            # tsc -b and Vite production build
 bun run lint             # ESLint
-bunx playwright install chromium   # once, if no Chromium executable is configured
+bunx playwright install chromium webkit   # once; skip chromium if an executable is configured
 bun run test:ui           # Playwright tests
 ```
 
@@ -36,7 +36,8 @@ open `http://localhost:8055` and use the Tailscale button's pairing QR code.
 Run a single Rust test with `cargo test <test_name>`. The external-service tests in
 `tests/scraper.rs` are ignored by default. Run them with `cargo test --test scraper -- --ignored`.
 Playwright starts Vite and mocks the WebSocket and YouTube APIs. Set
-`PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chromium.
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chromium. Tests tagged `@webkit`
+also run in WebKit, the desktop app's engine. Tag tests of behavior that differs there.
 
 Release builds embed `dist/` with `rust-embed` and `axum-embed`. `build.rs` builds
 the frontend with Bun if `dist/index.html` is missing. In `--dev` mode Vite serves
@@ -117,9 +118,9 @@ and macOS launchd commands `install`, `uninstall` and `restart`.
   high-refresh-rate displays. It fits the ball and cord below the title bar without
   changing the stored settings, and redraws when the device pixel ratio changes. CSS
   dims it behind grid rows and centered empty states. `SettingsMenu.tsx` exposes the
-  ball's visibility, rotation, size and cord length, plus the artwork's saturation,
-  opacity, blur and pulse. Its Reset visual effects clears these, the speaker air and
-  the artwork's visibility, which are stored only as overrides of their defaults.
+  artwork's visibility (also `b`), saturation, opacity, blur and pulse first, then the
+  ball's visibility, rotation, size and cord length. Its Reset visual effects clears
+  these and the speaker air, which are stored only as overrides of their defaults.
   Reduced motion disables rotation, pulsing and speaker air controls.
 - **Playback.** `AudioPlayback.ts` implements `PlaybackEngine` (`Playback.ts`) with
   one reused `<audio>` element. Its `ended` handler advances playback, so
@@ -144,10 +145,11 @@ and macOS launchd commands `install`, `uninstall` and `restart`.
   in `App.tsx`'s `wsOnMessage`. Each `AudioCacheButton` subscribes to its own
   track. `PlaybackProgress.tsx` owns the footer's once-a-second position updates
   and wraps `Waveform.tsx` with data from `useWaveform.ts`. `rowProgress.ts` applies
-  position to the playing row through a dedicated stylesheet rule. Keeping these
-  updates out of the reducer and off the document root prevents beat animation
-  stalls. `App.css` sets `min-height: 0` on Astryx's layout to avoid relaying out
-  the grid on every change.
+  position inline to the playing row's elements, and `getRowStyle` to rows rendered
+  in between, at zero for a track other than the one last sampled. Keeping these updates out of the reducer, off the document root and
+  out of stylesheets (WebKit restyles the whole page on any rule change, some 90 ms)
+  prevents beat animation and disco ball stalls. `App.css` sets `min-height: 0` on
+  Astryx's layout to avoid relaying out the grid on every change.
 - **Tempo.** `BpmCheck.tsx` offers to save the measured BPM when the stored value
   is missing or differs by more than 0.5 BPM, allowing for half or double time
   (`tempo.ts`). `get-collection-track` and `update-bpm` both name the open

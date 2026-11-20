@@ -41,6 +41,8 @@ async function openApp(
     holdValidation?: boolean;
     /** Shows the disco ball, hidden by default (in stored settings, unless there are some already). */
     discoBall?: boolean;
+    /** How many tracks the collection has, more than a grid shows at once if need be. */
+    trackCount?: number;
   } = {},
 ) {
   if (options.discoBall)
@@ -59,7 +61,15 @@ async function openApp(
       );
     });
   let socket: WebSocketRoute;
-  const tracks = options.empty ? [] : structuredClone(exampleTracks);
+  const tracks = options.empty
+    ? []
+    : options.trackCount === undefined
+      ? structuredClone(exampleTracks)
+      : Array.from({ length: options.trackCount }, (_, index) => ({
+          ...exampleTracks[0],
+          title: `Example track ${index + 1}`,
+          yt_id: `audit${index}`,
+        }));
   const collection = { path: "/audit/collection.db", size: tracks.length };
   const messages: Record<string, unknown>[] = [];
   /** Ids the collection answers `get-collection-track` as not containing. */
@@ -889,6 +899,137 @@ test("Enter in the clone dialog clones the repository", async ({ page }) => {
     ]);
 });
 
+/** The playing row's progress, as set on its first element. */
+const rowProgress = (page: Page, rowIndex: number) =>
+  page
+    .locator(`.ag-row.progress-bar[row-index="${rowIndex}"]`)
+    .first()
+    .evaluate((row) =>
+      Number(row.style.getPropertyValue("--stereo-playback-progress")),
+    );
+
+/**
+ * Lets the test stop the app's once-a-second playback updates (`setInterval`
+ * with 1000 ms: the row progress and the footer's position) with
+ * `window.__holdProgress`, so what it sees can't come from one of those.
+ */
+async function holdableProgressUpdates(page: Page) {
+  await page.addInitScript(() => {
+    const flags = window as unknown as { __holdProgress?: boolean };
+    const setInterval = window.setInterval;
+    window.setInterval = ((handler: TimerHandler, ms?: number) =>
+      setInterval(() => {
+        if (ms === 1000 && flags.__holdProgress) return;
+        if (typeof handler === "function") handler();
+      }, ms)) as typeof window.setInterval;
+  });
+}
+
+const holdProgress = (page: Page) =>
+  page.evaluate(() => {
+    (window as unknown as { __holdProgress?: boolean }).__holdProgress = true;
+  });
+
+test(
+  "the playing row shows how far the track has played",
+  { tag: "@webkit" },
+  async ({ page }) => {
+    await openApp(page, { audio: "ok", audioSeconds: 4 });
+    const sheets = await page.evaluate(
+      () => document.adoptedStyleSheets.length,
+    );
+    await startPlayback(page);
+    // Set on the row itself: WebKit restyles the whole page for a stylesheet change.
+    await expect
+      .poll(() => rowProgress(page, 0), { timeout: 5000 })
+      .toBeGreaterThan(0);
+    expect(await page.evaluate(() => document.adoptedStyleSheets.length)).toBe(
+      sheets,
+    );
+  },
+);
+
+test(
+  "the playing row shows its progress when it's rendered again",
+  { tag: "@webkit" },
+  async ({ page }) => {
+    await holdableProgressUpdates(page);
+    await openApp(page, { audio: "ok", audioSeconds: 240, trackCount: 200 });
+    await startPlayback(page);
+    const slider = page.getByRole("slider", {
+      name: "Playback position",
+      exact: true,
+    });
+    await expect(slider).toBeEnabled();
+    await page.locator(".play-pause-button").click();
+    await expect(page.locator(".play-pause-button")).toHaveAccessibleName(
+      "Play",
+    );
+    const before = Number(await slider.getAttribute("aria-valuenow"));
+    await holdProgress(page);
+
+    // Seeks while the playing row is scrolled out of the grid, and so not rendered.
+    // The grid's rows scroll in whichever of its elements scrolls vertically.
+    const scrollGrid = (top: number) =>
+      page
+        .locator(".grid")
+        .first()
+        .evaluate((grid, top) => {
+          const scroller = [...grid.querySelectorAll("*")].find(
+            (element) =>
+              element.scrollHeight > element.clientHeight + 100 &&
+              getComputedStyle(element).overflowY !== "visible",
+          );
+          scroller!.scrollTop = top;
+        }, top);
+    const playingRow = page.locator('.ag-row[row-index="0"]');
+    await scrollGrid(1e6);
+    await expect(playingRow).toHaveCount(0);
+    await slider.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(async () => Number(await slider.getAttribute("aria-valuenow")))
+      .toBeGreaterThan(before + 4);
+    const after = Number(await slider.getAttribute("aria-valuenow"));
+    await scrollGrid(0);
+    await expect(playingRow.first()).toBeVisible();
+    // Where it was sought to, not where it was when last rendered (before).
+    expect(await rowProgress(page, 0)).toBeCloseTo(after / 240, 2);
+  },
+);
+
+test(
+  "a track skipped to starts its row's progress from the start",
+  { tag: "@webkit" },
+  async ({ page }) => {
+    const { setAudio } = await openApp(page, {
+      audio: "ok",
+      audioSeconds: 30,
+    });
+    await startPlayback(page);
+    const slider = page.getByRole("slider", {
+      name: "Playback position",
+      exact: true,
+    });
+    await expect(slider).toBeEnabled();
+    await slider.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect
+      .poll(() => rowProgress(page, 0))
+      .toBeGreaterThanOrEqual(10 / 30);
+    // The next track's audio doesn't load, so it never plays.
+    setAudio("hold");
+    await page
+      .getByRole("button", { name: "Skip to next track", exact: true })
+      .click();
+    await expect(
+      page.locator('.ag-row.progress-bar[row-index="1"]').first(),
+    ).toBeVisible();
+    expect(await rowProgress(page, 1)).toBe(0);
+  },
+);
+
 test("unloaded rows do not expose ratings or playback highlights", async ({
   page,
 }) => {
@@ -949,19 +1090,19 @@ const storedSettings = (page: Page) =>
 test("the visual effects reset to their defaults", async ({ page }) => {
   await openApp(page);
   // Hiding the background leaves its sliders disabled: the reset shows it again.
-  const backgroundToggle = page.getByRole("button", {
-    name: "Toggle background artwork",
+  await page.getByRole("button", { name: "Settings" }).click();
+  const backgroundToggle = page.getByRole("switch", {
+    name: "Background artwork",
   });
   await backgroundToggle.click();
-  await expect(backgroundToggle).toHaveAttribute("aria-pressed", "false");
-  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(backgroundToggle).not.toBeChecked();
   const hint = page.getByText(
     "Resetting also shows the background artwork again.",
   );
   await expect(hint).toBeVisible();
   const reset = page.getByRole("button", { name: "Reset visual effects" });
   await reset.click();
-  await expect(backgroundToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(backgroundToggle).toBeChecked();
   await expect(hint).toBeHidden();
   await expect(reset).toBeDisabled();
 
@@ -1332,17 +1473,15 @@ test("single-key shortcuts still work after clicking a button or a grid row", as
   page,
 }) => {
   await openApp(page);
-  const background = page.getByRole("button", {
-    name: "Toggle background artwork",
-    exact: true,
-  });
   const shuffle = page.getByRole("button", {
     name: "Toggle shuffle play",
     exact: true,
   });
   await page.locator(".play-pause-button").click();
+  const artwork = page.locator(".background-player");
+  await expect(artwork).toHaveCount(1);
   await page.keyboard.press("b");
-  await expect(background).toHaveAttribute("aria-pressed", "false");
+  await expect(artwork).toHaveCount(0);
   await page.locator('.ag-row[row-index="2"] [col-id="title"]').click();
   await page.keyboard.press("s");
   await expect(shuffle).toHaveAttribute("aria-pressed", "true");
@@ -1520,9 +1659,8 @@ test("shows the playing track's thumbnail, blurred, behind the app", async ({
     "background-image",
     'url("https://i.ytimg.com/vi/audit0/mqdefault.jpg")',
   );
-  await page
-    .getByRole("button", { name: "Toggle background artwork", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("switch", { name: "Background artwork" }).click();
   await expect(background).toHaveCount(0);
 });
 
