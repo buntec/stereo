@@ -45,6 +45,7 @@ export function GitSyncStatusButton({
   if (localChanges && icon) {
     return (
       <Button
+        className="git-sync-status"
         variant="secondary"
         label={`${label}: ${action}`}
         tooltip={tooltip}
@@ -56,6 +57,7 @@ export function GitSyncStatusButton({
   }
   return (
     <Button
+      className="git-sync-status"
       variant="secondary"
       label={action ? `${label}: ${action}` : label}
       tooltip={tooltip}

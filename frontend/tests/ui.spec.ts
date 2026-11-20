@@ -638,7 +638,7 @@ test("column customizations survive crossing the compact breakpoint", async ({
 });
 
 for (const width of [320, 390]) {
-  test(`a sync conflict's Resolve action stays readable at ${width}px`, async ({
+  test(`a sync conflict's resolve action stays readable at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 844 });
@@ -649,9 +649,10 @@ for (const width of [320, 390]) {
       message: "Local and upstream changes conflict",
       retryable: false,
     });
+    // The sync status, grouped with the collection menu, opens the conflict dialog.
     const resolve = page
       .locator(".collection-controls")
-      .getByRole("button", { name: "Resolve", exact: true });
+      .getByRole("button", { name: "Sync conflict: Resolve…", exact: true });
     await expect(resolve).toBeInViewport();
     const box = (await resolve.boundingBox())!;
     expect(box.x + box.width).toBeLessThanOrEqual(width);

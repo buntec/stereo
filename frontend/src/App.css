@@ -150,6 +150,18 @@
   .collection-group {
     min-width: 0;
   }
+  /* ...but with a sync status grouped with it (CollectionSelector.tsx), the two take
+     a line of their own, the nav-bar controls moving to the next, and only the
+     collection's name truncates, never the status, which says what its button does. */
+  .collection-controls:has(.git-sync-status) {
+    flex-basis: 100%;
+  }
+  .nav-controls {
+    margin-inline-start: auto;
+  }
+  .collection-group .git-sync-status {
+    flex-shrink: 0;
+  }
   /* Half the cell padding, which the compact grid columns' widths count on
      (COMPACT_CONTROLS_WIDTH in Grid.tsx). */
   .grid {
