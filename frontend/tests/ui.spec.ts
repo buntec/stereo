@@ -937,8 +937,8 @@ test("the disco ball fits a short window, which keeps its cord setting", async (
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect
     .poll(() => ball.evaluate((c) => c.getBoundingClientRect().height))
-    // The cord, the cap (6px), the ball (40% of 900px) and its margin (4px).
-    .toBe(400 + 6 + 360 + 4);
+    // The cord, the ring and cap (9px), the ball (40% of 900px) and its margin (4px).
+    .toBe(400 + 9 + 360 + 4);
 });
 
 test("the disco ball shrinks below its smallest size to fit, then isn't drawn", async ({

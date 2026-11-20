@@ -19,9 +19,17 @@ const SMALLEST_RADIUS = 8;
  * drawn fainter, as behind a grid's rows.
  */
 const CENTRED_CONTENT_REACH = 60;
-/** The cap its cord is tied to, in px. */
-const CAP_WIDTH = 12;
-const CAP_HEIGHT = 6;
+/**
+ * The ring its cord is tied to, standing up from the top of the ball like a
+ * key ring: its radius (to the wire's middle) and its wire's width, in px.
+ */
+const RING_RADIUS = 3;
+const RING_WIRE = 1.5;
+/** The domed cap the ring is fixed in, on top of the ball: its half-width and height, in px. */
+const CAP_RADIUS = 4;
+const CAP_HEIGHT = 2.5;
+/** From the cord's end (the top of the ring) to the top of the ball, in px. */
+const HANGER = 2 * RING_RADIUS + RING_WIRE + CAP_HEIGHT - 1;
 /** Bands of mirror tiles from pole to pole, and tiles around the equator: square tiles. */
 const BANDS = 44;
 const EQUATOR_TILES = 88;
@@ -125,7 +133,7 @@ const BAND_TILES = Array.from({ length: BANDS }, (_, i) => {
 const at = (v: number) => Math.round(v * 20) / 20;
 
 /**
- * Draws the cord (`cord` px long), the cap and the ball turned by `angle`
+ * Draws the cord (`cord` px long), the ring and cap and the ball turned by `angle`
  * (radians), all in `ink`, the ball's radius `radius`. Light is left blank, as
  * in an engraving: a tile catching light is hatched with two thin lines, then
  * one, a lit one is left out. All tiles go into one path, built as SVG path
@@ -141,19 +149,33 @@ const draw = (
   ink: string,
 ) => {
   const cx = width / 2;
-  const cy = cord + CAP_HEIGHT + radius * COS_TILT;
+  const top = cord + HANGER;
+  const cy = top + radius * COS_TILT;
   context.clearRect(0, 0, width, height);
   context.fillStyle = ink;
   context.strokeStyle = ink;
-  context.lineWidth = 1.5;
-  if (cord > 0) {
-    context.beginPath();
-    context.moveTo(cx, 0);
-    context.lineTo(cx, cord);
-    context.stroke();
-  }
+  context.lineWidth = RING_WIRE;
+  // The cord, down to the ring's wire.
   context.beginPath();
-  context.roundRect(cx - CAP_WIDTH / 2, cord, CAP_WIDTH, CAP_HEIGHT + 3, 2);
+  context.moveTo(cx, 0);
+  context.lineTo(cx, cord + RING_WIRE / 2);
+  context.stroke();
+  // The ring turns with the ball: face on when it's still, edge on a quarter turn later.
+  const ringY = cord + RING_WIRE / 2 + RING_RADIUS;
+  context.beginPath();
+  context.ellipse(
+    cx,
+    ringY,
+    RING_RADIUS * Math.abs(Math.cos(angle)),
+    RING_RADIUS,
+    0,
+    0,
+    2 * Math.PI,
+  );
+  context.stroke();
+  // The cap over the ring's foot, its lower half in the ball.
+  context.beginPath();
+  context.ellipse(cx, top, CAP_RADIUS, CAP_HEIGHT, 0, 0, 2 * Math.PI);
   context.fill();
 
   let path = "";
@@ -368,9 +390,9 @@ function DiscoBall({
   const { width: windowWidth, height: windowHeight, ratio } = useViewport();
   const inset = useTopInset(canvasRef);
 
-  // What the window leaves for the cord, cap and ball (with room around the
+  // What the window leaves for the cord, ring, cap and ball (with room around the
   // ball for its antialiased edge).
-  const space = windowHeight - inset - CAP_HEIGHT - 4;
+  const space = windowHeight - inset - HANGER - 4;
   const radius = Math.min(
     Math.max(
       MIN_RADIUS,
@@ -381,7 +403,7 @@ function DiscoBall({
   const isDrawn = radius >= SMALLEST_RADIUS;
   const cord = Math.max(0, Math.min(cordSetting, space - 2 * radius));
   const width = isDrawn ? 2 * radius + 4 : 0;
-  const height = isDrawn ? cord + CAP_HEIGHT + 2 * radius + 4 : 0;
+  const height = isDrawn ? cord + HANGER + 2 * radius + 4 : 0;
   const isSubdued =
     behind === "grid" ||
     inset + height > windowHeight / 2 - CENTRED_CONTENT_REACH;
