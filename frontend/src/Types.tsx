@@ -732,7 +732,8 @@ export type DiscoBallSettings = {
 };
 
 /** The disco ball's defaults; SettingsMenu.tsx adjusts them. Still unless set
- * turning: redrawing it every frame takes a few ms of the main thread. */
+ * turning: each redraw takes about 1.5ms of main thread, and the compositor
+ * blurs the frosted controls over it again. */
 export const DEFAULT_DISCO_BALL: DiscoBallSettings = {
   isShown: true,
   speed: 0,

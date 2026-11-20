@@ -3417,7 +3417,7 @@ function App() {
               size={discoBall.size}
               cord={discoBall.cord}
               appearance={settings.appearance}
-              isSubdued={isGridShown}
+              behind={isGridShown ? "grid" : "centred"}
             />
           ) : null}
           <Notification

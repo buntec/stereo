@@ -9,8 +9,16 @@ import {
 import { usePrefersReducedMotion } from "./useBeatPulse.ts";
 import type { AppearanceType } from "./Types.tsx";
 
-/** The smallest radius the ball is drawn at, whatever its size setting, in px. */
+/** The smallest radius the ball is drawn at, whatever its size setting, where the window has room, in px. */
 const MIN_RADIUS = 20;
+/** Where the window is too short for even this radius, in px, the ball isn't drawn at all. */
+const SMALLEST_RADIUS = 8;
+/**
+ * How far above the window's middle the text of content centred in the window
+ * (an empty state, a spinner) starts, about, in px: a ball reaching past it is
+ * drawn fainter, as behind a grid's rows.
+ */
+const CENTRED_CONTENT_REACH = 60;
 /** The cap its cord is tied to, in px. */
 const CAP_WIDTH = 12;
 const CAP_HEIGHT = 6;
@@ -315,7 +323,11 @@ const useTopInset = (canvasRef: RefObject<HTMLCanvasElement | null>) => {
   return inset;
 };
 
-/** At most this many redraws a second while it turns: a 120 Hz display needn't take twice the work. */
+/**
+ * At most this many redraws a second while it turns: a 120 Hz display needn't
+ * take twice the work. Each costs about 1.5ms of main thread; the compositor
+ * also blurs the frosted controls over it again (their `backdrop-filter`).
+ */
 const MAX_FPS = 60;
 
 /**
@@ -324,15 +336,15 @@ const MAX_FPS = 60;
  * minute. Drawn on a canvas at most `MAX_FPS` times a second while it turns
  * (one path of a thousand-odd tiles, filled once); once when it's still, or
  * for those who prefer reduced motion. However long the cord and large the
- * ball, it's drawn to fit in the window: the settings keep what was asked
- * for, for when the window grows again.
+ * ball, it's drawn to fit in the window (or not at all, where it's too short):
+ * the settings keep what was asked for, for when the window grows again.
  */
 function DiscoBall({
   speed,
   size,
   cord: cordSetting,
   appearance,
-  isSubdued = false,
+  behind,
 }: {
   speed: number;
   /** Its diameter, in % of the window's shorter side. */
@@ -341,8 +353,12 @@ function DiscoBall({
   cord: number;
   /** The app's appearance setting: when it changes, the theme's text colour does. */
   appearance: AppearanceType;
-  /** Fainter, behind a grid's rows: its fine pattern under their text is hard to read past. */
-  isSubdued?: boolean;
+  /**
+   * What it hangs behind: a grid's rows, or content centred in the window. Its
+   * fine pattern, in the text's colour, is hard to read text past, so it's
+   * fainter behind a grid, and behind centred content where it reaches it.
+   */
+  behind: "grid" | "centred";
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Kept across speed changes, so a new speed doesn't make the ball jump.
@@ -355,21 +371,25 @@ function DiscoBall({
   // What the window leaves for the cord, cap and ball (with room around the
   // ball for its antialiased edge).
   const space = windowHeight - inset - CAP_HEIGHT - 4;
-  const radius = Math.max(
-    MIN_RADIUS,
-    Math.min(
+  const radius = Math.min(
+    Math.max(
+      MIN_RADIUS,
       Math.round((Math.min(windowWidth, windowHeight) * size) / 200),
-      Math.floor(space / 2),
     ),
+    Math.floor(space / 2),
   );
+  const isDrawn = radius >= SMALLEST_RADIUS;
   const cord = Math.max(0, Math.min(cordSetting, space - 2 * radius));
-  const width = 2 * radius + 4;
-  const height = cord + CAP_HEIGHT + 2 * radius + 4;
+  const width = isDrawn ? 2 * radius + 4 : 0;
+  const height = isDrawn ? cord + CAP_HEIGHT + 2 * radius + 4 : 0;
+  const isSubdued =
+    behind === "grid" ||
+    inset + height > windowHeight / 2 - CENTRED_CONTENT_REACH;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
-    if (!canvas || !context) return;
+    if (!canvas || !context || !isDrawn) return;
     canvas.width = Math.round(width * ratio);
     canvas.height = Math.round(height * ratio);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -380,12 +400,21 @@ function DiscoBall({
     render();
     if (still || speed <= 0) return;
     const perMs = (speed * 2 * Math.PI) / 60_000;
-    // Frames come every 1000 / refresh rate ms, not quite evenly: allow for that.
-    const interval = 1000 / MAX_FPS - 2;
+    const frameMs = 1000 / MAX_FPS;
     let last: number | undefined;
+    // When the next redraw is due. Paced against this schedule, not the last
+    // redraw, so refresh rates that aren't a multiple of MAX_FPS (75, 90, 144 Hz)
+    // still get close to it rather than every other frame; after a gap (a hidden
+    // tab) it starts over.
+    let due = 0;
     let frame = requestAnimationFrame(function tick(now) {
       frame = requestAnimationFrame(tick);
-      if (last !== undefined && now - last < interval) return;
+      // Frames come every 1000 / refresh rate ms, not quite evenly: allow for that.
+      if (last !== undefined && now < due - 2) return;
+      due =
+        last === undefined || now - due > frameMs
+          ? now + frameMs
+          : due + frameMs;
       // Hidden tabs get no frames; don't make up for them in one leap.
       const elapsed = last === undefined ? 0 : Math.min(now - last, 100);
       last = now;
@@ -394,6 +423,7 @@ function DiscoBall({
     });
     return () => cancelAnimationFrame(frame);
   }, [
+    isDrawn,
     speed,
     still,
     radius,
@@ -410,6 +440,8 @@ function DiscoBall({
       ref={canvasRef}
       className={isSubdued ? "disco-ball disco-ball-subdued" : "disco-ball"}
       aria-hidden
+      // Kept in the page while hidden, so its offset from the window's top can still be read.
+      hidden={!isDrawn}
       style={{ width, height }}
     />
   );

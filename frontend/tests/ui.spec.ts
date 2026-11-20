@@ -941,6 +941,59 @@ test("the disco ball fits a short window, which keeps its cord setting", async (
     .toBe(400 + 6 + 360 + 4);
 });
 
+test("the disco ball shrinks below its smallest size to fit, then isn't drawn", async ({
+  page,
+}) => {
+  await openApp(page);
+  const ball = page.locator("canvas.disco-ball");
+  await page.setViewportSize({ width: 667, height: 40 });
+  await expect
+    .poll(() => ball.evaluate((c) => c.getBoundingClientRect().bottom))
+    .toBeLessThanOrEqual(40);
+  await expect(ball).toBeVisible();
+  await page.setViewportSize({ width: 667, height: 20 });
+  await expect(ball).toBeHidden();
+  await page.setViewportSize({ width: 667, height: 375 });
+  await expect(ball).toBeVisible();
+});
+
+test("the disco ball is fainter behind a grid, and behind centred content it reaches", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openApp(page, { empty: true });
+  const ball = page.locator("canvas.disco-ball");
+  // It ends above the empty state's text.
+  await expect(ball).not.toHaveClass(/disco-ball-subdued/);
+  await page.setViewportSize({ width: 667, height: 375 });
+  await expect(ball).toHaveClass(/disco-ball-subdued/);
+});
+
+test("the disco ball is fainter behind the collection's rows", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openApp(page);
+  await expect(page.locator("canvas.disco-ball")).toHaveClass(
+    /disco-ball-subdued/,
+  );
+});
+
+test("motion settings say they're off for those who prefer reduced motion", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await openApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  for (const name of ["Rotation speed", "Background pulse", "Wave duration"])
+    await expect(page.getByRole("slider", { name })).toBeDisabled();
+  await expect(
+    page.getByRole("switch", { name: "Speaker air" }),
+  ).toBeDisabled();
+  // Not the others.
+  await expect(page.getByRole("slider", { name: "Ball size" })).toBeEnabled();
+});
+
 test("the disco ball is redrawn for a display of another pixel density", async ({
   page,
 }) => {

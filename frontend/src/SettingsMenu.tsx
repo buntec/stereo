@@ -7,6 +7,7 @@ import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { GearIcon } from "@radix-ui/react-icons";
 import type { ReactNode } from "react";
+import { usePrefersReducedMotion } from "./useBeatPulse.ts";
 import type {
   AirSettings,
   BackgroundSettings,
@@ -50,6 +51,11 @@ function SettingsMenu({
   header,
   footer,
 }: SettingsMenuProps) {
+  // The motion settings do nothing for those who prefer reduced motion: the
+  // ball stays still and the beats move nothing (DiscoBall.tsx, useBeatPulse.ts,
+  // SpeakerStack.tsx). Say so rather than offer them.
+  const still = usePrefersReducedMotion();
+  const reducedMotion = "Your system asks for reduced motion";
   const airSlider = (
     key: Exclude<keyof AirSettings, "isOn">,
     label: string,
@@ -69,8 +75,8 @@ function SettingsMenu({
       step={step}
       formatValue={formatValue}
       valueDisplay="text"
-      isDisabled={!air.isOn}
-      disabledMessage="Speaker air is off"
+      isDisabled={!air.isOn || still}
+      disabledMessage={still ? reducedMotion : "Speaker air is off"}
     />
   );
   const backgroundSlider = (
@@ -128,8 +134,8 @@ function SettingsMenu({
             step={1}
             formatValue={(v) => (v === 0 ? "Still" : `${v} rpm`)}
             valueDisplay="text"
-            isDisabled={!discoBall.isShown}
-            disabledMessage="Disco ball is hidden"
+            isDisabled={!discoBall.isShown || still}
+            disabledMessage={still ? reducedMotion : "Disco ball is hidden"}
           />
           <Slider
             label="Ball size"
@@ -168,8 +174,8 @@ function SettingsMenu({
             step={5}
             formatValue={(v) => (v === 0 ? "Off" : `${v}%`)}
             valueDisplay="text"
-            isDisabled={!backgroundShown}
-            disabledMessage="Background is off"
+            isDisabled={!backgroundShown || still}
+            disabledMessage={still ? reducedMotion : "Background is off"}
           />
           {backgroundSlider(
             "saturation",
@@ -198,6 +204,8 @@ function SettingsMenu({
             labelTooltip="Whether the speaker stacks in the header push air out with the beats."
             value={air.isOn}
             onChange={(isOn) => setAir({ ...air, isOn })}
+            isDisabled={still}
+            disabledMessage={reducedMotion}
             labelPosition="start"
             labelSpacing="spread"
           />

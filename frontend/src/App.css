@@ -506,7 +506,8 @@
   opacity: 0.85;
   transition: opacity var(--duration-slow) var(--ease-standard);
 }
-/* Behind a grid's rows, fainter: its fine pattern under their text is hard to read past. */
+/* Fainter behind a grid's rows, and behind centred content where it reaches it: its
+   fine pattern under their text is hard to read past. */
 .disco-ball-subdued {
   opacity: 0.35;
 }
