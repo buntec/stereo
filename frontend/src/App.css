@@ -53,13 +53,42 @@
 .dance-stack-mirrored {
   scale: -1 1;
 }
-/* The stacks run under the controls at the header's and toolbar's ends: the
-   toolbar's first item (playlists menu, or the track or result count) and the
-   settings button. Those get frosted glass, like the transport buttons over the
-   waveform. It's a background image, so a button's own hover and pressed colors
-   still show through. */
-.collection-toolbar .astryx-toolbar > * > .astryx-stack > :first-child,
-.settings-button {
+/* Where there's room, the full stacks stay clear of the controls: the cabinets beside
+   the logo reach some 15px past its box toward the middle, and the bass bins down
+   into the toolbar's row, so the header keeps more space beside each stack, and the
+   toolbar starts where the collection menu does. Only the air reaches the controls.
+   On narrow screens the stacks run under the frosted controls instead. */
+@media (min-width: 48rem) {
+  .stereo-app {
+    --dance-stack-clearance: var(--spacing-4);
+  }
+  .dance-stack:not(.dance-stack-mirrored) {
+    margin-inline-end: var(--dance-stack-clearance);
+  }
+  .dance-stack-mirrored {
+    margin-inline-start: var(--dance-stack-clearance);
+  }
+  /* The header's padding, the logo's 28px box, the gap after it and the clearance. */
+  .collection-toolbar > .astryx-section {
+    padding-inline-start: calc(
+      var(--spacing-2) + 1.75rem + var(--spacing-2) +
+        var(--dance-stack-clearance)
+    );
+  }
+}
+/* The stacks run under the controls at the header's and toolbar's ends (the toolbar's
+   first item, the settings button). Those get frosted glass, like the transport
+   buttons over the waveform, and so do all the other header and toolbar controls,
+   so they look alike, wherever the stacks reach. Not the search box, which has its
+   own surface, nor the buttons in dialogs and menus these contain. It's a background
+   image, so a button's own hover and pressed colors still show through. */
+:is(.app-header, .collection-toolbar)
+  :is(.astryx-button, .astryx-segmented-control):not(
+    .header-search *,
+    dialog *,
+    [popover] *
+  ),
+.collection-toolbar .astryx-toolbar > * > .astryx-stack > .astryx-text {
   --dance-stack-glass: rgb(from var(--color-background-surface) r g b / 0.1);
   background-image: linear-gradient(
     var(--dance-stack-glass),
@@ -69,11 +98,7 @@
   backdrop-filter: blur(var(--spacing-2));
 }
 /* A count is bare text: pad its glass out without moving it. */
-.collection-toolbar
-  .astryx-toolbar
-  > *
-  > .astryx-stack
-  > .astryx-text:first-child {
+.collection-toolbar .astryx-toolbar > * > .astryx-stack > .astryx-text {
   padding: var(--spacing-1) var(--spacing-2);
   margin: calc(-1 * var(--spacing-1)) calc(-1 * var(--spacing-2));
   border-radius: var(--radius-full);
