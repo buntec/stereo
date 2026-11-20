@@ -638,7 +638,7 @@ test("column customizations survive crossing the compact breakpoint", async ({
 });
 
 for (const width of [320, 390]) {
-  test(`a sync conflict's Resolve action stays readable at ${width}px`, async ({
+  test(`a sync conflict's resolve action stays readable at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 844 });
@@ -649,19 +649,113 @@ for (const width of [320, 390]) {
       message: "Local and upstream changes conflict",
       retryable: false,
     });
+    // The sync status, grouped with the collection menu, says what to do.
     const resolve = page
       .locator(".collection-controls")
-      .getByRole("button", { name: "Resolve", exact: true });
+      .getByRole("button", { name: "Resolve conflict…", exact: true });
     await expect(resolve).toBeInViewport();
     const box = (await resolve.boundingBox())!;
     expect(box.x + box.width).toBeLessThanOrEqual(width);
-    // Its label fits: the button is as wide as its content needs.
-    expect(
-      await resolve.evaluate((el) => el.scrollWidth <= el.clientWidth),
-    ).toBe(true);
-    expect(box.width).toBeGreaterThan(60);
+    // Its visible label is all there: not truncated.
+    const label = resolve.getByText("Resolve conflict…", { exact: true });
+    await expect(label).toBeVisible();
+    expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
+      true,
+    );
+    await resolve.click();
+    await expect(
+      page.getByRole("alertdialog", { name: "Resolve collection conflict" }),
+    ).toBeVisible();
   });
 }
+
+test("the conflict dialog stays with its conflict, and sends nothing once it's over", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  const status = (state: string, message: string, retryable = false) =>
+    send({ type: "git-sync-status", state, message, retryable });
+  const conflict = (message: string) =>
+    status("conflict-requires-attention", message);
+  const resolve = page
+    .locator(".collection-controls")
+    .getByRole("button", { name: "Resolve conflict…", exact: true });
+  const dialog = page.getByRole("alertdialog", {
+    name: "Resolve collection conflict",
+  });
+  const resolutions = () =>
+    messages.filter((message) => message.type === "resolve-git-conflict");
+
+  // Edits (a play count, say) report local changes, which don't settle it: it stays
+  // shown and its dialog open, also while a sync finds the conflict again.
+  conflict("Local and upstream changes conflict");
+  await resolve.click();
+  await expect(dialog).toBeVisible();
+  status("local-changes", "Changes will be synced within 5 minutes", true);
+  await page.waitForTimeout(200);
+  await expect(dialog).toBeVisible();
+  await expect(resolve).toBeVisible();
+  status("syncing", "Saving collection changes");
+  await page.waitForTimeout(200);
+  await expect(dialog).toBeVisible();
+  conflict("Local and upstream changes conflict");
+  await page.waitForTimeout(200);
+  await expect(dialog).toBeVisible();
+  await expect(resolve).toBeVisible();
+
+  // A sync that ends the conflict closes it.
+  status("syncing", "Saving collection changes");
+  status("synced", "Repository is synchronized");
+  await expect(dialog).toBeHidden();
+  await expect(resolve).toHaveCount(0);
+
+  // So does another conflict, and the first one coming back doesn't reopen it.
+  conflict("Local and upstream changes conflict");
+  await resolve.click();
+  await expect(dialog).toBeVisible();
+  conflict("Another conflict");
+  await expect(dialog).toBeHidden();
+  conflict("Local and upstream changes conflict");
+  await expect(resolve).toBeVisible();
+  await expect(dialog).toBeHidden();
+  expect(resolutions()).toEqual([]);
+
+  // The current conflict's dialog still resolves it.
+  await resolve.click();
+  await dialog
+    .getByRole("button", { name: "Use upstream", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(resolutions).toEqual([
+    expect.objectContaining({
+      type: "resolve-git-conflict",
+      strategy: "keep-upstream",
+    }),
+  ]);
+});
+
+test("a background sync's diverged histories offer a retry, not a resolution", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  send({
+    type: "git-sync-status",
+    state: "conflict-requires-attention",
+    message:
+      "Local and upstream histories diverged; retry to reconcile them safely",
+    retryable: true,
+  });
+  const controls = page.locator(".collection-controls");
+  await controls
+    .getByRole("button", { name: "Sync conflict: Retry sync", exact: true })
+    .click();
+  await expect(
+    controls.getByRole("button", { name: "Resolve conflict…", exact: true }),
+  ).toHaveCount(0);
+  await expect
+    .poll(() => messages.filter((message) => message.type === "retry-git-sync"))
+    .toHaveLength(1);
+});
 
 test("first-use and empty collection states offer next actions", async ({
   page,
@@ -1152,14 +1246,111 @@ test("shows the playing track's thumbnail, blurred, behind the app", async ({
   await expect(background).toHaveCount(0);
 });
 
-test("the logo builds up into a dance stack with the volume, without moving the header", async ({
+test("the speakers' clearance doesn't wrap the header where it would fit", async ({
+  page,
+}) => {
+  const { send } = await openApp(page);
+  const oneRow = () =>
+    page.evaluate(() => {
+      const top = (selector: string) =>
+        document.querySelector(selector)!.getBoundingClientRect().top;
+      return Math.abs(top(".collection-controls") - top(".nav-controls")) < 4;
+    });
+  const stackToMenu = () =>
+    page.evaluate(
+      () =>
+        document.querySelector(".collection-group")!.getBoundingClientRect()
+          .left -
+        document
+          .querySelector(".speaker-stack:not(.speaker-stack-mirrored)")!
+          .getBoundingClientRect().right,
+    );
+  // Below its breakpoint there's no clearance, and the header fits as before.
+  await page.setViewportSize({ width: 990, height: 800 });
+  expect(await oneRow()).toBe(true);
+  expect(await stackToMenu()).toBe(8);
+  // From it, the clearance fits even with the widest sync status beside the
+  // Tailscale button.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  send({
+    type: "tailscale",
+    status: { state: "serving", url: "https://stereo.example.ts.net" },
+  });
+  send({
+    type: "git-sync-status",
+    state: "authentication-required",
+    message: "Authentication required",
+    retryable: true,
+  });
+  await expect(
+    page.getByRole("button", {
+      name: "Authentication required: Retry sync",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Tailnet/ })).toBeVisible();
+  expect(await oneRow()).toBe(true);
+  expect(await stackToMenu()).toBe(24);
+});
+
+test("the rotating background covers the window's corners, even without blur", async ({
+  page,
+}) => {
+  await openApp(page);
+  const background = page.locator(".background-player");
+  await expect(background).toHaveCount(1);
+  // Window shapes from portrait phones to ultra-wide monitors.
+  for (const [width, height] of [
+    [320, 844],
+    [390, 844],
+    [844, 320],
+    [1000, 1000],
+    [1440, 900],
+    [3440, 1440],
+    [3840, 1080],
+    [1920, 400],
+    [300, 1300],
+    [2000, 200],
+  ]) {
+    await page.setViewportSize({ width, height });
+    const uncovered = await background.evaluate((element: HTMLElement) => {
+      // Without blur there's no margin past the window, and without beats no swelling:
+      // at the animation's start it is scaled least and rotated most.
+      element.style.setProperty("--background-blur", "0");
+      for (const animation of element.getAnimations()) {
+        animation.pause();
+        animation.currentTime = 0;
+      }
+      const style = getComputedStyle(element);
+      const matrix = new DOMMatrix(style.transform).multiply(
+        new DOMMatrix(`scale(${style.scale === "none" ? 1 : style.scale})`),
+      );
+      const inverse = matrix.inverse();
+      const [left, top] = [element.offsetLeft, element.offsetTop];
+      const [w, h] = [element.offsetWidth, element.offsetHeight];
+      const [cx, cy] = [left + w / 2, top + h / 2];
+      return [
+        [0, 0],
+        [innerWidth, 0],
+        [0, innerHeight],
+        [innerWidth, innerHeight],
+      ].filter(([x, y]) => {
+        const p = inverse.transformPoint(new DOMPoint(x - cx, y - cy));
+        return Math.abs(p.x) > w / 2 || Math.abs(p.y) > h / 2;
+      });
+    });
+    expect(uncovered, `${width}×${height}`).toEqual([]);
+  }
+});
+
+test("the logo builds up into a speaker stack with the volume, without moving the header", async ({
   page,
 }) => {
   await openApp(page);
   const stack = page.getByRole("img", { name: "Stereo" });
   const cabinets = stack.locator("svg > g");
   // Its mirror image at the other end of the header: a stereo pair.
-  const mirrored = page.locator(".dance-stack-mirrored");
+  const mirrored = page.locator(".speaker-stack-mirrored");
   const mirroredCabinets = mirrored.locator("svg > g");
   const slider = page.getByRole("slider", { name: "Volume" });
   const mute = page.getByRole("button", { name: "Mute" });
@@ -1242,7 +1433,7 @@ test("offers only mute where the page can't set the volume (iOS)", async ({
   await expect(
     page.getByRole("img", { name: "Stereo" }).locator("svg > g"),
   ).toHaveCount(1);
-  await expect(page.locator(".dance-stack-mirrored svg > g")).toHaveCount(1);
+  await expect(page.locator(".speaker-stack-mirrored svg > g")).toHaveCount(1);
 
   await mute.click();
   await expect(mute).toHaveAttribute("aria-pressed", "true");
@@ -1921,6 +2112,19 @@ test("changing the playing search result's video keeps its place in the queue", 
   await expect
     .poll(() => audioRequests)
     .toContain("GET /audio/bVideo00002?key=test-key");
+});
+
+test("the header and toolbar's frosted glass leaves solid buttons alone", async ({
+  page,
+}) => {
+  await openApp(page, { searchResults });
+  await showSearchResults(page);
+  const glass = (name: string | RegExp) =>
+    page
+      .getByRole("button", { name, exact: typeof name === "string" })
+      .evaluate((el) => getComputedStyle(el).backdropFilter);
+  expect(await glass("Settings")).toBe("blur(8px)");
+  expect(await glass(/^Add selected/)).toBe("none");
 });
 
 test("changing a selected search result's video keeps it selected", async ({

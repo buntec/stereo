@@ -675,7 +675,7 @@ export type AppNotification = {
   kind?: "info" | "warn" | "warning" | "error";
 };
 
-/** The air the header's dance stacks push out with the beats (DanceStack.tsx). */
+/** The air the header's speaker stacks push out with the beats (SpeakerStack.tsx). */
 export type AirSettings = {
   /** Whether the stacks push air at all. */
   isOn: boolean;
@@ -691,9 +691,9 @@ export type AirSettings = {
   settleTime: number;
 };
 
-/** The air's defaults; SettingsMenu.tsx adjusts them. */
+/** The air's defaults; SettingsMenu.tsx adjusts them. Off unless turned on. */
 export const DEFAULT_AIR: AirSettings = {
-  isOn: true,
+  isOn: false,
   waveDuration: 650,
   waveTravel: 1.6,
   calmTurbulence: 3,
@@ -729,7 +729,7 @@ export type Settings = {
   backgroundPulse?: number;
   /** The background's saturation, opacity and blur; unset in older stored settings. */
   background?: Partial<BackgroundSettings>;
-  /** The air the header's dance stacks push with the beats; unset in older stored settings. */
+  /** The air the header's speaker stacks push with the beats; unset in older stored settings. */
   air?: Partial<AirSettings>;
   shufflePlay: boolean;
   /** Playback volume, 0–100 (%, perceptual); unset in older stored settings. */

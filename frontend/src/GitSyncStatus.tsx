@@ -1,124 +1,145 @@
-import { useState } from "react";
 import { ReloadIcon } from "@radix-ui/react-icons";
-import { IconButton } from "@astryxdesign/core/IconButton";
 import { Button } from "@astryxdesign/core/Button";
-import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import type { GitSyncState } from "./Types.tsx";
-import { gitSyncLabels, gitSyncVariant } from "./gitSync.ts";
+import { gitSyncLabels } from "./gitSync.ts";
 
 type Props = {
-  state?: GitSyncState;
+  state: GitSyncState;
   message?: string;
   retryable?: boolean;
   onRetry: () => void;
-  onResolve: (strategy: "keep-local" | "keep-upstream") => void;
+  onResolve: () => void;
 };
 
-// Only surfaces in the toolbar when the user can or should act on the sync
-// state; routine states are conveyed by the dot on the collection menu.
-export default function GitSyncStatus({
+/** The sync status as the second half of the collection menu's button group (see
+    CollectionSelector.tsx): it retries the sync, or for a conflict opens
+    GitConflictDialog. A state there's nothing to do about is shown disabled, its
+    message in the tooltip. Pending local changes are routine, synced on a timer, so
+    they get just a "sync now" icon, saying what it's about in its tooltip; the states
+    that need attention say so in the button, and a conflict to resolve says what to
+    do about it, which has no fitting icon. A background sync's diverged histories are
+    a conflict a retry reconciles (`retryable`), so that one offers the retry. */
+export function GitSyncStatusButton({
   state,
   message,
   retryable,
   onRetry,
   onResolve,
 }: Props) {
-  const [resolveOpen, setResolveOpen] = useState(false);
-  if (!state) return null;
-  const variant = gitSyncVariant(state);
-  const conflict = state === "conflict-requires-attention";
-  if (!retryable && !conflict && variant !== "warning" && variant !== "error") {
-    return null;
-  }
   const label = gitSyncLabels[state];
-  // Pending local changes are synced on a timer; the button syncs them right away.
-  const retryLabel = state === "local-changes" ? "Sync now" : "Retry sync";
-
-  return (
-    <>
-      <HStack
-        gap={1}
-        vAlign="center"
-        style={{ minWidth: 0 }}
+  const conflict = state === "conflict-requires-attention";
+  const localChanges = state === "local-changes";
+  const action = retryable
+    ? localChanges
+      ? "Sync now"
+      : "Retry sync"
+    : undefined;
+  const icon = retryable ? <ReloadIcon /> : undefined;
+  const tooltip = [localChanges && label, message ?? label, action]
+    .filter(Boolean)
+    .join(" · ");
+  if (conflict && !retryable) {
+    return (
+      <Button
         className="git-sync-status"
-      >
-        <Tooltip content={message ?? label}>
-          <Text type="supporting" color="secondary" maxLines={1}>
-            {label}
-          </Text>
-        </Tooltip>
-        {retryable && !conflict && (
-          <IconButton
-            size="sm"
-            variant="ghost"
-            label={retryLabel}
-            tooltip={retryLabel}
-            icon={<ReloadIcon />}
-            onClick={onRetry}
-          />
-        )}
-        {conflict && (
-          <Button
-            size="sm"
-            variant="secondary"
-            label="Resolve"
-            onClick={() => setResolveOpen(true)}
-          />
-        )}
-      </HStack>
+        variant="secondary"
+        label="Resolve conflict…"
+        tooltip={message ?? label}
+        onClick={onResolve}
+      />
+    );
+  }
+  if (localChanges && icon) {
+    return (
+      <Button
+        className="git-sync-status"
+        variant="secondary"
+        label={`${label}: ${action}`}
+        tooltip={tooltip}
+        icon={icon}
+        isIconOnly
+        onClick={onRetry}
+      />
+    );
+  }
+  return (
+    <Button
+      className="git-sync-status"
+      variant="secondary"
+      label={action ? `${label}: ${action}` : label}
+      tooltip={tooltip}
+      endContent={icon}
+      isDisabled={!action}
+      onClick={onRetry}
+    >
+      {label}
+    </Button>
+  );
+}
 
-      <Dialog
-        isOpen={resolveOpen}
-        onOpenChange={setResolveOpen}
-        purpose="required"
-        width={480}
-      >
-        <Layout
-          header={<DialogHeader title="Resolve collection conflict" />}
-          content={
-            <LayoutContent>
-              <VStack gap={3}>
-                <Text type="body">
-                  Local and upstream changes conflict. Backups of both were
-                  saved. Which version wins?
-                </Text>
-                {message && <Text type="supporting">{message}</Text>}
-              </VStack>
-            </LayoutContent>
-          }
-          footer={
-            <LayoutFooter>
-              <HStack gap={2} hAlign="end">
-                <Button
-                  label="Cancel"
-                  variant="secondary"
-                  onClick={() => setResolveOpen(false)}
-                />
-                <Button
-                  label="Use upstream"
-                  variant="secondary"
-                  onClick={() => {
-                    onResolve("keep-upstream");
-                    setResolveOpen(false);
-                  }}
-                />
-                <Button
-                  label="Keep local"
-                  variant="primary"
-                  onClick={() => {
-                    onResolve("keep-local");
-                    setResolveOpen(false);
-                  }}
-                />
-              </HStack>
-            </LayoutFooter>
-          }
-        />
-      </Dialog>
-    </>
+export function GitConflictDialog({
+  isOpen,
+  onOpenChange,
+  message,
+  onResolve,
+}: {
+  isOpen: boolean;
+  onOpenChange: (isOpen: boolean) => void;
+  message?: string;
+  onResolve: (strategy: "keep-local" | "keep-upstream") => void;
+}) {
+  return (
+    <Dialog
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+      purpose="required"
+      width={480}
+    >
+      <Layout
+        header={<DialogHeader title="Resolve collection conflict" />}
+        content={
+          <LayoutContent>
+            <VStack gap={3}>
+              <Text type="body">
+                Local and upstream changes conflict. Backups of both were saved.
+                Which version wins?
+              </Text>
+              {message && <Text type="supporting">{message}</Text>}
+            </VStack>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack gap={2} hAlign="end">
+              <Button
+                label="Cancel"
+                variant="secondary"
+                onClick={() => onOpenChange(false)}
+              />
+              <Button
+                label="Use upstream"
+                variant="secondary"
+                onClick={() => {
+                  onResolve("keep-upstream");
+                  onOpenChange(false);
+                }}
+              />
+              <Button
+                label="Keep local"
+                variant="primary"
+                onClick={() => {
+                  onResolve("keep-local");
+                  onOpenChange(false);
+                }}
+              />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
   );
 }

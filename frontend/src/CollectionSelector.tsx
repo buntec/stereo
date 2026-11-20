@@ -7,6 +7,7 @@ import {
 } from "@astryxdesign/core/DropdownMenu";
 import { Divider } from "@astryxdesign/core/Divider";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { ButtonGroup } from "@astryxdesign/core/ButtonGroup";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import {
   BarChartIcon,
@@ -21,7 +22,8 @@ import NewCollectionDialog from "./NewCollectionDialog.tsx";
 import RenameCollectionDialog from "./RenameCollectionDialog.tsx";
 import CloneRepoDialog from "./CloneRepoDialog.tsx";
 import GitRemoteDialog from "./GitRemoteDialog.tsx";
-import { gitSyncLabels, gitSyncVariant } from "./gitSync.ts";
+import { GitConflictDialog, GitSyncStatusButton } from "./GitSyncStatus.tsx";
+import { gitSyncLabels, gitSyncVariant, showGitSyncStatus } from "./gitSync.ts";
 import type { GitSyncState, ICollection, IRepo } from "./Types.tsx";
 
 function basename(path: string): string {
@@ -48,6 +50,9 @@ export type CollectionSelectorProps = {
   onSetRemote: (repoPath: string, url: string | null) => Promise<void>;
   syncState?: GitSyncState;
   syncMessage?: string;
+  syncRetryable?: boolean;
+  onRetrySync: () => void;
+  onResolveConflict: (strategy: "keep-local" | "keep-upstream") => void;
   // Undefined when there are no stats to show.
   onShowStats?: () => void;
 };
@@ -67,6 +72,9 @@ function CollectionSelector({
   onSetRemote,
   syncState,
   syncMessage,
+  syncRetryable,
+  onRetrySync,
+  onResolveConflict,
   onShowStats,
 }: CollectionSelectorProps) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -81,6 +89,28 @@ function CollectionSelector({
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   // The collection being renamed.
   const [pendingRename, setPendingRename] = useState<string | null>(null);
+  // The conflict the resolve dialog was opened for: its repository and message. The
+  // backend applies a choice to whatever conflict it finds when it gets it, so the
+  // dialog only stays open while that's still the conflict reported (or a sync is
+  // finding out, which may report it again): a sync that ends it, another
+  // repository's or a new conflict closes it, and its return doesn't reopen it. Only a
+  // conflict the backend can't sort out by retrying is resolved here (not a background
+  // sync's diverged histories, which a retry reconciles).
+  const [resolveFor, setResolveFor] = useState<{
+    repo: string;
+    message: string | undefined;
+  } | null>(null);
+  const resolvable =
+    syncState === "conflict-requires-attention" && !syncRetryable;
+  const isCurrentConflict =
+    resolvable &&
+    resolveFor?.repo === repoPath &&
+    resolveFor.message === syncMessage;
+  const resolveOpen =
+    resolveFor !== null &&
+    (isCurrentConflict ||
+      (syncState === "syncing" && resolveFor.repo === repoPath));
+  if (resolveFor !== null && !resolveOpen) setResolveFor(null);
 
   const selectedCollection = collections.some((c) => c.path === value)
     ? value
@@ -100,111 +130,143 @@ function CollectionSelector({
     .filter(Boolean)
     .join(" · ");
 
+  // An actionable sync status joins the menu's button, so it reads as the collection's.
+  const showSync = showGitSyncStatus(syncState, syncRetryable);
+
+  const menu = (
+    <DropdownMenu
+      menuWidth={300}
+      button={{
+        label: selectedCollection
+          ? collectionLabel(selectedCollection)
+          : "Select collection",
+        // Grouped with the sync status, both are outlined to show the group's outline.
+        variant: showSync ? "secondary" : "ghost",
+        width: 220,
+        // Shrinks (truncating the name) to stay beside the logo on narrow screens.
+        style: { maxWidth: "100%", minWidth: 0 },
+        tooltip,
+        icon: (
+          <StatusDot
+            variant={status.variant}
+            label={status.label}
+            isPulsing={syncState === "syncing"}
+          />
+        ),
+      }}
+    >
+      <MenuHeading>Collections</MenuHeading>
+      <DropdownMenuRadioGroup
+        label="Collections"
+        value={selectedCollection}
+        onChange={setValue}
+      >
+        {collections.map((c) => (
+          <DropdownMenuRadioItem
+            key={c.path}
+            value={c.path}
+            label={collectionLabel(c.path)}
+          />
+        ))}
+      </DropdownMenuRadioGroup>
+      <DropdownMenuItem
+        icon={<PlusIcon />}
+        label="New collection…"
+        onClick={() => setCreateOpen(true)}
+      />
+      <DropdownMenuItem
+        icon={<Pencil1Icon />}
+        label={
+          selectedCollection
+            ? `Rename ${collectionLabel(selectedCollection)}…`
+            : "Rename collection…"
+        }
+        isDisabled={!selectedCollection}
+        onClick={() => setPendingRename(selectedCollection ?? null)}
+      />
+      <DropdownMenuItem
+        icon={<TrashIcon />}
+        label={
+          selectedCollection
+            ? `Delete ${collectionLabel(selectedCollection)}…`
+            : "Delete collection…"
+        }
+        isDisabled={!selectedCollection}
+        onClick={() => setPendingDelete(selectedCollection ?? null)}
+      />
+
+      <Divider />
+
+      <MenuHeading>Repository</MenuHeading>
+      <DropdownMenuRadioGroup
+        label="Repository"
+        value={selectedRepo?.path}
+        onChange={setRepoPath}
+      >
+        {repos.map((r) => (
+          <DropdownMenuRadioItem
+            key={r.path}
+            value={r.path}
+            label={basename(r.path)}
+            description={r.remote ?? "No remote"}
+          />
+        ))}
+      </DropdownMenuRadioGroup>
+      <DropdownMenuItem
+        icon={<Link2Icon />}
+        label={selectedRepo?.remote ? "Change remote…" : "Set remote…"}
+        isDisabled={!selectedRepo}
+        onClick={() => {
+          setRemoteRepoPath(selectedRepo?.path);
+          setRemoteKey((key) => key + 1);
+          setRemoteOpen(true);
+        }}
+      />
+      <DropdownMenuItem
+        icon={<DownloadIcon />}
+        label="Clone repository…"
+        onClick={() => setCloneOpen(true)}
+      />
+
+      <Divider />
+
+      <DropdownMenuItem
+        icon={<BarChartIcon />}
+        label="Library stats"
+        isDisabled={!onShowStats}
+        onClick={onShowStats}
+      />
+    </DropdownMenu>
+  );
+
   return (
     <>
-      <DropdownMenu
-        menuWidth={300}
-        button={{
-          label: selectedCollection
-            ? collectionLabel(selectedCollection)
-            : "Select collection",
-          variant: "ghost",
-          width: 220,
-          // Shrinks (truncating the name) to stay beside the logo on narrow screens.
-          style: { maxWidth: "100%", minWidth: 0 },
-          tooltip,
-          icon: (
-            <StatusDot
-              variant={status.variant}
-              label={status.label}
-              isPulsing={syncState === "syncing"}
-            />
-          ),
+      {/* Always the group, if only of the menu, so the menu isn't remounted (closing it)
+          when the status comes and goes. */}
+      <ButtonGroup label="Collection" className="collection-group">
+        {menu}
+        {showSync && syncState && (
+          <GitSyncStatusButton
+            state={syncState}
+            message={syncMessage}
+            retryable={syncRetryable}
+            onRetry={onRetrySync}
+            onResolve={() =>
+              setResolveFor({ repo: repoPath, message: syncMessage })
+            }
+          />
+        )}
+      </ButtonGroup>
+      <GitConflictDialog
+        isOpen={resolveOpen}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setResolveFor(null);
         }}
-      >
-        <MenuHeading>Collections</MenuHeading>
-        <DropdownMenuRadioGroup
-          label="Collections"
-          value={selectedCollection}
-          onChange={setValue}
-        >
-          {collections.map((c) => (
-            <DropdownMenuRadioItem
-              key={c.path}
-              value={c.path}
-              label={collectionLabel(c.path)}
-            />
-          ))}
-        </DropdownMenuRadioGroup>
-        <DropdownMenuItem
-          icon={<PlusIcon />}
-          label="New collection…"
-          onClick={() => setCreateOpen(true)}
-        />
-        <DropdownMenuItem
-          icon={<Pencil1Icon />}
-          label={
-            selectedCollection
-              ? `Rename ${collectionLabel(selectedCollection)}…`
-              : "Rename collection…"
-          }
-          isDisabled={!selectedCollection}
-          onClick={() => setPendingRename(selectedCollection ?? null)}
-        />
-        <DropdownMenuItem
-          icon={<TrashIcon />}
-          label={
-            selectedCollection
-              ? `Delete ${collectionLabel(selectedCollection)}…`
-              : "Delete collection…"
-          }
-          isDisabled={!selectedCollection}
-          onClick={() => setPendingDelete(selectedCollection ?? null)}
-        />
-
-        <Divider />
-
-        <MenuHeading>Repository</MenuHeading>
-        <DropdownMenuRadioGroup
-          label="Repository"
-          value={selectedRepo?.path}
-          onChange={setRepoPath}
-        >
-          {repos.map((r) => (
-            <DropdownMenuRadioItem
-              key={r.path}
-              value={r.path}
-              label={basename(r.path)}
-              description={r.remote ?? "No remote"}
-            />
-          ))}
-        </DropdownMenuRadioGroup>
-        <DropdownMenuItem
-          icon={<Link2Icon />}
-          label={selectedRepo?.remote ? "Change remote…" : "Set remote…"}
-          isDisabled={!selectedRepo}
-          onClick={() => {
-            setRemoteRepoPath(selectedRepo?.path);
-            setRemoteKey((key) => key + 1);
-            setRemoteOpen(true);
-          }}
-        />
-        <DropdownMenuItem
-          icon={<DownloadIcon />}
-          label="Clone repository…"
-          onClick={() => setCloneOpen(true)}
-        />
-
-        <Divider />
-
-        <DropdownMenuItem
-          icon={<BarChartIcon />}
-          label="Library stats"
-          isDisabled={!onShowStats}
-          onClick={onShowStats}
-        />
-      </DropdownMenu>
-
+        message={resolveFor?.message}
+        onResolve={(strategy) => {
+          if (isCurrentConflict) onResolveConflict(strategy);
+        }}
+      />
       <NewCollectionDialog
         isOpen={createOpen}
         onOpenChange={setCreateOpen}

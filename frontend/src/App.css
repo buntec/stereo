@@ -29,41 +29,82 @@
   min-width: 0;
 }
 
-/* The logo, growing into a dance stack with the volume (DanceStack.tsx): it keeps the
+/* The logo, growing into a speaker stack with the volume (SpeakerStack.tsx): it keeps the
    logo's place in the header and draws the rest over its edges, behind everything but
    the background artwork. Nothing between it and the app shell is a stacking context,
    so the negative z-index puts it under all of the app's content. */
-.dance-stack {
+.speaker-stack {
   display: block;
   flex-shrink: 0;
   position: relative;
   z-index: -1;
   pointer-events: none;
 }
-.dance-stack > svg {
+.speaker-stack > svg {
   display: block;
 }
 /* The air its speakers push out with the beats: pressure waves through turbulence. */
-.dance-stack-air {
+.speaker-stack-air {
   position: absolute;
   display: none;
   color: #b9b4f5;
 }
 /* Its mirror image at the other end of the header, growing toward the middle. */
-.dance-stack-mirrored {
+.speaker-stack-mirrored {
   scale: -1 1;
 }
-/* The stacks run under the controls at the header's and toolbar's ends: the
-   toolbar's first item (playlists menu, or the track or result count) and the
-   settings button. Those get frosted glass, like the transport buttons over the
-   waveform. It's a background image, so a button's own hover and pressed colors
-   still show through. */
-.collection-toolbar .astryx-toolbar > * > .astryx-stack > :first-child,
-.settings-button {
-  --dance-stack-glass: rgb(from var(--color-background-surface) r g b / 0.1);
+/* Where there's room, the full stacks stay clear of the controls: the cabinets beside
+   the logo reach some 15px past its box toward the middle, and the bass bins down
+   into the toolbar's row, so the header keeps more space beside each stack, and the
+   toolbar starts where the collection menu does. Only the air reaches the controls.
+   That takes 32px more in the header's row, so it starts where the row still fits
+   with the widest sync status shown, "Authentication required" with its retry,
+   beside the Tailscale button (wrapping at about 1195px then, 1227px with the
+   clearance); on narrower screens the stacks run under the frosted controls
+   instead. */
+@media (min-width: 80rem) {
+  .stereo-app {
+    --speaker-stack-clearance: var(--spacing-4);
+  }
+  .speaker-stack:not(.speaker-stack-mirrored) {
+    margin-inline-end: var(--speaker-stack-clearance);
+  }
+  .speaker-stack-mirrored {
+    margin-inline-start: var(--speaker-stack-clearance);
+  }
+  /* The header's padding, the logo's 28px box, the gap after it and the clearance. */
+  .collection-toolbar > .astryx-section {
+    padding-inline-start: calc(
+      var(--spacing-2) + 1.75rem + var(--spacing-2) +
+        var(--speaker-stack-clearance)
+    );
+  }
+}
+/* The stacks run under the controls at the header's and toolbar's ends (the toolbar's
+   first item, the settings button). Those get frosted glass, like the transport
+   buttons over the waveform, and so do all the other header and toolbar controls,
+   so they look alike, wherever the stacks reach. Not the search box, which has its
+   own surface, nor the buttons in dialogs and menus these contain, nor solid
+   (primary, destructive) buttons, which are opaque anyway. Bare text is no control:
+   only a count leading the toolbar, where the stack runs, gets it. It's a background
+   image, so a button's own hover and pressed colors still show through. */
+:is(.app-header, .collection-toolbar)
+  :is(.astryx-button, .astryx-segmented-control):not(
+    .header-search *,
+    dialog *,
+    [popover] *,
+    [data-variant="primary"],
+    [data-variant="destructive"]
+  ),
+.collection-toolbar
+  .astryx-toolbar
+  > *
+  > .astryx-stack
+  > .astryx-text:first-child {
+  --speaker-stack-glass: rgb(from var(--color-background-surface) r g b / 0.1);
   background-image: linear-gradient(
-    var(--dance-stack-glass),
-    var(--dance-stack-glass)
+    var(--speaker-stack-glass),
+    var(--speaker-stack-glass)
   );
   -webkit-backdrop-filter: blur(var(--spacing-2));
   backdrop-filter: blur(var(--spacing-2));
@@ -121,15 +162,19 @@
     flex: 1;
     flex-wrap: nowrap;
   }
-  /* ...but an actionable sync status (see GitSyncStatus.tsx) gets a line of its own,
-     where only its text truncates, never its Retry/Resolve button. */
-  .collection-controls:has(.git-sync-status) {
-    flex-wrap: wrap;
+  .collection-group {
+    min-width: 0;
   }
-  .git-sync-status {
+  /* ...but with a sync status grouped with it (CollectionSelector.tsx), the two take
+     a line of their own, the nav-bar controls moving to the next, and only the
+     collection's name truncates, never the status, which says what its button does. */
+  .collection-controls:has(.git-sync-status) {
     flex-basis: 100%;
   }
-  .git-sync-status > :not(:first-child) {
+  .nav-controls {
+    margin-inline-start: auto;
+  }
+  .collection-group .git-sync-status {
     flex-shrink: 0;
   }
   /* Half the cell padding, which the compact grid columns' widths count on
@@ -453,12 +498,18 @@
    with the animated `transform` rather than replacing it. The settings also scale its
    saturation and blur (`--background-saturation`/`--background-blur`, 1 being the
    animation's own range) and set its opacity between beats (`--background-opacity`),
-   from which the beats brighten it most of the way to full. */
+   from which the beats brighten it most of the way to full.
+   It reaches past the window by three times its strongest blur (the animation's
+   `--spacing-6`), so the blur's soft, see-through edges stay off-screen. Apart from
+   that, the animation's scale keeps the window's corners covered while it rotates:
+   ±5° takes cos 5° + r sin 5°, r being the window's long side over its short side
+   (`--background-cover`, with r rounded up to the steps below; past 16:1 it would
+   take more). That holds without the blur's margin, which only adds to it. */
 .background-player {
   --background-beat: calc(var(--beat-strength, 0) * var(--beat, 0));
   position: fixed;
-  inset: 0;
-  /* Under the dance stack (.dance-stack). */
+  inset: calc(-3 * var(--spacing-6) * var(--background-blur));
+  /* Under the speaker stack (.speaker-stack). */
   z-index: -2;
   background-size: cover;
   background-position: center;
@@ -472,12 +523,43 @@
       var(--background-beat)
   );
   scale: calc(1 + 0.12 * var(--background-beat));
-  transform: scale(2);
+  --background-aspect: 16;
+  --background-cover: calc(0.997 + var(--background-aspect) * 0.0872);
   pointer-events: none;
   animation:
     player-filter calc(var(--duration-slow) * 7) linear infinite alternate,
     player-trafo calc(var(--duration-slow) * 5) var(--ease-standard) infinite
       alternate;
+}
+@media (min-aspect-ratio: 1/8) and (max-aspect-ratio: 8/1) {
+  .background-player {
+    --background-aspect: 8;
+  }
+}
+@media (min-aspect-ratio: 1/4) and (max-aspect-ratio: 4/1) {
+  .background-player {
+    --background-aspect: 4;
+  }
+}
+@media (min-aspect-ratio: 1/3) and (max-aspect-ratio: 3/1) {
+  .background-player {
+    --background-aspect: 3;
+  }
+}
+@media (min-aspect-ratio: 2/5) and (max-aspect-ratio: 5/2) {
+  .background-player {
+    --background-aspect: 2.5;
+  }
+}
+@media (min-aspect-ratio: 1/2) and (max-aspect-ratio: 2/1) {
+  .background-player {
+    --background-aspect: 2;
+  }
+}
+@media (min-aspect-ratio: 2/3) and (max-aspect-ratio: 3/2) {
+  .background-player {
+    --background-aspect: 1.5;
+  }
 }
 
 @keyframes player-filter {
@@ -493,17 +575,16 @@
 
 @keyframes player-trafo {
   from {
-    transform: scale(2.5) rotate(-5deg);
+    transform: scale(var(--background-cover)) rotate(-5deg);
   }
   to {
-    transform: scale(2.7) rotate(5deg);
+    transform: scale(calc(var(--background-cover) + 0.1)) rotate(5deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .background-player {
     animation: none;
-    transform: scale(2);
   }
   .grid .progress-bar,
   .waveform path,
@@ -521,7 +602,7 @@
 
 /* A separate decorative layer leaves Astryx surfaces readable over the artwork. The
    header and content are always see-through, onto the app's own surface without the
-   artwork, so the dance stack behind them shows. */
+   artwork, so the speaker stack behind them shows. */
 .stereo-app:has(.background-player) {
   background-color: transparent;
 }

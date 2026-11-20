@@ -110,7 +110,7 @@ import SpotifyPlaylistDialog, {
 import AddTracksDialog from "./AddTracksDialog.tsx";
 import NavBarControls from "./NavBarControls.tsx";
 import { DEFAULT_BACKGROUND_PULSE } from "./SettingsMenu.tsx";
-import DanceStack from "./DanceStack.tsx";
+import SpeakerStack from "./SpeakerStack.tsx";
 import Notification from "./Notification.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
@@ -120,7 +120,6 @@ import CollectionSummary from "./CollectionSummary.tsx";
 import NewReleasesDialog, {
   type NewReleasesOverrides,
 } from "./NewReleasesDialog.tsx";
-import GitSyncStatus from "./GitSyncStatus.tsx";
 import { useTrackSelection } from "./TrackSelection.ts";
 import PlaylistMenu from "./PlaylistMenu.tsx";
 import SavePlaylistDialog from "./SavePlaylistDialog.tsx";
@@ -716,6 +715,15 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, git_remote: action.url };
 
     case "git-sync-status":
+      // Every edit, even a play count, schedules a sync and reports local changes; that
+      // doesn't settle a conflict (only a sync does, reporting its outcome), so it
+      // stays shown, and its resolve dialog open.
+      if (
+        state.git_sync_state === "conflict-requires-attention" &&
+        action.state === "local-changes"
+      ) {
+        return state;
+      }
       return {
         ...state,
         git_sync_state: action.state,
@@ -2171,7 +2179,7 @@ function App() {
     [setSettings],
   );
 
-  // The header's speakers grow into dance stacks with the volume (DanceStack.tsx):
+  // The header's logo and its mirror image grow into speaker stacks with the volume (SpeakerStack.tsx):
   // muted, or where the page can't set the volume (iOS), they're the logo alone.
   const stackLevel = canSetVolume && !muted ? volume / 100 : 0;
 
@@ -2859,7 +2867,7 @@ function App() {
               className="app-header"
             >
               <HStack vAlign="center" gap={2} className="collection-controls">
-                <DanceStack level={stackLevel} beats={stackBeats} />
+                <SpeakerStack level={stackLevel} beats={stackBeats} />
                 <CollectionSelector
                   isValid={state.collection_is_valid ?? true}
                   collections={state.collections ?? []}
@@ -2915,19 +2923,15 @@ function App() {
                   }
                   syncState={state.git_sync_state}
                   syncMessage={state.git_sync_message}
+                  syncRetryable={state.git_sync_retryable}
+                  onRetrySync={() => sendMsg({ type: "retry-git-sync" })}
+                  onResolveConflict={(strategy) =>
+                    sendMsg({ type: "resolve-git-conflict", strategy })
+                  }
                   onShowStats={
                     hasCollectionStats(state.collection_stats)
                       ? () => setStatsOpen(true)
                       : undefined
-                  }
-                />
-                <GitSyncStatus
-                  state={state.git_sync_state}
-                  message={state.git_sync_message}
-                  retryable={state.git_sync_retryable}
-                  onRetry={() => sendMsg({ type: "retry-git-sync" })}
-                  onResolve={(strategy) =>
-                    sendMsg({ type: "resolve-git-conflict", strategy })
                   }
                 />
               </HStack>
@@ -2995,7 +2999,11 @@ function App() {
                   onSpotifyBackfill={backfillSpotifyIds}
                 />
                 {/* The other speaker of the stereo pair, at the header's other end. */}
-                <DanceStack level={stackLevel} beats={stackBeats} isMirrored />
+                <SpeakerStack
+                  level={stackLevel}
+                  beats={stackBeats}
+                  isMirrored
+                />
               </HStack>
             </HStack>
           }
