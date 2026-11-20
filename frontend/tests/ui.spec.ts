@@ -1216,6 +1216,53 @@ test("shows the playing track's thumbnail, blurred, behind the app", async ({
   await expect(background).toHaveCount(0);
 });
 
+test("the rotating background covers the window's corners, even without blur", async ({
+  page,
+}) => {
+  await openApp(page);
+  const background = page.locator(".background-player");
+  await expect(background).toHaveCount(1);
+  // Window shapes from portrait phones to ultra-wide monitors.
+  for (const [width, height] of [
+    [320, 844],
+    [390, 844],
+    [844, 320],
+    [1000, 1000],
+    [1440, 900],
+    [3440, 1440],
+    [3840, 1080],
+  ]) {
+    await page.setViewportSize({ width, height });
+    const uncovered = await background.evaluate((element: HTMLElement) => {
+      // Without blur there's no margin past the window, and without beats no swelling:
+      // at the animation's start it is scaled least and rotated most.
+      element.style.setProperty("--background-blur", "0");
+      for (const animation of element.getAnimations()) {
+        animation.pause();
+        animation.currentTime = 0;
+      }
+      const style = getComputedStyle(element);
+      const matrix = new DOMMatrix(style.transform).multiply(
+        new DOMMatrix(`scale(${style.scale === "none" ? 1 : style.scale})`),
+      );
+      const inverse = matrix.inverse();
+      const [left, top] = [element.offsetLeft, element.offsetTop];
+      const [w, h] = [element.offsetWidth, element.offsetHeight];
+      const [cx, cy] = [left + w / 2, top + h / 2];
+      return [
+        [0, 0],
+        [innerWidth, 0],
+        [0, innerHeight],
+        [innerWidth, innerHeight],
+      ].filter(([x, y]) => {
+        const p = inverse.transformPoint(new DOMPoint(x - cx, y - cy));
+        return Math.abs(p.x) > w / 2 || Math.abs(p.y) > h / 2;
+      });
+    });
+    expect(uncovered, `${width}×${height}`).toEqual([]);
+  }
+});
+
 test("the logo builds up into a speaker stack with the volume, without moving the header", async ({
   page,
 }) => {
