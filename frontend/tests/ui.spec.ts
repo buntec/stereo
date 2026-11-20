@@ -669,6 +669,64 @@ for (const width of [320, 390]) {
   });
 }
 
+test("the conflict dialog closes once its conflict is over, and sends nothing then", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  const conflict = (message: string) =>
+    send({
+      type: "git-sync-status",
+      state: "conflict-requires-attention",
+      message,
+      retryable: true,
+    });
+  const resolve = page
+    .locator(".collection-controls")
+    .getByRole("button", { name: "Resolve conflict…", exact: true });
+  const dialog = page.getByRole("alertdialog", {
+    name: "Resolve collection conflict",
+  });
+  const resolutions = () =>
+    messages.filter((message) => message.type === "resolve-git-conflict");
+
+  // A sync that ends the conflict closes it.
+  conflict("Local and upstream changes conflict");
+  await resolve.click();
+  await expect(dialog).toBeVisible();
+  send({
+    type: "git-sync-status",
+    state: "synced",
+    message: "Repository is synchronized",
+    retryable: false,
+  });
+  await expect(dialog).toBeHidden();
+  await expect(resolve).toHaveCount(0);
+
+  // So does another conflict, and the first one coming back doesn't reopen it.
+  conflict("Local and upstream changes conflict");
+  await resolve.click();
+  await expect(dialog).toBeVisible();
+  conflict("Another conflict");
+  await expect(dialog).toBeHidden();
+  conflict("Local and upstream changes conflict");
+  await expect(resolve).toBeVisible();
+  await expect(dialog).toBeHidden();
+  expect(resolutions()).toEqual([]);
+
+  // The current conflict's dialog still resolves it.
+  await resolve.click();
+  await dialog
+    .getByRole("button", { name: "Use upstream", exact: true })
+    .click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(resolutions).toEqual([
+    expect.objectContaining({
+      type: "resolve-git-conflict",
+      strategy: "keep-upstream",
+    }),
+  ]);
+});
+
 test("first-use and empty collection states offer next actions", async ({
   page,
 }) => {

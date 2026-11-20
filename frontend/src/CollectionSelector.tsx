@@ -89,7 +89,17 @@ function CollectionSelector({
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   // The collection being renamed.
   const [pendingRename, setPendingRename] = useState<string | null>(null);
-  const [resolveOpen, setResolveOpen] = useState(false);
+  // The conflict the resolve dialog was opened for (`conflictKey`). It's only open while
+  // that's still the conflict reported: a sync that ends it (or another repository's,
+  // or a new conflict) closes it, as the backend would apply the choice to whatever
+  // conflict it finds next.
+  const [resolveKey, setResolveKey] = useState<string | null>(null);
+  const conflictKey =
+    syncState === "conflict-requires-attention"
+      ? JSON.stringify([repoPath, syncMessage ?? null])
+      : null;
+  if (resolveKey !== null && resolveKey !== conflictKey) setResolveKey(null);
+  const resolveOpen = resolveKey !== null && resolveKey === conflictKey;
 
   const selectedCollection = collections.some((c) => c.path === value)
     ? value
@@ -230,15 +240,19 @@ function CollectionSelector({
             message={syncMessage}
             retryable={syncRetryable}
             onRetry={onRetrySync}
-            onResolve={() => setResolveOpen(true)}
+            onResolve={() => setResolveKey(conflictKey)}
           />
         )}
       </ButtonGroup>
       <GitConflictDialog
         isOpen={resolveOpen}
-        onOpenChange={setResolveOpen}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setResolveKey(null);
+        }}
         message={syncMessage}
-        onResolve={onResolveConflict}
+        onResolve={(strategy) => {
+          if (resolveOpen) onResolveConflict(strategy);
+        }}
       />
       <NewCollectionDialog
         isOpen={createOpen}
