@@ -120,7 +120,6 @@ import CollectionSummary from "./CollectionSummary.tsx";
 import NewReleasesDialog, {
   type NewReleasesOverrides,
 } from "./NewReleasesDialog.tsx";
-import GitSyncStatus from "./GitSyncStatus.tsx";
 import { useTrackSelection } from "./TrackSelection.ts";
 import PlaylistMenu from "./PlaylistMenu.tsx";
 import SavePlaylistDialog from "./SavePlaylistDialog.tsx";
@@ -2915,19 +2914,15 @@ function App() {
                   }
                   syncState={state.git_sync_state}
                   syncMessage={state.git_sync_message}
+                  syncRetryable={state.git_sync_retryable}
+                  onRetrySync={() => sendMsg({ type: "retry-git-sync" })}
+                  onResolveConflict={(strategy) =>
+                    sendMsg({ type: "resolve-git-conflict", strategy })
+                  }
                   onShowStats={
                     hasCollectionStats(state.collection_stats)
                       ? () => setStatsOpen(true)
                       : undefined
-                  }
-                />
-                <GitSyncStatus
-                  state={state.git_sync_state}
-                  message={state.git_sync_message}
-                  retryable={state.git_sync_retryable}
-                  onRetry={() => sendMsg({ type: "retry-git-sync" })}
-                  onResolve={(strategy) =>
-                    sendMsg({ type: "resolve-git-conflict", strategy })
                   }
                 />
               </HStack>

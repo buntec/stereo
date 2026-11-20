@@ -28,3 +28,19 @@ export function gitSyncVariant(state: GitSyncState): StatusDotVariant {
   }
   return "neutral";
 }
+
+/** Whether the sync state is worth a button beside the collection menu: when the user
+    can or should act on it. Routine states are conveyed by the menu's status dot. */
+export function showGitSyncStatus(
+  state: GitSyncState | undefined,
+  retryable: boolean | undefined,
+): state is GitSyncState {
+  if (!state) return false;
+  const variant = gitSyncVariant(state);
+  return (
+    !!retryable ||
+    state === "conflict-requires-attention" ||
+    variant === "warning" ||
+    variant === "error"
+  );
+}
