@@ -20,8 +20,9 @@ type Props = {
     GitConflictDialog. A state there's nothing to do about is shown disabled, its
     message in the tooltip. Pending local changes are routine, synced on a timer, so
     they get just a "sync now" icon, saying what it's about in its tooltip; the states
-    that need attention say so in the button, and a conflict says what to do about it,
-    which has no fitting icon. */
+    that need attention say so in the button, and a conflict to resolve says what to
+    do about it, which has no fitting icon. A background sync's diverged histories are
+    a conflict a retry reconciles (`retryable`), so that one offers the retry. */
 export function GitSyncStatusButton({
   state,
   message,
@@ -41,7 +42,7 @@ export function GitSyncStatusButton({
   const tooltip = [localChanges && label, message ?? label, action]
     .filter(Boolean)
     .join(" · ");
-  if (conflict) {
+  if (conflict && !retryable) {
     return (
       <Button
         className="git-sync-status"

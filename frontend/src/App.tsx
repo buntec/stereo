@@ -715,6 +715,15 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, git_remote: action.url };
 
     case "git-sync-status":
+      // Every edit, even a play count, schedules a sync and reports local changes; that
+      // doesn't settle a conflict (only a sync does, reporting its outcome), so it
+      // stays shown, and its resolve dialog open.
+      if (
+        state.git_sync_state === "conflict-requires-attention" &&
+        action.state === "local-changes"
+      ) {
+        return state;
+      }
       return {
         ...state,
         git_sync_state: action.state,

@@ -58,10 +58,11 @@
    into the toolbar's row, so the header keeps more space beside each stack, and the
    toolbar starts where the collection menu does. Only the air reaches the controls.
    That takes 32px more in the header's row, so it starts where the row still fits
-   with a sync conflict shown (wrapping at about 1045px then, 1085px with the
-   Tailscale button); on narrower screens the stacks run under the frosted controls
+   with the widest sync status shown, "Authentication required" with its retry,
+   beside the Tailscale button (wrapping at about 1195px then, 1227px with the
+   clearance); on narrower screens the stacks run under the frosted controls
    instead. */
-@media (min-width: 72rem) {
+@media (min-width: 80rem) {
   .stereo-app {
     --speaker-stack-clearance: var(--spacing-4);
   }
@@ -83,15 +84,23 @@
    first item, the settings button). Those get frosted glass, like the transport
    buttons over the waveform, and so do all the other header and toolbar controls,
    so they look alike, wherever the stacks reach. Not the search box, which has its
-   own surface, nor the buttons in dialogs and menus these contain. It's a background
+   own surface, nor the buttons in dialogs and menus these contain, nor solid
+   (primary, destructive) buttons, which are opaque anyway. Bare text is no control:
+   only a count leading the toolbar, where the stack runs, gets it. It's a background
    image, so a button's own hover and pressed colors still show through. */
 :is(.app-header, .collection-toolbar)
   :is(.astryx-button, .astryx-segmented-control):not(
     .header-search *,
     dialog *,
-    [popover] *
+    [popover] *,
+    [data-variant="primary"],
+    [data-variant="destructive"]
   ),
-.collection-toolbar .astryx-toolbar > * > .astryx-stack > .astryx-text {
+.collection-toolbar
+  .astryx-toolbar
+  > *
+  > .astryx-stack
+  > .astryx-text:first-child {
   --speaker-stack-glass: rgb(from var(--color-background-surface) r g b / 0.1);
   background-image: linear-gradient(
     var(--speaker-stack-glass),
@@ -101,7 +110,11 @@
   backdrop-filter: blur(var(--spacing-2));
 }
 /* A count is bare text: pad its glass out without moving it. */
-.collection-toolbar .astryx-toolbar > * > .astryx-stack > .astryx-text {
+.collection-toolbar
+  .astryx-toolbar
+  > *
+  > .astryx-stack
+  > .astryx-text:first-child {
   padding: var(--spacing-1) var(--spacing-2);
   margin: calc(-1 * var(--spacing-1)) calc(-1 * var(--spacing-2));
   border-radius: var(--radius-full);
@@ -490,8 +503,8 @@
    `--spacing-6`), so the blur's soft, see-through edges stay off-screen. Apart from
    that, the animation's scale keeps the window's corners covered while it rotates:
    ±5° takes cos 5° + r sin 5°, r being the window's long side over its short side
-   (`--background-cover`, with r rounded up to the steps below). That holds without
-   the blur's margin, which only adds to it. */
+   (`--background-cover`, with r rounded up to the steps below; past 16:1 it would
+   take more). That holds without the blur's margin, which only adds to it. */
 .background-player {
   --background-beat: calc(var(--beat-strength, 0) * var(--beat, 0));
   position: fixed;
@@ -510,13 +523,23 @@
       var(--background-beat)
   );
   scale: calc(1 + 0.12 * var(--background-beat));
-  --background-aspect: 4;
+  --background-aspect: 16;
   --background-cover: calc(0.997 + var(--background-aspect) * 0.0872);
   pointer-events: none;
   animation:
     player-filter calc(var(--duration-slow) * 7) linear infinite alternate,
     player-trafo calc(var(--duration-slow) * 5) var(--ease-standard) infinite
       alternate;
+}
+@media (min-aspect-ratio: 1/8) and (max-aspect-ratio: 8/1) {
+  .background-player {
+    --background-aspect: 8;
+  }
+}
+@media (min-aspect-ratio: 1/4) and (max-aspect-ratio: 4/1) {
+  .background-player {
+    --background-aspect: 4;
+  }
 }
 @media (min-aspect-ratio: 1/3) and (max-aspect-ratio: 3/1) {
   .background-player {

@@ -89,17 +89,28 @@ function CollectionSelector({
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   // The collection being renamed.
   const [pendingRename, setPendingRename] = useState<string | null>(null);
-  // The conflict the resolve dialog was opened for (`conflictKey`). It's only open while
-  // that's still the conflict reported: a sync that ends it (or another repository's,
-  // or a new conflict) closes it, as the backend would apply the choice to whatever
-  // conflict it finds next.
-  const [resolveKey, setResolveKey] = useState<string | null>(null);
-  const conflictKey =
-    syncState === "conflict-requires-attention"
-      ? JSON.stringify([repoPath, syncMessage ?? null])
-      : null;
-  if (resolveKey !== null && resolveKey !== conflictKey) setResolveKey(null);
-  const resolveOpen = resolveKey !== null && resolveKey === conflictKey;
+  // The conflict the resolve dialog was opened for: its repository and message. The
+  // backend applies a choice to whatever conflict it finds when it gets it, so the
+  // dialog only stays open while that's still the conflict reported (or a sync is
+  // finding out, which may report it again): a sync that ends it, another
+  // repository's or a new conflict closes it, and its return doesn't reopen it. Only a
+  // conflict the backend can't sort out by retrying is resolved here (not a background
+  // sync's diverged histories, which a retry reconciles).
+  const [resolveFor, setResolveFor] = useState<{
+    repo: string;
+    message: string | undefined;
+  } | null>(null);
+  const resolvable =
+    syncState === "conflict-requires-attention" && !syncRetryable;
+  const isCurrentConflict =
+    resolvable &&
+    resolveFor?.repo === repoPath &&
+    resolveFor.message === syncMessage;
+  const resolveOpen =
+    resolveFor !== null &&
+    (isCurrentConflict ||
+      (syncState === "syncing" && resolveFor.repo === repoPath));
+  if (resolveFor !== null && !resolveOpen) setResolveFor(null);
 
   const selectedCollection = collections.some((c) => c.path === value)
     ? value
@@ -131,7 +142,7 @@ function CollectionSelector({
           : "Select collection",
         // Grouped with the sync status, both are outlined to show the group's outline.
         variant: showSync ? "secondary" : "ghost",
-        width: showSync ? undefined : 220,
+        width: 220,
         // Shrinks (truncating the name) to stay beside the logo on narrow screens.
         style: { maxWidth: "100%", minWidth: 0 },
         tooltip,
@@ -234,24 +245,26 @@ function CollectionSelector({
           when the status comes and goes. */}
       <ButtonGroup label="Collection" className="collection-group">
         {menu}
-        {showSync && (
+        {showSync && syncState && (
           <GitSyncStatusButton
             state={syncState}
             message={syncMessage}
             retryable={syncRetryable}
             onRetry={onRetrySync}
-            onResolve={() => setResolveKey(conflictKey)}
+            onResolve={() =>
+              setResolveFor({ repo: repoPath, message: syncMessage })
+            }
           />
         )}
       </ButtonGroup>
       <GitConflictDialog
         isOpen={resolveOpen}
         onOpenChange={(isOpen) => {
-          if (!isOpen) setResolveKey(null);
+          if (!isOpen) setResolveFor(null);
         }}
-        message={syncMessage}
+        message={resolveFor?.message}
         onResolve={(strategy) => {
-          if (resolveOpen) onResolveConflict(strategy);
+          if (isCurrentConflict) onResolveConflict(strategy);
         }}
       />
       <NewCollectionDialog

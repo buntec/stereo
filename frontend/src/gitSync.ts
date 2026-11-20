@@ -34,7 +34,7 @@ export function gitSyncVariant(state: GitSyncState): StatusDotVariant {
 export function showGitSyncStatus(
   state: GitSyncState | undefined,
   retryable: boolean | undefined,
-): state is GitSyncState {
+): boolean {
   if (!state) return false;
   const variant = gitSyncVariant(state);
   return (

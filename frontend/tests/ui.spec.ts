@@ -669,17 +669,14 @@ for (const width of [320, 390]) {
   });
 }
 
-test("the conflict dialog closes once its conflict is over, and sends nothing then", async ({
+test("the conflict dialog stays with its conflict, and sends nothing once it's over", async ({
   page,
 }) => {
   const { messages, send } = await openApp(page);
+  const status = (state: string, message: string, retryable = false) =>
+    send({ type: "git-sync-status", state, message, retryable });
   const conflict = (message: string) =>
-    send({
-      type: "git-sync-status",
-      state: "conflict-requires-attention",
-      message,
-      retryable: true,
-    });
+    status("conflict-requires-attention", message);
   const resolve = page
     .locator(".collection-controls")
     .getByRole("button", { name: "Resolve conflict…", exact: true });
@@ -689,16 +686,26 @@ test("the conflict dialog closes once its conflict is over, and sends nothing th
   const resolutions = () =>
     messages.filter((message) => message.type === "resolve-git-conflict");
 
-  // A sync that ends the conflict closes it.
+  // Edits (a play count, say) report local changes, which don't settle it: it stays
+  // shown and its dialog open, also while a sync finds the conflict again.
   conflict("Local and upstream changes conflict");
   await resolve.click();
   await expect(dialog).toBeVisible();
-  send({
-    type: "git-sync-status",
-    state: "synced",
-    message: "Repository is synchronized",
-    retryable: false,
-  });
+  status("local-changes", "Changes will be synced within 5 minutes", true);
+  await page.waitForTimeout(200);
+  await expect(dialog).toBeVisible();
+  await expect(resolve).toBeVisible();
+  status("syncing", "Saving collection changes");
+  await page.waitForTimeout(200);
+  await expect(dialog).toBeVisible();
+  conflict("Local and upstream changes conflict");
+  await page.waitForTimeout(200);
+  await expect(dialog).toBeVisible();
+  await expect(resolve).toBeVisible();
+
+  // A sync that ends the conflict closes it.
+  status("syncing", "Saving collection changes");
+  status("synced", "Repository is synchronized");
   await expect(dialog).toBeHidden();
   await expect(resolve).toHaveCount(0);
 
@@ -725,6 +732,29 @@ test("the conflict dialog closes once its conflict is over, and sends nothing th
       strategy: "keep-upstream",
     }),
   ]);
+});
+
+test("a background sync's diverged histories offer a retry, not a resolution", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  send({
+    type: "git-sync-status",
+    state: "conflict-requires-attention",
+    message:
+      "Local and upstream histories diverged; retry to reconcile them safely",
+    retryable: true,
+  });
+  const controls = page.locator(".collection-controls");
+  await controls
+    .getByRole("button", { name: "Sync conflict: Retry sync", exact: true })
+    .click();
+  await expect(
+    controls.getByRole("button", { name: "Resolve conflict…", exact: true }),
+  ).toHaveCount(0);
+  await expect
+    .poll(() => messages.filter((message) => message.type === "retry-git-sync"))
+    .toHaveLength(1);
 });
 
 test("first-use and empty collection states offer next actions", async ({
@@ -1239,17 +1269,26 @@ test("the speakers' clearance doesn't wrap the header where it would fit", async
   await page.setViewportSize({ width: 990, height: 800 });
   expect(await oneRow()).toBe(true);
   expect(await stackToMenu()).toBe(8);
-  // From it, the clearance fits even with a sync conflict to resolve.
-  await page.setViewportSize({ width: 1152, height: 800 });
+  // From it, the clearance fits even with the widest sync status beside the
+  // Tailscale button.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  send({
+    type: "tailscale",
+    status: { state: "serving", url: "https://stereo.example.ts.net" },
+  });
   send({
     type: "git-sync-status",
-    state: "conflict-requires-attention",
-    message: "Local and upstream changes conflict",
+    state: "authentication-required",
+    message: "Authentication required",
     retryable: true,
   });
   await expect(
-    page.getByRole("button", { name: "Resolve conflict…", exact: true }),
+    page.getByRole("button", {
+      name: "Authentication required: Retry sync",
+      exact: true,
+    }),
   ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Tailnet/ })).toBeVisible();
   expect(await oneRow()).toBe(true);
   expect(await stackToMenu()).toBe(24);
 });
@@ -1269,6 +1308,9 @@ test("the rotating background covers the window's corners, even without blur", a
     [1440, 900],
     [3440, 1440],
     [3840, 1080],
+    [1920, 400],
+    [300, 1300],
+    [2000, 200],
   ]) {
     await page.setViewportSize({ width, height });
     const uncovered = await background.evaluate((element: HTMLElement) => {
@@ -2070,6 +2112,19 @@ test("changing the playing search result's video keeps its place in the queue", 
   await expect
     .poll(() => audioRequests)
     .toContain("GET /audio/bVideo00002?key=test-key");
+});
+
+test("the header and toolbar's frosted glass leaves solid buttons alone", async ({
+  page,
+}) => {
+  await openApp(page, { searchResults });
+  await showSearchResults(page);
+  const glass = (name: string | RegExp) =>
+    page
+      .getByRole("button", { name, exact: typeof name === "string" })
+      .evaluate((el) => getComputedStyle(el).backdropFilter);
+  expect(await glass("Settings")).toBe("blur(8px)");
+  expect(await glass(/^Add selected/)).toBe("none");
 });
 
 test("changing a selected search result's video keeps it selected", async ({
