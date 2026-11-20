@@ -112,6 +112,11 @@ async fn run_git(repo: &Path, args: &[&str], timeout: Duration) -> Result<Output
                 "ssh -o BatchMode=yes -o ConnectTimeout=15",
             )
             .current_dir(repo)
+            // `output()` leaves stdin inherited: on Windows, a child holding the desktop app's
+            // stdin pipe can't exit while our `--exit-with-stdin` read waits on it.
+            .stdin(std::process::Stdio::null())
+            // A timed-out git is killed, not left running.
+            .kill_on_drop(true)
             .output(),
     )
     .await;

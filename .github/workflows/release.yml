@@ -56,8 +56,33 @@ jobs:
       - name: Build frontend
         run: bun install && bun run build
 
+      # rookie's libesedb is LGPL. Cargo.toml patches in a stub, which a new resolution could drop.
+      # Fails closed: on any Cargo error, and unless every libesedb resolved is the stub.
+      - name: Check that libesedb is the stub
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-msvc \
+            > "$RUNNER_TEMP/metadata.json"
+          METADATA="$RUNNER_TEMP/metadata.json" bun -e '
+            const { packages, resolve } = await Bun.file(process.env.METADATA).json();
+            const resolved = new Set(resolve.nodes.map((node) => node.id));
+            const used = packages.filter((p) => resolved.has(p.id));
+            const sys = used.filter((p) => p.name === "libesedb-sys");
+            const esedb = used.filter((p) => p.name === "libesedb");
+            const stub = (p) => p.source === null &&
+              p.manifest_path.replaceAll("\\", "/").endsWith("/vendor/libesedb-stub/Cargo.toml");
+            const errors = [
+              ...sys.map((p) => `libesedb-sys ${p.version} is a dependency`),
+              ...esedb.filter((p) => !stub(p)).map((p) => `libesedb ${p.version} is ${p.source}`),
+              ...(esedb.length ? [] : ["libesedb is no dependency: drop the stub and its patch"]),
+            ];
+            for (const error of errors) console.log(`::error::${error}`);
+            process.exit(errors.length ? 1 : 0);
+          '
+
       - name: Build binary
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Strip binary
         if: matrix.os != 'windows-latest'

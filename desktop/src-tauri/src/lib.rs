@@ -73,7 +73,10 @@ fn data_dir() -> PathBuf {
         .filter(|home| !home.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let base = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
+            let base = ["HOME", "USERPROFILE"]
+                .into_iter()
+                .find_map(|var| std::env::var_os(var).filter(|value| !value.is_empty()))
+                .map_or_else(|| PathBuf::from("."), PathBuf::from);
             base.join(".local").join("share").join("stereo")
         });
     std::path::absolute(&home).unwrap_or(home)
