@@ -9,23 +9,14 @@ import { Text } from "@astryxdesign/core/Text";
 import { GearIcon, ResetIcon } from "@radix-ui/react-icons";
 import type { ReactNode } from "react";
 import { usePrefersReducedMotion } from "./useBeatPulse.ts";
-import {
-  DEFAULT_AIR,
-  DEFAULT_BACKGROUND,
-  DEFAULT_DISCO_BALL,
-  type AirSettings,
-  type BackgroundSettings,
-  type DiscoBallSettings,
+import type {
+  AirSettings,
+  BackgroundSettings,
+  DiscoBallSettings,
 } from "./Types.tsx";
 
 /** How strongly the background pulses with the beats by default, in %. */
 export const DEFAULT_BACKGROUND_PULSE = 50;
-
-/** Whether `settings` has every one of `defaults`' values. */
-const isDefault = <T extends object>(settings: T, defaults: T) =>
-  (Object.keys(defaults) as (keyof T)[]).every(
-    (key) => settings[key] === defaults[key],
-  );
 
 type SettingsMenuProps = {
   /** Whether the background artwork is shown at all (the footer's toggle). */
@@ -42,10 +33,15 @@ type SettingsMenuProps = {
   discoBall: DiscoBallSettings;
   setDiscoBall: (discoBall: DiscoBallSettings) => void;
   /**
-   * Puts the disco ball, background and speaker air settings back to their
-   * defaults, showing the background again (not the appearance).
+   * Whether any of the visual effects (the disco ball, the background, the
+   * speaker air) has a stored setting, even one set back to its default.
    */
-  resetToDefaults: () => void;
+  hasVisualOverrides: boolean;
+  /**
+   * Clears the visual effects' settings, for their defaults; shows the
+   * background again if it's hidden. Not the appearance (light or dark).
+   */
+  resetVisualEffects: () => void;
   /** Controls that live in the nav bar on wide screens (e.g. the appearance switch). */
   header?: ReactNode;
   footer?: ReactNode;
@@ -63,7 +59,8 @@ function SettingsMenu({
   setAir,
   discoBall,
   setDiscoBall,
-  resetToDefaults,
+  hasVisualOverrides,
+  resetVisualEffects,
   header,
   footer,
 }: SettingsMenuProps) {
@@ -272,19 +269,18 @@ function SettingsMenu({
           )}
           <Divider />
           <Button
-            label="Reset to defaults"
+            label="Reset visual effects"
             icon={<ResetIcon />}
             variant="ghost"
             size="sm"
-            isDisabled={
-              backgroundShown &&
-              backgroundPulse === DEFAULT_BACKGROUND_PULSE &&
-              isDefault(background, DEFAULT_BACKGROUND) &&
-              isDefault(air, DEFAULT_AIR) &&
-              isDefault(discoBall, DEFAULT_DISCO_BALL)
-            }
-            onClick={resetToDefaults}
+            isDisabled={!hasVisualOverrides}
+            onClick={resetVisualEffects}
           />
+          {backgroundShown ? null : (
+            <Text type="supporting">
+              Resetting also shows the background artwork again.
+            </Text>
+          )}
           {footer}
         </VStack>
       }

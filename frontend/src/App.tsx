@@ -70,6 +70,7 @@ import type {
 import {
   DEFAULT_AIR,
   DEFAULT_BACKGROUND,
+  DEFAULT_BACKGROUND_SHOWN,
   DEFAULT_DISCO_BALL,
   isChartSearchKind,
   isQuerylessSearchKind,
@@ -214,15 +215,32 @@ const currentResultId = (state: State): number | undefined => {
   return i >= 0 ? state.playlist_result_ids?.[i] : undefined;
 };
 
+// The visual effects' settings are left unset: they're overrides of their
+// defaults, which Reset visual effects clears.
 const defaultSettings: Settings = {
   appearance: "system",
   repoPath: "",
   collectionPath: "",
-  backgroundVideo: true,
-  backgroundPulse: DEFAULT_BACKGROUND_PULSE,
   shufflePlay: false,
   volume: DEFAULT_VOLUME,
   muted: false,
+};
+
+/**
+ * Earlier versions stored the background's visibility and pulse in every
+ * install's settings, set to their defaults: those aren't overrides.
+ */
+const migrateSettings = (stored: Settings): Settings => {
+  const { backgroundVideo, backgroundPulse, ...rest } = stored;
+  return {
+    ...rest,
+    ...(backgroundVideo === DEFAULT_BACKGROUND_SHOWN
+      ? {}
+      : { backgroundVideo }),
+    ...(backgroundPulse === DEFAULT_BACKGROUND_PULSE
+      ? {}
+      : { backgroundPulse }),
+  };
 };
 
 type State = {
@@ -1075,6 +1093,7 @@ function App() {
   const [settings, setSettings] = useLocalStorage<Settings>(
     "stereo_app_settings",
     defaultSettings,
+    migrateSettings,
   );
 
   const [filteredRowCount, setFilteredRowCount] = useState<number | undefined>(
@@ -2185,10 +2204,10 @@ function App() {
   // muted, or where the page can't set the volume (iOS), they're the logo alone.
   const stackLevel = canSetVolume && !muted ? volume / 100 : 0;
 
+  const backgroundShown = settings.backgroundVideo ?? DEFAULT_BACKGROUND_SHOWN;
   const toggleBackgroundVideo = useCallback(
-    () =>
-      setSettings({ ...settings, backgroundVideo: !settings.backgroundVideo }),
-    [settings, setSettings],
+    () => setSettings((s) => ({ ...s, backgroundVideo: !backgroundShown })),
+    [backgroundShown, setSettings],
   );
 
   const currentAudio = useTrackAudio(state.current_id);
@@ -2211,9 +2230,7 @@ function App() {
     playback,
     state.current_id,
     currentWaveform?.beats,
-    state.player_state === "playing" &&
-      settings.backgroundVideo &&
-      backgroundPulse > 0,
+    state.player_state === "playing" && backgroundShown && backgroundPulse > 0,
   );
 
   // With every beat, the stacks push air out of their speakers, as hard as the
@@ -2987,7 +3004,7 @@ function App() {
                   setAppearance={(appearance) =>
                     setSettings({ ...settings, appearance })
                   }
-                  backgroundShown={settings.backgroundVideo}
+                  backgroundShown={backgroundShown}
                   backgroundPulse={backgroundPulse}
                   setBackgroundPulse={(backgroundPulse) =>
                     setSettings((s) => ({ ...s, backgroundPulse }))
@@ -3002,11 +3019,18 @@ function App() {
                   setDiscoBall={(discoBall) =>
                     setSettings((s) => ({ ...s, discoBall }))
                   }
+                  hasVisualOverrides={
+                    settings.backgroundVideo !== undefined ||
+                    settings.backgroundPulse !== undefined ||
+                    settings.background !== undefined ||
+                    settings.air !== undefined ||
+                    settings.discoBall !== undefined
+                  }
                   // Unset rather than the current defaults, so later changes to them apply.
-                  resetDisplaySettings={() =>
+                  resetVisualEffects={() =>
                     setSettings((s) => ({
                       ...s,
-                      backgroundVideo: defaultSettings.backgroundVideo,
+                      backgroundVideo: undefined,
                       backgroundPulse: undefined,
                       background: undefined,
                       air: undefined,
@@ -3377,7 +3401,7 @@ function App() {
                             isIconOnly
                             size={footerButtonSize}
                             label="Toggle background artwork"
-                            isPressed={settings.backgroundVideo}
+                            isPressed={backgroundShown}
                             icon={<ImageIcon />}
                             onPressedChange={toggleBackgroundVideo}
                           />
@@ -3406,7 +3430,7 @@ function App() {
               </LayoutFooter>
             }
           />
-          {state.current_id && settings.backgroundVideo ? (
+          {state.current_id && backgroundShown ? (
             <VStack
               ref={backgroundRef}
               className="background-player"

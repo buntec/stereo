@@ -942,7 +942,11 @@ test("the disco ball hangs still unless asked to turn", async ({ page }) => {
     .not.toBe(still);
 });
 
-test("the settings reset to their defaults", async ({ page }) => {
+/** The settings as stored, parsed. */
+const storedSettings = (page: Page) =>
+  page.evaluate(() => JSON.parse(localStorage.getItem("stereo_app_settings")!));
+
+test("the visual effects reset to their defaults", async ({ page }) => {
   await openApp(page);
   // Hiding the background leaves its sliders disabled: the reset shows it again.
   const backgroundToggle = page.getByRole("button", {
@@ -951,29 +955,94 @@ test("the settings reset to their defaults", async ({ page }) => {
   await backgroundToggle.click();
   await expect(backgroundToggle).toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: "Settings" }).click();
-  const reset = page.getByRole("button", { name: "Reset to defaults" });
+  const hint = page.getByText(
+    "Resetting also shows the background artwork again.",
+  );
+  await expect(hint).toBeVisible();
+  const reset = page.getByRole("button", { name: "Reset visual effects" });
   await reset.click();
   await expect(backgroundToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(hint).toBeHidden();
   await expect(reset).toBeDisabled();
+
+  // Set back to its default, a setting is still stored: there's still something to reset.
+  const blur = page.getByRole("slider", { name: "Background blur" });
+  await blur.press("End");
+  for (let i = 0; i < 20; i++) await blur.press("ArrowLeft");
+  await expect(blur).toHaveAttribute("aria-valuenow", "100");
+  await expect(reset).toBeEnabled();
 
   await page.getByRole("switch", { name: "Disco ball" }).click();
   const size = page.getByRole("slider", { name: "Ball size" });
-  const blur = page.getByRole("slider", { name: "Background blur" });
   await size.press("End");
-  await blur.press("Home");
   await expect(size).toHaveAttribute("aria-valuenow", "100");
-  await expect(blur).toHaveAttribute("aria-valuenow", "0");
+  await expect(page.locator("canvas.disco-ball")).toBeVisible();
 
   await reset.click();
   await expect(size).toHaveAttribute("aria-valuenow", "40");
-  await expect(blur).not.toHaveAttribute("aria-valuenow", "0");
   await expect(reset).toBeDisabled();
   await expect(page.locator("canvas.disco-ball")).toHaveCount(0);
-  const stored = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("stereo_app_settings")!),
-  );
-  expect(stored.discoBall).toBeUndefined();
-  expect(stored.background).toBeUndefined();
+  const stored = await storedSettings(page);
+  for (const field of [
+    "backgroundVideo",
+    "backgroundPulse",
+    "background",
+    "air",
+    "discoBall",
+  ])
+    expect(stored).not.toHaveProperty(field);
+});
+
+test("a reset holds while another tab changes other settings", async ({
+  context,
+}) => {
+  const first = await context.newPage();
+  await openApp(first, { discoBall: true });
+  const second = await context.newPage();
+  await openApp(second);
+  await expect(second.locator("canvas.disco-ball")).toBeVisible();
+
+  await first.getByRole("button", { name: "Settings" }).click();
+  await first.getByRole("button", { name: "Reset visual effects" }).click();
+  await expect(first.locator("canvas.disco-ball")).toHaveCount(0);
+  // The second tab still shows the ball: changing its shuffle stores just that.
+  const shuffle = second.getByRole("button", { name: "Toggle shuffle play" });
+  const shuffled = (await storedSettings(second)).shufflePlay;
+  await shuffle.click();
+  await expect
+    .poll(async () => (await storedSettings(second)).shufflePlay)
+    .toBe(!shuffled);
+  expect(await storedSettings(second)).not.toHaveProperty("discoBall");
+  await first.reload();
+  await expect(first.locator(".collection-controls")).toBeVisible();
+  await expect(first.locator("canvas.disco-ball")).toHaveCount(0);
+});
+
+test("settings stored with the old defaults have nothing to reset", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    if (localStorage.getItem("stereo_app_settings")) return;
+    localStorage.setItem(
+      "stereo_app_settings",
+      JSON.stringify({
+        appearance: "system",
+        repoPath: "",
+        collectionPath: "",
+        backgroundVideo: true,
+        backgroundPulse: 50,
+        shufflePlay: false,
+      }),
+    );
+  });
+  await openApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(
+    page.getByRole("button", { name: "Reset visual effects" }),
+  ).toBeDisabled();
+  const stored = await storedSettings(page);
+  expect(stored).not.toHaveProperty("backgroundVideo");
+  expect(stored).not.toHaveProperty("backgroundPulse");
 });
 
 test("the disco ball fits a short window, which keeps its cord setting", async ({

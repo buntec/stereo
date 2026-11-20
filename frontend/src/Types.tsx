@@ -712,6 +712,9 @@ export type BackgroundSettings = {
   blur: number;
 };
 
+/** Whether the background artwork is shown, unless set otherwise. */
+export const DEFAULT_BACKGROUND_SHOWN = true;
+
 /** The background's defaults: the look it was designed with. */
 export const DEFAULT_BACKGROUND: BackgroundSettings = {
   saturation: 100,
@@ -745,8 +748,11 @@ export type Settings = {
   appearance: AppearanceType;
   repoPath: string;
   collectionPath: string;
-  /** Show the playing track's thumbnail, blurred, behind the app (historical name). */
-  backgroundVideo: boolean;
+  /**
+   * Show the playing track's thumbnail, blurred, behind the app (historical
+   * name); unset for the default, `DEFAULT_BACKGROUND_SHOWN`.
+   */
+  backgroundVideo?: boolean;
   /** How strongly the background pulses with the beats, 0–100 (%); unset in older stored settings. */
   backgroundPulse?: number;
   /** The background's saturation, opacity and blur; unset in older stored settings. */

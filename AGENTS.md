@@ -118,7 +118,8 @@ and macOS launchd commands `install`, `uninstall` and `restart`.
   changing the stored settings, and redraws when the device pixel ratio changes. CSS
   dims it behind grid rows and centered empty states. `SettingsMenu.tsx` exposes the
   ball's visibility, rotation, size and cord length, plus the artwork's saturation,
-  opacity, blur and pulse, and resets them and the speaker air to their defaults.
+  opacity, blur and pulse. Its Reset visual effects clears these, the speaker air and
+  the artwork's visibility, which are stored only as overrides of their defaults.
   Reduced motion disables rotation, pulsing and speaker air controls.
 - **Playback.** `AudioPlayback.ts` implements `PlaybackEngine` (`Playback.ts`) with
   one reused `<audio>` element. Its `ended` handler advances playback, so
