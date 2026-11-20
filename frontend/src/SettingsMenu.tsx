@@ -133,7 +133,7 @@ function SettingsMenu({
           {header}
           <Switch
             label="Background artwork"
-            labelTooltip="Whether the playing track's artwork fills the background."
+            labelTooltip="Whether the playing track's artwork fills the background. Shortcut: B."
             value={backgroundShown}
             onChange={setBackgroundShown}
             labelPosition="start"

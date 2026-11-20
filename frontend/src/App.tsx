@@ -1581,7 +1581,7 @@ function App() {
         const t = Math.max(0.0, playback.currentTime());
         const duration = playback.duration();
         const d = Math.max(1.0, duration);
-        setRowProgress(t / d);
+        setRowProgress(playback.currentId(), t / d);
         if (
           "mediaSession" in navigator &&
           Number.isFinite(t) &&
@@ -1734,7 +1734,7 @@ function App() {
       const d = playback?.duration();
       if (!playback || !d) return;
       playback.seek(seconds);
-      setRowProgress(seconds / d);
+      setRowProgress(playback.currentId(), seconds / d);
     },
     [playback],
   );

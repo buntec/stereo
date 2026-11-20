@@ -13,10 +13,15 @@
  */
 const PROPERTY = "--stereo-playback-progress";
 
-let progress = 0;
+/** The last sample: which track played how far. */
+let sample: { id: string | undefined; fraction: number } = {
+  id: undefined,
+  fraction: 0,
+};
 
-export const setRowProgress = (fraction: number) => {
-  progress = fraction;
+/** Track `id` (a YouTube id) has played `fraction` of its duration. */
+export const setRowProgress = (id: string | undefined, fraction: number) => {
+  sample = { id, fraction };
   // A row is one element per pinned section of the grid.
   for (const row of document.querySelectorAll<HTMLElement>(
     ".ag-row.progress-bar",
@@ -24,5 +29,11 @@ export const setRowProgress = (fraction: number) => {
     row.style.setProperty(PROPERTY, `${fraction}`);
 };
 
-/** The playing row's style (ag-Grid's `getRowStyle`), for when it's rendered. */
-export const rowProgressStyle = () => ({ [PROPERTY]: `${progress}` });
+/**
+ * The style of track `id`'s playing row (ag-Grid's `getRowStyle`), for when
+ * it's rendered: from the start, if the last sample was of another track (one
+ * just skipped to, not sampled yet), not that track's progress.
+ */
+export const rowProgressStyle = (id: string) => ({
+  [PROPERTY]: `${sample.id === id ? sample.fraction : 0}`,
+});

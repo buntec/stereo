@@ -698,7 +698,9 @@ export const SearchResultsGrid = ({
   }, [isCurrent]);
   const getRowStyle = useCallback(
     (params: RowClassParams<ITrack>) =>
-      params.data && isCurrent?.(params.data) ? rowProgressStyle() : undefined,
+      params.data && isCurrent?.(params.data)
+        ? rowProgressStyle(params.data.yt_id)
+        : undefined,
     [isCurrent],
   );
 
@@ -1159,7 +1161,7 @@ export const TracksGrid = ({
   const getRowStyle = useCallback(
     (params: RowClassParams<ITrack>) =>
       currentId && params.data?.yt_id === currentId
-        ? rowProgressStyle()
+        ? rowProgressStyle(currentId)
         : undefined,
     [currentId],
   );

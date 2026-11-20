@@ -23,7 +23,7 @@ just lint                # cargo clippy
 just format              # format both Rust crates and frontend/src
 bun run build            # tsc -b and Vite production build
 bun run lint             # ESLint
-bunx playwright install chromium   # once, if no Chromium executable is configured
+bunx playwright install chromium webkit   # once; skip chromium if an executable is configured
 bun run test:ui           # Playwright tests
 ```
 
@@ -36,7 +36,8 @@ open `http://localhost:8055` and use the Tailscale button's pairing QR code.
 Run a single Rust test with `cargo test <test_name>`. The external-service tests in
 `tests/scraper.rs` are ignored by default. Run them with `cargo test --test scraper -- --ignored`.
 Playwright starts Vite and mocks the WebSocket and YouTube APIs. Set
-`PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chromium.
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chromium. Tests tagged `@webkit`
+also run in WebKit, the desktop app's engine. Tag tests of behavior that differs there.
 
 Release builds embed `dist/` with `rust-embed` and `axum-embed`. `build.rs` builds
 the frontend with Bun if `dist/index.html` is missing. In `--dev` mode Vite serves
@@ -145,7 +146,7 @@ and macOS launchd commands `install`, `uninstall` and `restart`.
   track. `PlaybackProgress.tsx` owns the footer's once-a-second position updates
   and wraps `Waveform.tsx` with data from `useWaveform.ts`. `rowProgress.ts` applies
   position inline to the playing row's elements, and `getRowStyle` to rows rendered
-  in between. Keeping these updates out of the reducer, off the document root and
+  in between, at zero for a track other than the one last sampled. Keeping these updates out of the reducer, off the document root and
   out of stylesheets (WebKit restyles the whole page on any rule change, some 90 ms)
   prevents beat animation and disco ball stalls. `App.css` sets `min-height: 0` on
   Astryx's layout to avoid relaying out the grid on every change.
