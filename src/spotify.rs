@@ -752,8 +752,8 @@ pub async fn detect_session() -> anyhow::Result<SpotifySession> {
     tokio::task::spawn_blocking(|| {
         use rookie::enums::CookieToString;
 
-        let mut browsers: Vec<(&str, BrowserCookieFn)> = vec![
-            ("Firefox", rookie::firefox as BrowserCookieFn),
+        let browsers: &[(&str, BrowserCookieFn)] = &[
+            ("Firefox", rookie::firefox),
             ("Chrome", rookie::chrome),
             ("Brave", rookie::brave),
             ("Edge", rookie::edge),
@@ -764,15 +764,13 @@ pub async fn detect_session() -> anyhow::Result<SpotifySession> {
             ("Zen", rookie::zen),
             ("LibreWolf", rookie::librewolf),
             ("Chromium", rookie::chromium),
+            #[cfg(target_os = "macos")]
+            ("Safari", rookie::safari),
+            #[cfg(target_os = "linux")]
+            ("Cachy", rookie::cachy),
         ];
-        #[cfg(target_os = "macos")]
-        browsers.push(("Safari", rookie::safari));
-        #[cfg(target_os = "linux")]
-        browsers.push(("Cachy", rookie::cachy));
-        #[cfg(target_os = "windows")]
-        browsers.push(("Internet Explorer", rookie::internet_explorer));
 
-        for (name, browser_fn) in browsers {
+        for &(name, browser_fn) in browsers {
             let Ok(cookies) = browser_fn(Some(vec!["spotify.com".to_string()])) else {
                 continue;
             };
