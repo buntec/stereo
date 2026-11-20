@@ -731,10 +731,11 @@ export type DiscoBallSettings = {
   cord: number;
 };
 
-/** The disco ball's defaults; SettingsMenu.tsx adjusts them. */
+/** The disco ball's defaults; SettingsMenu.tsx adjusts them. Still unless set
+ * turning: redrawing it every frame takes a few ms of the main thread. */
 export const DEFAULT_DISCO_BALL: DiscoBallSettings = {
   isShown: true,
-  speed: 4,
+  speed: 0,
   size: 40,
   cord: 8,
 };

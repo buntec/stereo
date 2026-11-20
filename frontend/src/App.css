@@ -504,6 +504,11 @@
   pointer-events: none;
   color: var(--color-text-primary);
   opacity: 0.85;
+  transition: opacity var(--duration-slow) var(--ease-standard);
+}
+/* Behind a grid's rows, fainter: its fine pattern under their text is hard to read past. */
+.disco-ball-subdued {
+  opacity: 0.35;
 }
 /* From under the desktop app's title bar, where the UI starts. */
 :root[data-title-bar="overlay"] .disco-ball {

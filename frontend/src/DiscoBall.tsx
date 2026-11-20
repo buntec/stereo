@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react";
 import { usePrefersReducedMotion } from "./useBeatPulse.ts";
 import type { AppearanceType } from "./Types.tsx";
 
@@ -106,11 +113,15 @@ const BAND_TILES = Array.from({ length: BANDS }, (_, i) => {
   };
 });
 
+/** A path coordinate, to a twentieth of a px: short in the path's text, finer than a device pixel. */
+const at = (v: number) => Math.round(v * 20) / 20;
+
 /**
  * Draws the cord (`cord` px long), the cap and the ball turned by `angle`
- * (radians), all in `ink`, the ball's radius `radius`. Light is left blank, as in an engraving:
- * a tile catching light is hatched with two thin lines, then one, a lit one is
- * left out. All tiles go into one path, filled once.
+ * (radians), all in `ink`, the ball's radius `radius`. Light is left blank, as
+ * in an engraving: a tile catching light is hatched with two thin lines, then
+ * one, a lit one is left out. All tiles go into one path, built as SVG path
+ * text and filled once: a canvas call per corner would cost four times as much.
  */
 const draw = (
   context: CanvasRenderingContext2D,
@@ -127,22 +138,24 @@ const draw = (
   context.fillStyle = ink;
   context.strokeStyle = ink;
   context.lineWidth = 1.5;
-  context.beginPath();
-  context.moveTo(cx, 0);
-  context.lineTo(cx, cord);
-  context.stroke();
+  if (cord > 0) {
+    context.beginPath();
+    context.moveTo(cx, 0);
+    context.lineTo(cx, cord);
+    context.stroke();
+  }
   context.beginPath();
   context.roundRect(cx - CAP_WIDTH / 2, cord, CAP_WIDTH, CAP_HEIGHT + 3, 2);
   context.fill();
 
+  let path = "";
   // A point on the ball, tilted, onto the canvas: a corner of the path.
-  const corner = (lat: number, lon: number, first = false) => {
+  const corner = (command: "M" | "L", lat: number, lon: number) => {
     const c = Math.cos(lat);
-    const y = Math.sin(lat);
     const x = cx + radius * c * Math.sin(lon);
-    const v = cy - radius * (y * COS_TILT - c * Math.cos(lon) * SIN_TILT);
-    if (first) context.moveTo(x, v);
-    else context.lineTo(x, v);
+    const y =
+      cy - radius * (Math.sin(lat) * COS_TILT - c * Math.cos(lon) * SIN_TILT);
+    path += `${command}${at(x)} ${at(y)}`;
   };
   // A quad on the ball between latitudes `top`/`bottom`, longitudes `left`/`right`,
   // its corners off by `rough` (in `w` and `h`: the tile's width, and its or its
@@ -156,14 +169,13 @@ const draw = (
     w: number,
     h: number,
   ) => {
-    corner(top + rough[1] * h, left + rough[0] * w, true);
-    corner(top + rough[2] * h, right + rough[1] * w);
-    corner(bottom + rough[3] * h, right + rough[2] * w);
-    corner(bottom + rough[0] * h, left + rough[3] * w);
-    context.closePath();
+    corner("M", top + rough[1] * h, left + rough[0] * w);
+    corner("L", top + rough[2] * h, right + rough[1] * w);
+    corner("L", bottom + rough[3] * h, right + rough[2] * w);
+    corner("L", bottom + rough[0] * h, left + rough[3] * w);
+    path += "Z";
   };
 
-  context.beginPath();
   for (const { lat, height: h, tiles, quirks } of BAND_TILES) {
     const w = (2 * Math.PI) / tiles;
     const cosLat = Math.cos(lat);
@@ -235,7 +247,7 @@ const draw = (
       }
     }
   }
-  context.fill();
+  context.fill(new Path2D(path));
 };
 
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -245,21 +257,82 @@ const subscribeDark = (onChange: () => void) => {
 };
 const prefersDark = () => darkQuery.matches;
 
-/** The window's shorter side, in px, which the ball's size is a share of. */
-const windowSide = () => Math.min(window.innerWidth, window.innerHeight);
+const viewport = () => ({
+  width: window.innerWidth,
+  height: window.innerHeight,
+  ratio: window.devicePixelRatio || 1,
+});
+
+/**
+ * The window's size in CSS px and its device pixels per CSS px, kept up to
+ * date. The ratio changes when the window moves to a display with another
+ * scale, or the page is zoomed: browsers may tell with a resize, or only
+ * through a media query on the current ratio, which stops matching.
+ */
+const useViewport = () => {
+  const [state, setState] = useState(viewport);
+  useEffect(() => {
+    const update = () =>
+      setState((old) => {
+        const now = viewport();
+        return now.width === old.width &&
+          now.height === old.height &&
+          now.ratio === old.ratio
+          ? old
+          : now;
+      });
+    const query = window.matchMedia(`(resolution: ${state.ratio}dppx)`);
+    window.addEventListener("resize", update);
+    query.addEventListener("change", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      query.removeEventListener("change", update);
+    };
+  }, [state.ratio]);
+  return state;
+};
+
+/**
+ * How far below the window's top the canvas starts (App.css: under the
+ * desktop app's title bar), in CSS px; read again when the root element's
+ * `data-title-bar` changes (it's `hidden` in full screen).
+ */
+const useTopInset = (canvasRef: RefObject<HTMLCanvasElement | null>) => {
+  const [inset, setInset] = useState(0);
+  useLayoutEffect(() => {
+    const read = () => {
+      const canvas = canvasRef.current;
+      if (canvas) setInset(parseFloat(getComputedStyle(canvas).top) || 0);
+    };
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-title-bar"],
+    });
+    return () => observer.disconnect();
+  }, [canvasRef]);
+  return inset;
+};
+
+/** At most this many redraws a second while it turns: a 120 Hz display needn't take twice the work. */
+const MAX_FPS = 60;
 
 /**
  * A mirror ball, engraved in the theme's text colour, hanging on a cord from
  * the top of the window, behind the UI, turning at `speed` revolutions per
- * minute. Drawn on a canvas every animation frame while it turns (one
- * path of a thousand-odd tiles, filled once); once when it's still, or for
- * those who prefer reduced motion.
+ * minute. Drawn on a canvas at most `MAX_FPS` times a second while it turns
+ * (one path of a thousand-odd tiles, filled once); once when it's still, or
+ * for those who prefer reduced motion. However long the cord and large the
+ * ball, it's drawn to fit in the window: the settings keep what was asked
+ * for, for when the window grows again.
  */
 function DiscoBall({
   speed,
   size,
-  cord,
+  cord: cordSetting,
   appearance,
+  isSubdued = false,
 }: {
   speed: number;
   /** Its diameter, in % of the window's shorter side. */
@@ -268,21 +341,28 @@ function DiscoBall({
   cord: number;
   /** The app's appearance setting: when it changes, the theme's text colour does. */
   appearance: AppearanceType;
+  /** Fainter, behind a grid's rows: its fine pattern under their text is hard to read past. */
+  isSubdued?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Kept across speed changes, so a new speed doesn't make the ball jump.
   const angle = useRef(0);
   const still = usePrefersReducedMotion();
   const systemDark = useSyncExternalStore(subscribeDark, prefersDark);
-  const [side, setSide] = useState(windowSide);
-  useEffect(() => {
-    const onResize = () => setSide(windowSide());
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+  const { width: windowWidth, height: windowHeight, ratio } = useViewport();
+  const inset = useTopInset(canvasRef);
 
-  const radius = Math.max(MIN_RADIUS, Math.round((side * size) / 200));
-  // A little room around the ball, for its antialiased edge.
+  // What the window leaves for the cord, cap and ball (with room around the
+  // ball for its antialiased edge).
+  const space = windowHeight - inset - CAP_HEIGHT - 4;
+  const radius = Math.max(
+    MIN_RADIUS,
+    Math.min(
+      Math.round((Math.min(windowWidth, windowHeight) * size) / 200),
+      Math.floor(space / 2),
+    ),
+  );
+  const cord = Math.max(0, Math.min(cordSetting, space - 2 * radius));
   const width = 2 * radius + 4;
   const height = cord + CAP_HEIGHT + 2 * radius + 4;
 
@@ -290,7 +370,6 @@ function DiscoBall({
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
-    const ratio = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * ratio);
     canvas.height = Math.round(height * ratio);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -301,9 +380,12 @@ function DiscoBall({
     render();
     if (still || speed <= 0) return;
     const perMs = (speed * 2 * Math.PI) / 60_000;
+    // Frames come every 1000 / refresh rate ms, not quite evenly: allow for that.
+    const interval = 1000 / MAX_FPS - 2;
     let last: number | undefined;
     let frame = requestAnimationFrame(function tick(now) {
       frame = requestAnimationFrame(tick);
+      if (last !== undefined && now - last < interval) return;
       // Hidden tabs get no frames; don't make up for them in one leap.
       const elapsed = last === undefined ? 0 : Math.min(now - last, 100);
       last = now;
@@ -311,12 +393,22 @@ function DiscoBall({
       render();
     });
     return () => cancelAnimationFrame(frame);
-  }, [speed, still, radius, cord, width, height, appearance, systemDark]);
+  }, [
+    speed,
+    still,
+    radius,
+    cord,
+    width,
+    height,
+    ratio,
+    appearance,
+    systemDark,
+  ]);
 
   return (
     <canvas
       ref={canvasRef}
-      className="disco-ball"
+      className={isSubdued ? "disco-ball disco-ball-subdued" : "disco-ball"}
       aria-hidden
       style={{ width, height }}
     />

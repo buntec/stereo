@@ -2256,6 +2256,10 @@ function App() {
     isQuerylessSearchKind(state.search_kind) || !!state.search_box_input;
   const isSearchGridActive =
     (state.search_results !== undefined || state.search_busy) && hasSearchInput;
+  // Whether search results or the collection's tracks fill the content (see `collectionBody`).
+  const isGridShown =
+    isSearchGridActive ||
+    (backendReady && !!state.collection && state.collection.size > 0);
 
   // ── Dynamic playlists: saved views of a collection ────────────────────────
   const [activePlaylistId, setActivePlaylistId] = useLocalStorage<
@@ -3413,6 +3417,7 @@ function App() {
               size={discoBall.size}
               cord={discoBall.cord}
               appearance={settings.appearance}
+              isSubdued={isGridShown}
             />
           ) : null}
           <Notification
