@@ -649,18 +649,23 @@ for (const width of [320, 390]) {
       message: "Local and upstream changes conflict",
       retryable: false,
     });
-    // The sync status, grouped with the collection menu, opens the conflict dialog.
+    // The sync status, grouped with the collection menu, says what to do.
     const resolve = page
       .locator(".collection-controls")
-      .getByRole("button", { name: "Sync conflict: Resolve…", exact: true });
+      .getByRole("button", { name: "Resolve conflict…", exact: true });
     await expect(resolve).toBeInViewport();
     const box = (await resolve.boundingBox())!;
     expect(box.x + box.width).toBeLessThanOrEqual(width);
-    // Its label fits: the button is as wide as its content needs.
-    expect(
-      await resolve.evaluate((el) => el.scrollWidth <= el.clientWidth),
-    ).toBe(true);
-    expect(box.width).toBeGreaterThan(60);
+    // Its visible label is all there: not truncated.
+    const label = resolve.getByText("Resolve conflict…", { exact: true });
+    await expect(label).toBeVisible();
+    expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
+      true,
+    );
+    await resolve.click();
+    await expect(
+      page.getByRole("alertdialog", { name: "Resolve collection conflict" }),
+    ).toBeVisible();
   });
 }
 
