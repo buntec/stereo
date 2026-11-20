@@ -43,6 +43,8 @@ async function openApp(
     discoBall?: boolean;
     /** How many tracks the collection has, more than a grid shows at once if need be. */
     trackCount?: number;
+    /** Sends the repo's and collection's paths as a Windows backend does. */
+    windowsPaths?: boolean;
   } = {},
 ) {
   if (options.discoBall)
@@ -70,7 +72,13 @@ async function openApp(
           title: `Example track ${index + 1}`,
           yt_id: `audit${index}`,
         }));
-  const collection = { path: "/audit/collection.db", size: tracks.length };
+  const repoPath = options.windowsPaths
+    ? "C:\\Users\\me\\.local\\share\\stereo\\gitrepos\\audit"
+    : "/audit";
+  const collection = {
+    path: `${repoPath}${options.windowsPaths ? "\\" : "/"}collection.db`,
+    size: tracks.length,
+  };
   const messages: Record<string, unknown>[] = [];
   /** Ids the collection answers `get-collection-track` as not containing. */
   const absent = new Set<string>();
@@ -271,7 +279,7 @@ async function openApp(
             home_dir: "/audit",
             audio_key: audio === "off" ? null : "test-key",
           },
-          { type: "repos", repos: [{ path: "/audit", remote: null }] },
+          { type: "repos", repos: [{ path: repoPath, remote: null }] },
         ]),
       20,
     );
@@ -795,6 +803,25 @@ test("first-use and empty collection states offer next actions", async ({
     .getByRole("button", { name: "Create collection", exact: true })
     .click();
   await expect(page.getByRole("dialog")).toBeVisible();
+});
+
+test("collections and repositories are named without their Windows paths", async ({
+  page,
+}) => {
+  await openApp(page, { windowsPaths: true });
+  const menuButton = page
+    .locator(".collection-controls")
+    .getByRole("button")
+    .first();
+  await expect(menuButton).toHaveText("collection");
+  await menuButton.click();
+  await expect(
+    page.getByRole("menuitemradio", { name: "collection", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("menuitem", { name: "Set remote…" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Remote for audit" }),
+  ).toBeVisible();
 });
 
 test("empty collections offer search and import", async ({ page }) => {

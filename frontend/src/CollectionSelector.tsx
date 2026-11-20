@@ -26,8 +26,9 @@ import { GitConflictDialog, GitSyncStatusButton } from "./GitSyncStatus.tsx";
 import { gitSyncLabels, gitSyncVariant, showGitSyncStatus } from "./gitSync.ts";
 import type { GitSyncState, ICollection, IRepo } from "./Types.tsx";
 
+// Backend paths use the server's separator: backslashes on Windows.
 function basename(path: string): string {
-  return path.split("/").pop() ?? path;
+  return path.split(/[\\/]/).pop() ?? path;
 }
 
 export function collectionLabel(path: string): string {

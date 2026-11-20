@@ -69,16 +69,24 @@ pub struct Settings {
     pub tailscale: bool,
 }
 
+/// The user's home directory: `HOME`, else `USERPROFILE`, since Windows apps started from the
+/// Start menu or Explorer have no `HOME`. Without either, the working directory, which for the
+/// desktop app's backend on Windows is `C:\Windows\System32`.
+fn user_home() -> PathBuf {
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .find_map(|var| std::env::var_os(var).filter(|value| !value.is_empty()))
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
+}
+
 impl Settings {
     /// The data directory, always absolute: collection paths derived from it are sent to the
     /// client and later accepted back only as absolute file paths (see `utils::is_file_or_url`).
     pub fn home_dir(&self) -> PathBuf {
-        let home = self.home.clone().unwrap_or_else(|| {
-            let base = std::env::var("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("."));
-            base.join(".local").join("share").join("stereo")
-        });
+        let home = self
+            .home
+            .clone()
+            .unwrap_or_else(|| user_home().join(".local").join("share").join("stereo"));
         std::path::absolute(&home).unwrap_or(home)
     }
 
@@ -86,9 +94,7 @@ impl Settings {
     /// disposable, large and per-machine, while the data directory holds the synced git repos.
     pub fn audio_cache_dir(&self) -> PathBuf {
         let cache = self.cache_dir.clone().unwrap_or_else(|| {
-            let home = std::env::var("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("."));
+            let home = user_home();
             let base = if cfg!(target_os = "macos") {
                 home.join("Library").join("Caches")
             } else {
