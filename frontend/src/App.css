@@ -492,6 +492,24 @@
   min-width: 0;
 }
 
+/* The disco ball (DiscoBall.tsx), hanging from the window's top in the middle, behind
+   all of the app's content like the speaker stacks, over the background artwork. It's
+   engraved in the text colour (its canvas reads `color`), a little softened. */
+.disco-ball {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  z-index: -1;
+  pointer-events: none;
+  color: var(--color-text-primary);
+  opacity: 0.85;
+}
+/* From under the desktop app's title bar, where the UI starts. */
+:root[data-title-bar="overlay"] .disco-ball {
+  top: 1.75rem;
+}
+
 /* The playing track's thumbnail, blurred and slowly moving behind the app. It
    brightens and swells with the beats (`--beat`, from useBeatPulse.ts), as much as
    the settings' background pulse (`--beat-strength`, 0–1) says; `scale` composes

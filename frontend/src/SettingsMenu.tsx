@@ -7,7 +7,11 @@ import { VStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { GearIcon } from "@radix-ui/react-icons";
 import type { ReactNode } from "react";
-import type { AirSettings, BackgroundSettings } from "./Types.tsx";
+import type {
+  AirSettings,
+  BackgroundSettings,
+  DiscoBallSettings,
+} from "./Types.tsx";
 
 /** How strongly the background pulses with the beats by default, in %. */
 export const DEFAULT_BACKGROUND_PULSE = 50;
@@ -23,6 +27,9 @@ type SettingsMenuProps = {
   /** The air the header's speaker stacks push with the beats. */
   air: AirSettings;
   setAir: (air: AirSettings) => void;
+  /** The disco ball hanging from the top. */
+  discoBall: DiscoBallSettings;
+  setDiscoBall: (discoBall: DiscoBallSettings) => void;
   /** Controls that live in the nav bar on wide screens (e.g. the appearance switch). */
   header?: ReactNode;
   footer?: ReactNode;
@@ -38,6 +45,8 @@ function SettingsMenu({
   setBackground,
   air,
   setAir,
+  discoBall,
+  setDiscoBall,
   header,
   footer,
 }: SettingsMenuProps) {
@@ -189,6 +198,54 @@ function SettingsMenu({
             10,
             ms,
           )}
+          <Divider />
+          <Switch
+            label="Disco ball"
+            labelTooltip="Whether a disco ball hangs from the top of the window."
+            value={discoBall.isShown}
+            onChange={(isShown) => setDiscoBall({ ...discoBall, isShown })}
+            labelPosition="start"
+            labelSpacing="spread"
+          />
+          <Slider
+            label="Rotation speed"
+            labelTooltip="How fast the disco ball turns, in revolutions per minute."
+            value={discoBall.speed}
+            onChange={(speed: number) => setDiscoBall({ ...discoBall, speed })}
+            min={0}
+            max={30}
+            step={1}
+            formatValue={(v) => (v === 0 ? "Still" : `${v} rpm`)}
+            valueDisplay="text"
+            isDisabled={!discoBall.isShown}
+            disabledMessage="Disco ball is hidden"
+          />
+          <Slider
+            label="Ball size"
+            labelTooltip="The disco ball's diameter, as a share of the window's shorter side."
+            value={discoBall.size}
+            onChange={(size: number) => setDiscoBall({ ...discoBall, size })}
+            min={10}
+            max={100}
+            step={5}
+            formatValue={percent}
+            valueDisplay="text"
+            isDisabled={!discoBall.isShown}
+            disabledMessage="Disco ball is hidden"
+          />
+          <Slider
+            label="Cord length"
+            labelTooltip="How far below the top of the window the disco ball hangs."
+            value={discoBall.cord}
+            onChange={(cord: number) => setDiscoBall({ ...discoBall, cord })}
+            min={0}
+            max={400}
+            step={4}
+            formatValue={(v) => `${v} px`}
+            valueDisplay="text"
+            isDisabled={!discoBall.isShown}
+            disabledMessage="Disco ball is hidden"
+          />
           {footer}
         </VStack>
       }
