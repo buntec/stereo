@@ -1,0 +1,9 @@
+# rookie's Internet Explorer reader calls Restart Manager on the cookie store, which can shut down
+# processes holding it, before the libesedb stub (Cargo.toml) refuses to open it. The Windows-only
+# functions are `allow-invalid`: they don't exist elsewhere.
+disallowed-methods = [
+  { path = "rookie::load", reason = "includes the Internet Explorer reader on Windows" },
+  { path = "rookie::any_browser", reason = "includes the Internet Explorer reader on Windows" },
+  { path = "rookie::internet_explorer", reason = "can shut down processes holding the store", allow-invalid = true },
+  { path = "rookie::internet_explorer_based", reason = "can shut down processes holding the store", allow-invalid = true },
+]

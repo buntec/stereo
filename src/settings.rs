@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use clap::Args;
 
@@ -79,68 +79,7 @@ fn user_home() -> PathBuf {
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
-/// Moves a data directory from `legacy` to `home` if only `legacy` has one. Returns `legacy` if it
-/// has to stay in use because it couldn't be moved.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn adopt_legacy_home(legacy: &Path, home: &Path) -> Option<PathBuf> {
-    if legacy == home || !legacy.join("gitrepos").is_dir() {
-        return None;
-    }
-    if home.exists() {
-        tracing::warn!(
-            "Ignoring the older data directory {}: using {}. To use the older one instead, \
-             stop Stereo and set STEREO_HOME to it, or move it there.",
-            legacy.display(),
-            home.display()
-        );
-        return None;
-    }
-    let moved = match home.parent() {
-        Some(parent) => std::fs::create_dir_all(parent),
-        None => Ok(()),
-    }
-    .and_then(|()| std::fs::rename(legacy, home));
-    match moved {
-        Ok(()) => {
-            // A warning, which is logged by default: the data has moved.
-            tracing::warn!(
-                "Moved the data directory from {} to {}",
-                legacy.display(),
-                home.display()
-            );
-            None
-        }
-        Err(error) => {
-            tracing::warn!(
-                "Could not move the data directory from {} to {} ({error}), so using it where \
-                 it is. Stop Stereo and move it to use the new location.",
-                legacy.display(),
-                home.display()
-            );
-            Some(legacy.to_path_buf())
-        }
-    }
-}
-
 impl Settings {
-    /// Before `USERPROFILE` was used on Windows, the default data directory without `HOME` was
-    /// relative to the working directory, which for the desktop app is `C:\Windows\System32`.
-    /// Moves a data directory found there to the current default, or keeps using it if it can't.
-    #[cfg(windows)]
-    pub fn adopt_legacy_home(&mut self) {
-        let has_home = std::env::var_os("HOME").is_some_and(|home| !home.is_empty());
-        if self.home.is_some() || has_home {
-            return;
-        }
-        let legacy = Path::new(".local").join("share").join("stereo");
-        let Ok(legacy) = std::path::absolute(&legacy) else {
-            return;
-        };
-        if let Some(legacy) = adopt_legacy_home(&legacy, &self.home_dir()) {
-            self.home = Some(legacy);
-        }
-    }
-
     /// The data directory, always absolute: collection paths derived from it are sent to the
     /// client and later accepted back only as absolute file paths (see `utils::is_file_or_url`).
     pub fn home_dir(&self) -> PathBuf {
@@ -290,77 +229,6 @@ mod tests {
         settings.host = "0.0.0.0".to_string();
         settings.ws_token = Some("secret".to_string());
         assert!(settings.validate_websocket_security().is_err());
-    }
-
-    /// A data directory under `dir`, at `parts`, with a collection in its default repo.
-    fn data_dir(dir: &Path, parts: &[&str]) -> PathBuf {
-        let home = parts
-            .iter()
-            .fold(dir.to_path_buf(), |path, part| path.join(part));
-        let repo = home.join("gitrepos").join("stereo");
-        std::fs::create_dir_all(&repo).unwrap();
-        std::fs::write(repo.join("techno.db"), b"tracks").unwrap();
-        home
-    }
-
-    #[test]
-    fn legacy_home_moves_to_the_new_default() {
-        let dir = tempfile::tempdir().unwrap();
-        let legacy = data_dir(dir.path(), &["System32", ".local", "share", "stereo"]);
-        let home = dir
-            .path()
-            .join("profile")
-            .join(".local")
-            .join("share")
-            .join("stereo");
-
-        assert_eq!(adopt_legacy_home(&legacy, &home), None);
-        assert!(!legacy.exists());
-        let collection = home.join("gitrepos").join("stereo").join("techno.db");
-        assert_eq!(std::fs::read(collection).unwrap(), b"tracks");
-    }
-
-    #[test]
-    fn legacy_home_stays_when_the_new_default_exists() {
-        let dir = tempfile::tempdir().unwrap();
-        let legacy = data_dir(dir.path(), &["legacy"]);
-        let home = data_dir(dir.path(), &["home"]);
-
-        assert_eq!(adopt_legacy_home(&legacy, &home), None);
-        assert!(legacy
-            .join("gitrepos")
-            .join("stereo")
-            .join("techno.db")
-            .exists());
-    }
-
-    #[test]
-    fn legacy_home_stays_in_use_when_it_cannot_move() {
-        let dir = tempfile::tempdir().unwrap();
-        let legacy = data_dir(dir.path(), &["legacy"]);
-        // A file where the new default's parent directory would go.
-        std::fs::write(dir.path().join("profile"), b"").unwrap();
-        let home = dir.path().join("profile").join("stereo");
-
-        assert_eq!(adopt_legacy_home(&legacy, &home), Some(legacy.clone()));
-        assert!(legacy
-            .join("gitrepos")
-            .join("stereo")
-            .join("techno.db")
-            .exists());
-    }
-
-    #[test]
-    fn legacy_home_without_repositories_is_left_alone() {
-        let dir = tempfile::tempdir().unwrap();
-        let legacy = dir.path().join("legacy");
-        std::fs::create_dir_all(&legacy).unwrap();
-        let home = dir.path().join("home");
-
-        assert_eq!(adopt_legacy_home(&legacy, &home), None);
-        assert!(legacy.exists());
-        assert!(!home.exists());
-        assert_eq!(adopt_legacy_home(&home, &home), None);
     }
 
     #[test]

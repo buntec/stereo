@@ -27,16 +27,6 @@ another data directory, e.g. to try the bundled backend in development while ano
 the backend also takes the other `STEREO_*` variables (apps opened from the Finder or Dock don't
 see them).
 
-**Older Windows data directories.** Earlier versions, started without `HOME` as the app's backend
-is, kept their data relative to the working directory: `C:\Windows\System32\.local\share\stereo`
-for the app, or `.local\share\stereo` in the folder the CLI ran in. Started without `HOME` or
-`STEREO_HOME`, the backend moves such a directory, with its repositories, to
-`%USERPROFILE%\.local\share\stereo`. If the move fails it keeps using the old directory, and if
-the new one already exists it leaves the old one alone; both are logged. To use the old directory
-anyway, quit Stereo and move it to the new location, or point `STEREO_HOME` at it. The audio cache
-(`.cache\stereo` beside it, now `%USERPROFILE%\.cache\stereo`) isn't moved: it only holds
-downloads.
-
 A port that stays the same keeps the page's origin, and with it what the UI keeps in
 localStorage (grid state, settings), across launches.
 
