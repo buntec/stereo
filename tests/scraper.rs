@@ -163,6 +163,18 @@ async fn test_bp_get_genre_top100() {
 
 #[tokio::test]
 #[ignore = "hits real Traxsource site"]
+async fn test_tx_search_tracks() {
+    let c = client();
+    let tracks = scraper::tx_search_tracks(&c, "kerri chandler")
+        .await
+        .unwrap();
+    assert!(!tracks.is_empty(), "expected search results");
+    assert!(!tracks[0].track_name.is_empty());
+    assert!(!tracks[0].artists.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "hits real Traxsource site"]
 async fn test_tx_get_top100() {
     let c = client();
     let tracks = tx_get_top100(&c).await.unwrap();
