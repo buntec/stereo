@@ -1257,53 +1257,21 @@ fn parse_tx_track(row: &scraper::ElementRef) -> Option<TXTrack> {
     })
 }
 
-// The search page fails with a 502 unless the request carries a PHP session, which any other
-// page hands out. Cache the session cookie and fetch a new one when a search gets a 502, as
-// sessions expire. It's kept off the shared client's other requests, which have no cookie store.
-static TX_SESSION: LazyLock<RwLock<Option<String>>> = LazyLock::new(|| RwLock::new(None));
-
-/// Returns the `PHPSESSID=…` pair from a response's `Set-Cookie` headers.
-fn tx_session_cookie(headers: &wreq::header::HeaderMap) -> Option<String> {
-    headers
-        .get_all(wreq::header::SET_COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .filter_map(|v| v.split(';').next())
-        .map(str::trim)
-        .find(|pair| pair.starts_with("PHPSESSID=") && pair.len() > "PHPSESSID=".len())
-        .map(String::from)
-}
-
-async fn get_tx_session(client: &Client) -> anyhow::Result<String> {
-    if let Some(cookie) = TX_SESSION.read().await.clone() {
-        return Ok(cookie);
-    }
-    let resp = client.get("https://www.traxsource.com/").send().await?;
-    let cookie = tx_session_cookie(resp.headers());
-    response_text(resp).await?;
-    let cookie = cookie.context("Traxsource didn't start a session")?;
-    *TX_SESSION.write().await = Some(cookie.clone());
-    Ok(cookie)
-}
+// The search page fails with a 502 unless the request carries a `PHPSESSID` cookie. Any value
+// is accepted, including one the server never issued, so send a random one made once per
+// process instead of fetching a session first. It's kept off the shared client's other
+// requests, which have no cookie store.
+static TX_SESSION_COOKIE: LazyLock<String> =
+    LazyLock::new(|| format!("PHPSESSID={}", uuid::Uuid::new_v4().simple()));
 
 pub async fn tx_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<TXTrack>> {
     tracing::info!("Traxsource track search: {q}");
-    let mut attempt = 0;
-    let resp = loop {
-        let cookie = get_tx_session(client).await?;
-        let resp = client
-            .get("https://www.traxsource.com/search")
-            .query(&[("term", q)])
-            .header(wreq::header::COOKIE, cookie)
-            .send()
-            .await?;
-        if resp.status().as_u16() == 502 && attempt == 0 {
-            *TX_SESSION.write().await = None;
-            attempt += 1;
-            continue;
-        }
-        break resp;
-    };
+    let resp = client
+        .get("https://www.traxsource.com/search")
+        .query(&[("term", q)])
+        .header(wreq::header::COOKIE, TX_SESSION_COOKIE.as_str())
+        .send()
+        .await?;
     let html = response_text(resp).await?;
     let doc = Html::parse_document(&html);
     let row_sel = Selector::parse("div.trk-row").unwrap();
