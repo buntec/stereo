@@ -1257,11 +1257,19 @@ fn parse_tx_track(row: &scraper::ElementRef) -> Option<TXTrack> {
     })
 }
 
+// The search page fails with a 502 unless the request carries a `PHPSESSID` cookie. Any value
+// is accepted, including one the server never issued, so send a random one made once per
+// process instead of fetching a session first. It's kept off the shared client's other
+// requests, which have no cookie store.
+static TX_SESSION_COOKIE: LazyLock<String> =
+    LazyLock::new(|| format!("PHPSESSID={}", uuid::Uuid::new_v4().simple()));
+
 pub async fn tx_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<TXTrack>> {
     tracing::info!("Traxsource track search: {q}");
     let resp = client
         .get("https://www.traxsource.com/search")
         .query(&[("term", q)])
+        .header(wreq::header::COOKIE, TX_SESSION_COOKIE.as_str())
         .send()
         .await?;
     let html = response_text(resp).await?;
