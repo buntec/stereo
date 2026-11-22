@@ -21,7 +21,8 @@ use crate::{
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(45);
 const SEARCH_QUERY: &str = "Solomun";
-const LABEL_QUERY: &str = "Defected";
+// Traxsource lists the label as "Defected", so this also checks the retry without the suffix.
+const LABEL_QUERY: &str = "Defected Records";
 const ARTIST_QUERY: &str = "Solomun";
 const SHAZAM_SONG_URL: &str = "https://www.shazam.com/song/1243689211/fiore-and-i";
 
@@ -265,14 +266,14 @@ fn probes(client: &Client) -> Vec<Probe> {
         probe("Volumo labels", &label_probe, {
             let client = c();
             async move {
-                let tracks = scraper::vl_get_label_tracks(&client, LABEL_QUERY, 3).await?;
+                let tracks = scraper::vl_get_label_tracks(&client, LABEL_QUERY, 3, None).await?;
                 summarize_label(&tracks, |t| Some(&t.label))
             }
         }),
         probe("Traxsource labels", &label_probe, {
             let client = c();
             async move {
-                let tracks = scraper::tx_get_label_tracks(&client, LABEL_QUERY).await?;
+                let tracks = scraper::tx_get_label_tracks(&client, LABEL_QUERY, 20, None).await?;
                 summarize_label(&tracks, |t| Some(&t.label))
             }
         }),
@@ -298,7 +299,7 @@ fn probes(client: &Client) -> Vec<Probe> {
         probe("Volumo artists", &artist_probe, {
             let client = c();
             async move {
-                let tracks = scraper::vl_get_artist_tracks(&client, ARTIST_QUERY, 3).await?;
+                let tracks = scraper::vl_get_artist_tracks(&client, ARTIST_QUERY, 3, None).await?;
                 summarize_artist(&tracks, |t| {
                     scraper::credits_artist(&t.artists, &t.track_name, &t.mix_name, ARTIST_QUERY)
                 })
@@ -307,7 +308,7 @@ fn probes(client: &Client) -> Vec<Probe> {
         probe("Traxsource artists", &artist_probe, {
             let client = c();
             async move {
-                let tracks = scraper::tx_get_artist_tracks(&client, ARTIST_QUERY).await?;
+                let tracks = scraper::tx_get_artist_tracks(&client, ARTIST_QUERY, 20, None).await?;
                 summarize_artist(&tracks, |t| {
                     scraper::credits_artist(&t.artists, &t.track_name, &t.mix_name, ARTIST_QUERY)
                 })

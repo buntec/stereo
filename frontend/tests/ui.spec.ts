@@ -2689,3 +2689,29 @@ test("changing a result's video leaves another result playing the same video alo
   await expect(playing).toContainText("Result C");
   expect(audioRequests).not.toContain("GET /audio/newVideo001?key=test-key");
 });
+
+test("label searches explain that Spotify can't search by label", async ({
+  page,
+}) => {
+  await openApp(page);
+  const options = page.getByRole("button", { name: "Search options" });
+  await options.click();
+  for (const source of ["Beatport", "Volumo", "Traxsource", "Spotify"]) {
+    await page.getByRole("menuitemcheckbox", { name: source }).click();
+  }
+  await page.keyboard.press("Escape");
+  await page.getByRole("textbox", { name: /Search query/ }).fill("Defected");
+  const search = page.getByRole("button", { name: "Search", exact: true });
+  await expect(search).toBeEnabled();
+
+  await page.getByRole("combobox", { name: "Search kind" }).click();
+  await page.getByRole("option", { name: "Label", exact: true }).click();
+  await expect(
+    page.getByText(/Spotify and Apple Music can't search by label/).first(),
+  ).toBeVisible();
+  await expect(search).toBeDisabled();
+  await options.click();
+  const spotify = page.getByRole("menuitemcheckbox", { name: /Spotify/ });
+  await expect(spotify).toHaveAttribute("aria-disabled", "true");
+  await expect(spotify).toContainText("Can't search by label");
+});
