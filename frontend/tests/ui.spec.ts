@@ -2865,6 +2865,136 @@ test("the desktop app offers a collection download as a link @webkit", async ({
   await expect(dialog).toHaveCount(0);
 });
 
+/** Opens the collection menu's import dialog and picks `Warm-up sets.db`. */
+async function pickCollectionFile(page: Page) {
+  await page
+    .locator(".collection-controls")
+    .getByRole("button")
+    .first()
+    .click();
+  await page.getByRole("menuitem", { name: "Import collection file…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Import Collection" });
+  await expect(dialog.getByRole("button", { name: "Import" })).toBeDisabled();
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "Warm-up sets.db",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from(importedFile),
+  });
+  return dialog;
+}
+
+const importedFile = "SQLite format 3\0";
+
+test("the collection menu imports a collection file as is @webkit", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  const imports = () => messages.filter((m) => m.type === "import-collection");
+  const dialog = await pickCollectionFile(page);
+  const name = dialog.getByRole("textbox", { name: "Collection name" });
+  await expect(name).toHaveValue("Warm-up sets");
+  await name.fill("warmup");
+
+  // The Enter that commits an input method editor's text doesn't import.
+  await name.dispatchEvent("keydown", composingEnter);
+  await page.waitForTimeout(200);
+  expect(imports()).toEqual([]);
+
+  // Into the repository selected, and the dialog waits for the backend.
+  await name.press("Enter");
+  await expect.poll(imports).toEqual([
+    {
+      type: "import-collection",
+      id: expect.any(Number),
+      repo: "/audit",
+      name: "warmup",
+      data: Buffer.from(importedFile).toString("base64"),
+    },
+  ]);
+  const first = imports()[0] as { id: number };
+
+  // A refusal keeps the file and name, saying why.
+  send({ type: "error-reply", id: first.id, message: "Not a collection" });
+  await expect(dialog.getByText("Not a collection")).toBeVisible();
+  await expect(name).toHaveValue("warmup");
+
+  await dialog.getByRole("button", { name: "Import" }).click();
+  await expect.poll(() => imports().length).toBe(2);
+  await expect(dialog).toBeVisible();
+  const second = imports()[1] as { id: number };
+  send({
+    type: "collection-imported",
+    id: second.id,
+    path: "/audit/warmup.db",
+  });
+  await expect(dialog).toHaveCount(0);
+});
+
+test("importing a collection leaves the open playlist", async ({ page }) => {
+  const { messages, send } = await openApp(page);
+  send({
+    type: "playlists",
+    playlists: [
+      {
+        id: "p1",
+        name: "Warmup",
+        collection: "/audit/collection.db",
+        filter_model: {},
+        sort_model: [],
+        limit: null,
+        spotify: null,
+        youtube: null,
+        updated_at: 1,
+        spotify_status: null,
+        youtube_status: null,
+      },
+    ],
+  });
+  await page.getByRole("button", { name: "Playlists", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /Warmup/ }).click();
+  await expect(
+    page.getByRole("button", { name: "Warmup", exact: true }),
+  ).toBeVisible();
+
+  const dialog = await pickCollectionFile(page);
+  await dialog.getByRole("button", { name: "Import" }).click();
+  const imports = () => messages.filter((m) => m.type === "import-collection");
+  await expect.poll(() => imports().length).toBe(1);
+  const { id } = imports()[0] as { id: number };
+  send({ type: "collection-imported", id, path: "/audit/Warm-up sets.db" });
+  await expect(dialog).toHaveCount(0);
+  // The backend has opened the imported collection, which the playlist doesn't show.
+  await expect(
+    page.getByRole("button", { name: "Playlists", exact: true }),
+  ).toBeVisible();
+});
+
+test("cancelling while the file is read doesn't import it @webkit", async ({
+  page,
+}) => {
+  // Holds every file read until released.
+  await page.addInitScript(() => {
+    const read = FileReader.prototype.readAsDataURL;
+    const w = window as { releaseRead?: () => void };
+    FileReader.prototype.readAsDataURL = function (blob) {
+      w.releaseRead = () => read.call(this, blob);
+    };
+  });
+  const { messages } = await openApp(page);
+  const dialog = await pickCollectionFile(page);
+  await dialog.getByRole("button", { name: "Import" }).click();
+  await expect
+    .poll(() => page.evaluate(() => "releaseRead" in window))
+    .toBe(true);
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as { releaseRead?: () => void }).releaseRead?.(),
+  );
+  await page.waitForTimeout(200);
+  expect(messages.filter((m) => m.type === "import-collection")).toEqual([]);
+});
+
 test("the collection widget opens the open collection's stats", async ({
   page,
 }) => {

@@ -299,7 +299,8 @@ pub async fn ws_handler(
             None => ws,
         },
     };
-    ws.on_upgrade(move |socket| handle_socket(socket, settings, None))
+    with_message_limits(ws)
+        .on_upgrade(move |socket| handle_socket(socket, settings, None))
         .into_response()
 }
 
@@ -337,10 +338,20 @@ fn tailnet_ws_handler(
         )
             .into_response();
     };
-    ws.protocols([protocol])
+    with_message_limits(ws.protocols([protocol]))
         .on_upgrade(move |socket| handle_socket(socket, settings, paired))
         .into_response()
 }
+
+/// Browsers send a message as one frame, so frames may be as large as messages (64 MiB rather than
+/// 16), which leaves room for an imported collection file (`MsgClient::ImportCollection`).
+fn with_message_limits(ws: WebSocketUpgrade) -> WebSocketUpgrade {
+    ws.max_message_size(MAX_MESSAGE_SIZE)
+        .max_frame_size(MAX_MESSAGE_SIZE)
+}
+
+/// The largest message a client may send.
+const MAX_MESSAGE_SIZE: usize = 64 << 20;
 
 const AUTH_PROTOCOL: &str = "stereo.auth.";
 const PAIRING_PROTOCOL: &str = "stereo.pair.";
@@ -2741,6 +2752,59 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                     path_completions: None,
                 })
                 .await;
+            schedule_collection_sync(state, tx).await;
+        }
+
+        MsgClient::ImportCollection {
+            id,
+            repo,
+            name,
+            data,
+        } => {
+            let _repo_guard = lock_current_repo(state).await;
+            // The repo the dialog was opened for: a session that has just (re)connected may not
+            // have it yet, and the import mustn't land elsewhere.
+            let repo_path = std::path::PathBuf::from(&repo);
+            let Some(current) = state.repo.clone().filter(|r| *r == repo_path) else {
+                anyhow::bail!("Cannot import: {repo} isn't the open repository yet, try again");
+            };
+            let name = name.trim();
+            anyhow::ensure!(
+                !name.is_empty() && !name.contains('/') && !name.contains('\\'),
+                "Invalid collection name"
+            );
+            let path = current.join(format!("{name}.db"));
+            anyhow::ensure!(
+                !path.exists(),
+                "Cannot import — a collection named {name} already exists"
+            );
+            let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &data)
+                .with_context(|| format!("Could not import {name}"))?;
+            let size = db::import_collection(&bytes, &path)
+                .await
+                .with_context(|| format!("Could not import {name}"))?;
+            state.set_collection(path.clone(), false).await?;
+            let _ = tx
+                .send(MsgServer::CollectionImported {
+                    id,
+                    path: path.to_string_lossy().into_owned(),
+                })
+                .await;
+            let _ = tx
+                .send(MsgServer::Collections {
+                    collections: utils::list_repo_collections(&current),
+                })
+                .await;
+            let _ = tx
+                .send(MsgServer::CollectionInfo {
+                    id: None,
+                    collection: state.collection.clone(),
+                    error_message: None,
+                    path_completions: None,
+                })
+                .await;
+            let tracks = if size == 1 { "track" } else { "tracks" };
+            notify(tx, &format!("Imported {name} with {size} {tracks}"), "info").await;
             schedule_collection_sync(state, tx).await;
         }
 
