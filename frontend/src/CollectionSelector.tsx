@@ -18,9 +18,10 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@radix-ui/react-icons";
-import { FileDown } from "lucide-react";
+import { FileDown, FileUp } from "lucide-react";
 import { MenuHeading } from "./Menu.tsx";
 import NewCollectionDialog from "./NewCollectionDialog.tsx";
+import ImportCollectionDialog from "./ImportCollectionDialog.tsx";
 import RenameCollectionDialog from "./RenameCollectionDialog.tsx";
 import CloneRepoDialog from "./CloneRepoDialog.tsx";
 import GitRemoteDialog from "./GitRemoteDialog.tsx";
@@ -44,6 +45,8 @@ export type CollectionSelectorProps = {
   value: string;
   setValue: (path: string) => void;
   onCreate: (name: string) => void;
+  // Adds a collection file (base64-encoded) to the repo as is.
+  onImport: (name: string, data: string) => void;
   onDelete: (path: string) => void;
   onRename: (path: string, name: string) => void;
   // Downloads the collection's SQLite file.
@@ -69,6 +72,7 @@ function CollectionSelector({
   value,
   setValue,
   onCreate,
+  onImport,
   onDelete,
   onRename,
   onDownload,
@@ -86,6 +90,7 @@ function CollectionSelector({
   onShowStats,
 }: CollectionSelectorProps) {
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [remoteOpen, setRemoteOpen] = useState(false);
   // The repository whose remote the dialog edits: the one selected when it opened, even if
@@ -186,6 +191,12 @@ function CollectionSelector({
         icon={<PlusIcon />}
         label="New collection…"
         onClick={() => setCreateOpen(true)}
+      />
+      <DropdownMenuItem
+        icon={<FileUp />}
+        label="Import collection file…"
+        isDisabled={!selectedRepo}
+        onClick={() => setImportOpen(true)}
       />
       <DropdownMenuItem
         icon={<Pencil1Icon />}
@@ -295,6 +306,11 @@ function CollectionSelector({
         isOpen={createOpen}
         onOpenChange={setCreateOpen}
         onCreate={onCreate}
+      />
+      <ImportCollectionDialog
+        isOpen={importOpen}
+        onOpenChange={setImportOpen}
+        onImport={onImport}
       />
       <RenameCollectionDialog
         currentName={pendingRename && collectionLabel(pendingRename)}

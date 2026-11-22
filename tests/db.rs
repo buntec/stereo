@@ -834,3 +834,31 @@ async fn test_new_releases_candidates() {
     assert!(!label_defaults.contains(&"LFive"));
     assert!(c.labels.iter().any(|l| l.name == "LFive"));
 }
+
+#[tokio::test]
+async fn test_import_collection_copies_as_is() {
+    let (pool, dir) = setup().await;
+    let track = Track {
+        rating: Some(4),
+        play_count: 7,
+        ..make_track("imported")
+    };
+    db::insert_track(&pool, &track, true).await.unwrap();
+    pool.close().await;
+    let data = std::fs::read(dir.path().join("test.db")).unwrap();
+
+    let dest = dir.path().join("copy.db");
+    assert_eq!(db::import_collection(&data, &dest).await.unwrap(), 1);
+    let copy = db::open_pool(&dest).await.unwrap();
+    let fetched = db::get_track(&copy, "imported").await.unwrap().unwrap();
+    assert_eq!(fetched.rating, Some(4));
+    assert_eq!(fetched.play_count, 7);
+
+    // Never overwrites, and refuses files that aren't collections.
+    assert!(db::import_collection(&data, &dest).await.is_err());
+    let other = dir.path().join("other.db");
+    assert!(db::import_collection(b"not a database", &other)
+        .await
+        .is_err());
+    assert!(!other.exists());
+}

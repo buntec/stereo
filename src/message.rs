@@ -565,6 +565,13 @@ pub enum MsgClient {
     CreateCollection {
         name: String,
     },
+    /// Adds a collection file to the current repo as `name` (without the `.db` extension), as
+    /// is, with its ratings and play counts, and opens it.
+    ImportCollection {
+        name: String,
+        /// The file's contents, base64-encoded.
+        data: String,
+    },
     /// Deletes a collection of the current repo; the deletion is committed by the next sync.
     DeleteCollection {
         path: String,

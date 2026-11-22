@@ -151,6 +151,8 @@ export type ClientMsg =
   | { type: "validate-track"; track: unknown; id?: number }
   | { type: "check-spotify-id"; sp_id: string; id?: number }
   | { type: "create-collection"; name: string }
+  // `data` is the collection file, base64-encoded.
+  | { type: "import-collection"; name: string; data: string }
   | { type: "delete-collection"; path: string }
   | { type: "rename-collection"; path: string; name: string }
   | { type: "collection-contains-ids"; yt_ids: string[] }

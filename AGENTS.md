@@ -77,6 +77,10 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
   the WebSocket token in a plain link. `GET` streams and deletes the file, `HEAD` leaves
   the token. The desktop app offers the link in `CollectionDownloadDialog.tsx`, since its
   webview has no downloads and WebKitGTK blocks a window opened outside a click.
+  The reverse, `ImportCollectionDialog.tsx`, sends a picked file base64-encoded in
+  `ImportCollection`; `db::import_collection` validates it in a temp dir and copies it
+  into the repo as is with `VACUUM INTO`. WebSocket frames may be as large as messages
+  (64 MiB) to leave room for it.
 - **`git.rs`** manages repositories under `~/.local/share/stereo/gitrepos` by default.
   A repo may track a Git remote. `schedule_git_sync` in `server.rs` coalesces edits
   into a sync five minutes after the first change. Startup sync picks up uncommitted

@@ -2987,6 +2987,9 @@ function App() {
                   onCreate={(name) =>
                     sendMsg({ type: "create-collection", name })
                   }
+                  onImport={(name, data) =>
+                    sendMsg({ type: "import-collection", name, data })
+                  }
                   onDelete={(path) =>
                     sendMsg({ type: "delete-collection", path })
                   }

@@ -2865,6 +2865,42 @@ test("the desktop app offers a collection download as a link @webkit", async ({
   await expect(dialog).toHaveCount(0);
 });
 
+test("the collection menu imports a collection file as is @webkit", async ({
+  page,
+}) => {
+  const { messages } = await openApp(page);
+  await page
+    .locator(".collection-controls")
+    .getByRole("button")
+    .first()
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Import collection file…" })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Import Collection" });
+  const importButton = dialog.getByRole("button", { name: "Import" });
+  await expect(importButton).toBeDisabled();
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "Warm-up sets.db",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from("SQLite format 3\0"),
+  });
+  const name = dialog.getByRole("textbox", { name: "Collection name" });
+  await expect(name).toHaveValue("Warm-up sets");
+  await name.fill("warmup");
+  await importButton.click();
+  await expect(dialog).toHaveCount(0);
+  await expect
+    .poll(() => messages.filter((m) => m.type === "import-collection"))
+    .toEqual([
+      {
+        type: "import-collection",
+        name: "warmup",
+        data: Buffer.from("SQLite format 3\0").toString("base64"),
+      },
+    ]);
+});
+
 test("the collection widget opens the open collection's stats", async ({
   page,
 }) => {

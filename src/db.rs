@@ -686,6 +686,37 @@ async fn migrate_schema(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Copies the collection file `data` to `dest`, which must not exist, as is, and returns its
+/// number of tracks. The file is checked in a temp dir first, so that nothing is left in the repo
+/// unless it is a valid collection, and copied with `VACUUM INTO`, which refuses to overwrite.
+pub async fn import_collection(data: &[u8], dest: &Path) -> anyhow::Result<i64> {
+    let dir = tempfile::tempdir()?;
+    let src = dir.path().join("import.db");
+    tokio::fs::write(&src, data).await?;
+    anyhow::ensure!(
+        validate_db_schema(&src).await,
+        "not a Stereo collection file"
+    );
+    let opts = SqliteConnectOptions::new()
+        .filename(&src)
+        .create_if_missing(false);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await?;
+    let result = async {
+        let n = count_rows(&pool, &Default::default()).await?;
+        sqlx::query("VACUUM INTO ?")
+            .bind(dest.to_string_lossy().as_ref())
+            .execute(&pool)
+            .await?;
+        anyhow::Ok(n)
+    }
+    .await;
+    pool.close().await;
+    result
+}
+
 pub async fn validate_db_schema(path: &Path) -> bool {
     if !path.exists() {
         return false;
