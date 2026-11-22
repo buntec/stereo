@@ -46,9 +46,7 @@ the [yt-dlp setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
 - **Customize.** Use Settings to adjust the artwork and disco ball, or enable speaker
   animations that follow the beat.
 
-If a search provider fails, run _Health check_ from the toolbar. For Beatport, search
-on beatport.com and complete any browser challenge. Then connect or reconnect Beatport
-in Stereo from that browser.
+If a search provider fails, run _Health check_ from the toolbar. 
 
 ## On your phone
 
