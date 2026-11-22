@@ -17,6 +17,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@radix-ui/react-icons";
+import { FileDown } from "lucide-react";
 import { MenuHeading } from "./Menu.tsx";
 import NewCollectionDialog from "./NewCollectionDialog.tsx";
 import RenameCollectionDialog from "./RenameCollectionDialog.tsx";
@@ -44,6 +45,8 @@ export type CollectionSelectorProps = {
   onCreate: (name: string) => void;
   onDelete: (path: string) => void;
   onRename: (path: string, name: string) => void;
+  // Downloads the collection's SQLite file.
+  onDownload: (path: string) => void;
   isValid: boolean;
   repos: IRepo[];
   repoPath: string;
@@ -67,6 +70,7 @@ function CollectionSelector({
   onCreate,
   onDelete,
   onRename,
+  onDownload,
   isValid,
   repos,
   repoPath,
@@ -186,6 +190,16 @@ function CollectionSelector({
         }
         isDisabled={!selectedCollection}
         onClick={() => setPendingRename(selectedCollection ?? null)}
+      />
+      <DropdownMenuItem
+        icon={<FileDown />}
+        label={
+          selectedCollection
+            ? `Download ${collectionLabel(selectedCollection)}.db`
+            : "Download collection file"
+        }
+        isDisabled={!selectedCollection || !isValid}
+        onClick={() => selectedCollection && onDownload(selectedCollection)}
       />
       <DropdownMenuItem
         icon={<TrashIcon />}

@@ -155,6 +155,7 @@ export type ClientMsg =
   | { type: "rename-collection"; path: string; name: string }
   | { type: "collection-contains-ids"; yt_ids: string[] }
   | { type: "get-collection-track"; yt_id: string; collection: string }
+  | { type: "prepare-collection-download"; collection: string }
   | { type: "download-audio"; yt_id: string }
   | { type: "create-pairing-code" }
   | { type: "get-waveform"; yt_id: string }
@@ -400,6 +401,12 @@ export type ServerMsg =
       type: "collection-track";
       id: number;
       track: ITrack | null;
+    }
+  | {
+      /** Token for `/collection-download/{token}`: single use, valid two minutes. */
+      type: "collection-download";
+      id: number;
+      token: string;
     }
   | { type: "git-remote"; url: string | null }
   | {

@@ -172,6 +172,11 @@ pub enum MsgServer {
         id: i64,
         track: Option<Track>,
     },
+    /// Reply to `PrepareCollectionDownload`: the token for `/collection-download/{token}`.
+    CollectionDownload {
+        id: i64,
+        token: String,
+    },
     ImportFromValid {
         path: String,
         is_valid: bool,
@@ -632,6 +637,12 @@ pub enum MsgClient {
         yt_id: String,
         collection: String,
     },
+    /// Snapshots `collection`, which must be the open one, for download
+    /// (`MsgServer::CollectionDownload`, see `collection_download.rs`).
+    PrepareCollectionDownload {
+        id: i64,
+        collection: String,
+    },
     CheckImportFrom {
         path: String,
     },
@@ -824,6 +835,7 @@ impl MsgClient {
             | Self::GetPathCompletions { id, .. }
             | Self::CollectionContainsIds { id, .. }
             | Self::GetCollectionTrack { id, .. }
+            | Self::PrepareCollectionDownload { id, .. }
             | Self::GetWaveform { id, .. }
             | Self::CreatePairingCode { id }
             | Self::GetNewReleasesCandidates { id }

@@ -91,7 +91,12 @@ import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
 import { useAudioPlayback, useCanSetVolume } from "./AudioPlayback.ts";
 import VolumeControl, { DEFAULT_VOLUME } from "./VolumeControl.tsx";
-import { useLocalStorage, shuffleArray, hasCollectionStats } from "./Utils.tsx";
+import {
+  useLocalStorage,
+  shuffleArray,
+  hasCollectionStats,
+  downloadUrl,
+} from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
 import { scrollGridToTop } from "./useGridScrollState.ts";
 import SearchBox from "./SearchBox.tsx";
@@ -2920,6 +2925,21 @@ function App() {
                   }
                   onRename={(path, name) =>
                     sendMsg({ type: "rename-collection", path, name })
+                  }
+                  onDownload={(collection) =>
+                    // An error reply comes with a notification saying why.
+                    requestReply(
+                      { type: "prepare-collection-download", collection },
+                      (msg) => {
+                        if (
+                          msg.type === "collection-download" &&
+                          "token" in msg
+                        )
+                          downloadUrl(
+                            `/collection-download/${encodeURIComponent(msg.token)}`,
+                          );
+                      },
+                    )
                   }
                   repos={state.repos ?? []}
                   repoPath={settings.repoPath}

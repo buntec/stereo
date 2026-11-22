@@ -2715,3 +2715,24 @@ test("label searches explain that Spotify can't search by label", async ({
   await expect(spotify).toHaveAttribute("aria-disabled", "true");
   await expect(spotify).toContainText("Can't search by label");
 });
+
+test("the collection menu downloads the collection file", async ({ page }) => {
+  const { messages, send } = await openApp(page);
+  await page
+    .locator(".collection-controls")
+    .getByRole("button")
+    .first()
+    .click();
+  await page.getByRole("menuitem", { name: "Download collection.db" }).click();
+  const requests = () =>
+    messages.filter(
+      (message) => message.type === "prepare-collection-download",
+    );
+  await expect
+    .poll(requests)
+    .toEqual([expect.objectContaining({ collection: "/audit/collection.db" })]);
+  const download = page.waitForEvent("download");
+  send({ type: "collection-download", id: requests()[0].id, token: "abc" });
+  const file = await download;
+  expect(file.url()).toMatch(/\/collection-download\/abc$/);
+});

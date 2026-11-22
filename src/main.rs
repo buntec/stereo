@@ -296,6 +296,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/ws", get(server::ws_handler))
         .route("/audio/{id}", get(audio::handler))
         .route("/info", get(info))
+        .route(
+            "/collection-download/{token}",
+            get(stereo_backend::collection_download::handler),
+        )
         .with_state(settings.clone());
 
     if !settings.dev {

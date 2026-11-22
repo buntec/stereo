@@ -26,6 +26,23 @@ export const openInBrowser = () => {
   );
 };
 
+/** Downloads `url`, which the server sends as an attachment. The desktop app's
+ * webview has no downloads, so there it opens in the browser, which saves it. */
+export const downloadUrl = (url: string) => {
+  if (inDesktopApp) {
+    window.open(
+      new URL(url, window.location.href).href,
+      "_blank",
+      "noopener,noreferrer",
+    );
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  a.click();
+};
+
 export function shuffleArray<T>(array: T[]): T[] {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));

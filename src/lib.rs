@@ -3,6 +3,7 @@ pub mod audio;
 pub mod beatport;
 pub mod beats;
 pub mod browser_cookies;
+pub mod collection_download;
 pub mod data_dir;
 pub mod db;
 pub mod git;
