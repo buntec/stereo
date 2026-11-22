@@ -91,12 +91,21 @@ import { useBeatPulse } from "./useBeatPulse.ts";
 import type { PlaybackStatus } from "./Playback.ts";
 import { useAudioPlayback, useCanSetVolume } from "./AudioPlayback.ts";
 import VolumeControl, { DEFAULT_VOLUME } from "./VolumeControl.tsx";
-import { useLocalStorage, shuffleArray, hasCollectionStats } from "./Utils.tsx";
+import {
+  useLocalStorage,
+  shuffleArray,
+  hasCollectionStats,
+  downloadUrl,
+  inDesktopApp,
+} from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
 import { scrollGridToTop } from "./useGridScrollState.ts";
 import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector, { collectionLabel } from "./CollectionSelector.tsx";
+import CollectionDownloadDialog, {
+  type ReadyDownload,
+} from "./CollectionDownloadDialog.tsx";
 import ImportMenu from "./ImportMenu.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
 import {
@@ -795,6 +804,7 @@ const reducer = (state: State, action: Action): State => {
     case "health-check-progress":
     case "health-check":
     case "collection-track": // a reply, for BpmCheck
+    case "collection-download": // a reply, for the collection menu
     case "waveform": // a reply, for useWaveform
     case "audio-cached": // these three are kept in AudioCache.ts's store
     case "audio-evicted":
@@ -1114,6 +1124,11 @@ function App() {
   );
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  // A prepared collection download for the desktop app to offer.
+  const [readyDownload, setReadyDownload] = useState<ReadyDownload | null>(
+    null,
+  );
+  const closeReadyDownload = useCallback(() => setReadyDownload(null), []);
 
   const [newReleasesOpen, setNewReleasesOpen] = useState(false);
   // Keyed by collection path.
@@ -2921,6 +2936,26 @@ function App() {
                   onRename={(path, name) =>
                     sendMsg({ type: "rename-collection", path, name })
                   }
+                  onDownload={(collection) =>
+                    // An error reply comes with a notification saying why.
+                    requestReply(
+                      { type: "prepare-collection-download", collection },
+                      (msg) => {
+                        if (
+                          msg.type !== "collection-download" ||
+                          !("token" in msg)
+                        )
+                          return;
+                        const url = `/collection-download/${encodeURIComponent(msg.token)}`;
+                        if (inDesktopApp)
+                          setReadyDownload({
+                            url,
+                            fileName: `${collectionLabel(collection)}.db`,
+                          });
+                        else downloadUrl(url);
+                      },
+                    )
+                  }
                   repos={state.repos ?? []}
                   repoPath={settings.repoPath}
                   setRepoPath={(path) => {
@@ -3495,6 +3530,10 @@ function App() {
             requestReply={requestReply}
             onCancel={() => dispatch({ type: "clear-youtube-fixup-result" })}
             onCommit={commitYouTubeStaging}
+          />
+          <CollectionDownloadDialog
+            download={readyDownload}
+            onClose={closeReadyDownload}
           />
           <SavePlaylistDialog
             isOpen={savePlaylistOpen}

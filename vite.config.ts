@@ -17,6 +17,7 @@ export default defineConfig({
         ws: true,
       },
       "/audio": `http://localhost:${process.env.STEREO_PORT ?? "8005"}`,
+      "/collection-download": `http://localhost:${process.env.STEREO_PORT ?? "8005"}`,
     },
   },
   plugins: [react()],

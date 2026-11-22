@@ -2295,6 +2295,31 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             let _ = tx.send(MsgServer::CollectionTrack { id, track }).await;
         }
 
+        MsgClient::PrepareCollectionDownload { id, collection } => {
+            let (Some(pool), Some(open)) = (state.pool(), state.collection.as_ref()) else {
+                anyhow::bail!("No collection is open");
+            };
+            anyhow::ensure!(
+                is_open_collection(state, &collection),
+                "{} is no longer the open collection",
+                utils::collection_label(&collection)
+            );
+            // A large collection takes a while to copy, so off the session's message loop.
+            let (pool, path, tx) = (pool.clone(), open.path.clone(), tx.clone());
+            tokio::spawn(async move {
+                match crate::collection_download::prepare(&pool, &path).await {
+                    Ok(token) => {
+                        let _ = tx.send(MsgServer::CollectionDownload { id, token }).await;
+                    }
+                    Err(e) => {
+                        let message = format!("Download failed: {e:#}");
+                        notify(&tx, &message, "error").await;
+                        reply_error(&tx, id, &message).await;
+                    }
+                }
+            });
+        }
+
         MsgClient::SearchCancelAll {} => {
             if let Some(task) = state.search_task.take() {
                 task.abort();

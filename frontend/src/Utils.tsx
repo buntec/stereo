@@ -26,6 +26,15 @@ export const openInBrowser = () => {
   );
 };
 
+/** Downloads `url`, which the server sends as an attachment. Not in the desktop
+ * app, whose webview has no downloads (see `CollectionDownloadDialog.tsx`). */
+export const downloadUrl = (url: string) => {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  a.click();
+};
+
 export function shuffleArray<T>(array: T[]): T[] {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
