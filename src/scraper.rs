@@ -756,6 +756,32 @@ async fn bp_find_label(
     Ok(labels.into_iter().nth(exact.unwrap_or(0)))
 }
 
+/// The tracks by the Beatport artist named `name`, newest first, or none if Beatport has no
+/// such artist.
+pub async fn bp_get_artist_tracks(
+    client: &Client,
+    name: &str,
+    known: &KnownBpTracks,
+) -> anyhow::Result<Vec<BPTrack>> {
+    match bp_find_artist(client, name, known).await? {
+        Some(artist) => bp_get_artist_releases(client, &artist, None).await,
+        None => Ok(vec![]),
+    }
+}
+
+/// The tracks on the Beatport label named `name`, newest first, or none if Beatport has no
+/// such label.
+pub async fn bp_get_label_tracks(
+    client: &Client,
+    name: &str,
+    known: &KnownBpTracks,
+) -> anyhow::Result<Vec<BPTrack>> {
+    match bp_find_label(client, name, known).await? {
+        Some(label) => bp_get_label_releases(client, &label, None).await,
+        None => Ok(vec![]),
+    }
+}
+
 async fn bp_get_releases(
     client: &Client,
     url: &str,
@@ -1035,6 +1061,25 @@ pub async fn sc_get_user_tracks(
         .collect())
 }
 
+/// Up to `limit` tracks of the SoundCloud account of the artist named `name`.
+pub async fn sc_get_artist_tracks(
+    client: &Client,
+    name: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<SCTrack>> {
+    sc_tracks_by_person(client, name, limit, false).await
+}
+
+/// Up to `limit` tracks of the SoundCloud account of the label named `name`, labeled with the
+/// account's name.
+pub async fn sc_get_label_tracks(
+    client: &Client,
+    name: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<SCTrack>> {
+    sc_tracks_by_person(client, name, limit, true).await
+}
+
 /// Finds the SoundCloud account matching `name` (an artist or label both being SoundCloud
 /// "people") and returns their tracks. When `set_label` is true, every returned track's
 /// `label` is overwritten with the account's username, since this is used for label lookups
@@ -1174,6 +1219,126 @@ pub async fn vl_search_tracks(
     Ok(tracks)
 }
 
+/// Whose catalog a label or artist search fetches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Credit {
+    Label,
+    Artist,
+}
+
+impl Credit {
+    fn noun(self) -> &'static str {
+        match self {
+            Credit::Label => "label",
+            Credit::Artist => "artist",
+        }
+    }
+
+    /// Whether a source's `candidate` name is the label or artist the user searched for.
+    pub fn matches(self, candidate: &str, wanted: &str) -> bool {
+        match self {
+            Credit::Label => is_same_label(candidate, wanted),
+            Credit::Artist => is_same_name(candidate, wanted),
+        }
+    }
+}
+
+/// Fetches up to `limit` tracks released on the Volumo label named `name`, newest first, or
+/// none if Volumo has no label by that name.
+pub async fn vl_get_label_tracks(
+    client: &Client,
+    name: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<VLTrack>> {
+    vl_get_credit_tracks(client, Credit::Label, name, limit).await
+}
+
+/// Fetches up to `limit` tracks by the Volumo artist named `name`, including remixes, newest
+/// first, or none if Volumo has no artist by that name.
+pub async fn vl_get_artist_tracks(
+    client: &Client,
+    name: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<VLTrack>> {
+    vl_get_credit_tracks(client, Credit::Artist, name, limit).await
+}
+
+/// Takes the first contributor search hit that [`Credit::matches`] accepts, since a track
+/// search filters by one contributor id only. Volumo credits collaborators separately, so a
+/// joint entry such as "Solomun & Stimming" has no tracks of its own to miss.
+async fn vl_get_credit_tracks(
+    client: &Client,
+    credit: Credit,
+    name: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<VLTrack>> {
+    let (contributor_type, id_key) = match credit {
+        Credit::Label => ("recordlabel", "recordlabel_id"),
+        Credit::Artist => ("artist", "artist_id"),
+    };
+    let filter = serde_json::json!({ "search": name }).to_string();
+    let resp = client
+        .get(format!(
+            "https://volumo.com/api/v1/contributors/{contributor_type}"
+        ))
+        .header("Accept", "application/json")
+        .query(&[
+            ("filter", filter.as_str()),
+            ("sort", "relevance"),
+            ("limit", "10"),
+        ])
+        .send()
+        .await?;
+    let json = response_json(resp).await?;
+    let Some(id) = json["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find_map(|item| {
+            credit
+                .matches(item["name"].as_str()?, name)
+                .then(|| item["id"].as_i64())?
+        })
+    else {
+        tracing::info!("Volumo has no {} named {name:?}", credit.noun());
+        return Ok(vec![]);
+    };
+    tracing::info!("Volumo {} tracks: {name} ({id})", credit.noun());
+    // Pre-orders end at today's release date. Volumo's "date" sort is newest first.
+    let today = chrono::Local::now().date_naive();
+    let filter = serde_json::json!({
+        id_key: id,
+        "curation": "all",
+        "release_start_to": today.to_string(),
+    })
+    .to_string();
+    let limit_str = limit.to_string();
+    let (resp, genres) = tokio::join!(
+        client
+            .get("https://volumo.com/api/v1/tracks")
+            .header("Accept", "application/json")
+            .query(&[
+                ("filter", filter.as_str()),
+                ("sort", "date"),
+                ("limit", limit_str.as_str()),
+            ])
+            .send(),
+        get_vl_genres(client),
+    );
+    let json = response_json(resp?).await?;
+    let genres = genres.unwrap_or_else(|e| {
+        tracing::warn!("Volumo genre list fetch failed: {e}");
+        HashMap::new()
+    });
+    Ok(json["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| parse_vl_track(item, &genres))
+        .filter(|t| t.release_date <= today)
+        .collect())
+}
+
 // ── Traxsource ───────────────────────────────────────────────────────────────
 
 // Traxsource has no JSON API; its combined `/search` page server-renders a "Tracks" preview
@@ -1264,22 +1429,96 @@ fn parse_tx_track(row: &scraper::ElementRef) -> Option<TXTrack> {
 static TX_SESSION_COOKIE: LazyLock<String> =
     LazyLock::new(|| format!("PHPSESSID={}", uuid::Uuid::new_v4().simple()));
 
-pub async fn tx_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<TXTrack>> {
-    tracing::info!("Traxsource track search: {q}");
+async fn tx_search_page(client: &Client, q: &str) -> anyhow::Result<Html> {
     let resp = client
         .get("https://www.traxsource.com/search")
         .query(&[("term", q)])
         .header(wreq::header::COOKIE, TX_SESSION_COOKIE.as_str())
         .send()
         .await?;
-    let html = response_text(resp).await?;
-    let doc = Html::parse_document(&html);
+    Ok(Html::parse_document(&response_text(resp).await?))
+}
+
+/// The released tracks among a page's `div.trk-row`s. Pre-orders show "Pre-order for <date>"
+/// in place of the release date and are skipped, since they can't be played yet.
+fn parse_tx_tracks(doc: &Html) -> Vec<TXTrack> {
     let row_sel = Selector::parse("div.trk-row").unwrap();
-    let tracks: Vec<TXTrack> = doc
-        .select(&row_sel)
+    let pre_order_sel = Selector::parse("div.trk-cell.r-date .pre-ord-txt").unwrap();
+    let today = chrono::Local::now().date_naive();
+    doc.select(&row_sel)
+        .filter(|row| row.select(&pre_order_sel).next().is_none())
         .filter_map(|row| parse_tx_track(&row))
-        .collect();
+        .filter(|t| t.release_date <= today)
+        .collect()
+}
+
+pub async fn tx_search_tracks(client: &Client, q: &str) -> anyhow::Result<Vec<TXTrack>> {
+    tracing::info!("Traxsource track search: {q}");
+    let tracks = parse_tx_tracks(&tx_search_page(client, q).await?);
     tracing::info!("Traxsource returned {} tracks", tracks.len());
+    Ok(tracks)
+}
+
+/// The path (`/label/<id>/<slug>` or `/artist/<id>/<slug>`) of the label or artist named
+/// `name` among those a search page links to: its label or artist results and the credits of
+/// its track and release results.
+fn find_tx_credit_path(doc: &Html, credit: Credit, name: &str) -> Option<String> {
+    let link_sel = Selector::parse(match credit {
+        Credit::Label => "div.label-grid a.title, div.trk-cell.label a, a.com-label",
+        Credit::Artist => "div.artist-grid a.title, div.trk-cell.artists a.com-artists",
+    })
+    .unwrap();
+    let prefix = format!("/{}/", credit.noun());
+    doc.select(&link_sel).find_map(|a| {
+        let href = a.value().attr("href")?;
+        let text = a.text().collect::<String>();
+        (href.starts_with(&prefix) && credit.matches(text.trim(), name))
+            .then(|| href.split(['?', '#']).next().unwrap_or(href).to_string())
+    })
+}
+
+/// Fetches the newest 100 tracks released on the Traxsource label named `name`, or none if
+/// a search finds no label by that name.
+pub async fn tx_get_label_tracks(client: &Client, name: &str) -> anyhow::Result<Vec<TXTrack>> {
+    tx_get_credit_tracks(client, Credit::Label, name).await
+}
+
+/// Fetches the newest 100 tracks by the Traxsource artist named `name`, including remixes, or
+/// none if a search finds no artist by that name.
+pub async fn tx_get_artist_tracks(client: &Client, name: &str) -> anyhow::Result<Vec<TXTrack>> {
+    tx_get_credit_tracks(client, Credit::Artist, name).await
+}
+
+/// Label and artist pages are Cloudflare-challenge-protected, but the same page loaded through
+/// `builder.php`, which the site uses for in-page navigation, isn't.
+async fn tx_get_credit_tracks(
+    client: &Client,
+    credit: Credit,
+    name: &str,
+) -> anyhow::Result<Vec<TXTrack>> {
+    let Some(path) = find_tx_credit_path(&tx_search_page(client, name).await?, credit, name) else {
+        tracing::info!("Traxsource has no {} named {name:?}", credit.noun());
+        return Ok(vec![]);
+    };
+    let url = format!("https://www.traxsource.com/scripts/builder.php{path}");
+    tracing::info!("Traxsource {} tracks: {url}", credit.noun());
+    let resp = client
+        .get(&url)
+        .query(&[
+            ("cn", "tracks"),
+            ("ipp", "100"),
+            ("ob", "r_date"),
+            ("so", "desc"),
+        ])
+        .header(wreq::header::COOKIE, TX_SESSION_COOKIE.as_str())
+        .send()
+        .await?;
+    let tracks = parse_tx_tracks(&Html::parse_document(&response_text(resp).await?));
+    tracing::info!(
+        "Traxsource returned {} {} tracks",
+        tracks.len(),
+        credit.noun()
+    );
     Ok(tracks)
 }
 
@@ -2396,16 +2635,77 @@ fn is_same_name(candidate: &str, wanted: &str) -> bool {
             )) == wanted)
 }
 
+/// Words that labels often append to their name, so "Defected" and "Defected Records" match.
+const LABEL_SUFFIXES: &[&str] = &[
+    "records",
+    "recordings",
+    "recordz",
+    "recs",
+    "music",
+    "label",
+    "limited",
+    "ltd",
+    "digital",
+    "audio",
+];
+
+/// True if `candidate` names the same label as `wanted`, like [`is_same_name`] but ignoring
+/// generic trailing words ("Records", "Music"). Sources without a label-catalog endpoint return
+/// anything whose text resembles the query, such as track titles, which this filters out.
+pub fn is_same_label(candidate: &str, wanted: &str) -> bool {
+    fn core(name: &str) -> String {
+        let cleaned: String = name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+            .collect();
+        let mut words: Vec<&str> = cleaned.split_whitespace().collect();
+        while words.len() > 1 && words.last().is_some_and(|w| LABEL_SUFFIXES.contains(w)) {
+            words.pop();
+        }
+        words.join(" ")
+    }
+    let wanted_core = core(wanted);
+    is_same_name(candidate, wanted) || (!wanted_core.is_empty() && core(candidate) == wanted_core)
+}
+
+/// Words that describe a mix rather than name its remixer, as in "Solomun Extended Remix".
+const MIX_DESCRIPTORS: &[&str] = &[
+    "extended",
+    "club",
+    "radio",
+    "original",
+    "instrumental",
+    "vocal",
+    "short",
+    "long",
+    "full",
+    "12",
+    "12inch",
+];
+
 /// The remixer names credited by a mix tag, e.g. "Luch & Nils Hoffmann Remix" ->
 /// ["Luch", "Nils Hoffmann"]. Everything from the first mix keyword on is dropped.
 fn mix_credits(mix: &str) -> Vec<String> {
+    let bare = |word: &str| -> String {
+        word.chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+            .to_lowercase()
+    };
     let mut names = vec![];
     for word in mix.split_whitespace() {
-        let bare: String = word.chars().filter(|c| c.is_alphanumeric()).collect();
-        if MIX_KEYWORDS.contains(&bare.to_lowercase().as_str()) {
+        if MIX_KEYWORDS.contains(&bare(word).as_str()) {
             break;
         }
         names.push(word);
+    }
+    // "Solomun Extended Remix" credits Solomun.
+    while names
+        .last()
+        .is_some_and(|w| MIX_DESCRIPTORS.contains(&bare(w).as_str()))
+    {
+        names.pop();
     }
     names
         .join(" ")
@@ -2419,7 +2719,7 @@ fn mix_credits(mix: &str) -> Vec<String> {
 /// True if a track found via plain-text search actually credits `wanted`, as an artist or as a
 /// remixer. Sources without an artist-catalog endpoint return anything whose text resembles the
 /// query (prefix matches, track titles), which this filters out.
-fn credits_artist(artists: &[String], track_name: &str, mix_name: &str, wanted: &str) -> bool {
+pub fn credits_artist(artists: &[String], track_name: &str, mix_name: &str, wanted: &str) -> bool {
     artists.iter().any(|a| is_same_name(a, wanted))
         || [Some(mix_name.to_string()), extract_mix_tag(track_name)]
             .into_iter()
@@ -2623,43 +2923,30 @@ pub async fn search_by_label(
     known_bp_tracks: KnownBpTracks,
 ) {
     run_search(&tx, query_id, "search_by_label", || async {
-        let (bp_res, sc_res, vl_res, tx_res, sp_res) = tokio::join!(
+        let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
             async {
                 if !sources.contains(&TrackSource::Beatport) {
                     return Ok(vec![]);
                 }
-                match bp_find_label(&client, &label_name, &known_bp_tracks).await? {
-                    Some(label) => bp_get_label_releases(&client, &label, None).await,
-                    None => Ok(vec![]),
-                }
+                bp_get_label_tracks(&client, &label_name, &known_bp_tracks).await
             },
             async {
                 if sources.contains(&TrackSource::Soundcloud) {
-                    sc_tracks_by_person(&client, &label_name, limit, true).await
+                    sc_get_label_tracks(&client, &label_name, limit).await
                 } else {
                     Ok(vec![])
                 }
             },
             async {
-                // Volumo has no dedicated label-catalog endpoint; approximate with a text search.
                 if sources.contains(&TrackSource::Volumo) {
-                    vl_search_tracks(&client, &label_name, limit).await
+                    vl_get_label_tracks(&client, &label_name, limit).await
                 } else {
                     Ok(vec![])
                 }
             },
             async {
-                // Same for Traxsource.
                 if sources.contains(&TrackSource::Traxsource) {
-                    tx_search_tracks(&client, &label_name).await
-                } else {
-                    Ok(vec![])
-                }
-            },
-            async {
-                // Spotify's search API also has no dedicated label-catalog endpoint.
-                if sources.contains(&TrackSource::Spotify) {
-                    spotify::search_tracks(&client, &label_name, limit).await
+                    tx_get_label_tracks(&client, &label_name).await
                 } else {
                     Ok(vec![])
                 }
@@ -2670,10 +2957,9 @@ pub async fn search_by_label(
         let sc_tracks = source_results(sc_res, "SoundCloud", "label search", &mut failures);
         let vl_tracks = source_results(vl_res, "Volumo", "label search", &mut failures);
         let tx_tracks = source_results(tx_res, "Traxsource", "label search", &mut failures);
-        let sp_tracks = source_results(sp_res, "Spotify", "label search", &mut failures);
         report_source_failures(&tx, &failures).await;
-        // Apple Music isn't asked: its search doesn't index labels and its results don't name
-        // them, so a text search for a label's name would find only unrelated tracks.
+        // Spotify and Apple Music aren't asked: their searches don't find tracks by label and
+        // their results don't name one, so a text search would find only unrelated tracks.
         stream_raw_tracks(
             &client,
             &tx,
@@ -2684,7 +2970,6 @@ pub async fn search_by_label(
                 raw(sc_tracks, RawTrack::Sc),
                 raw(vl_tracks, RawTrack::Vl),
                 raw(tx_tracks, RawTrack::Tx),
-                raw(sp_tracks, RawTrack::Sp),
             ]),
         )
         .await;
@@ -2708,36 +2993,32 @@ pub async fn search_by_artist(
                 if !sources.contains(&TrackSource::Beatport) {
                     return Ok(vec![]);
                 }
-                match bp_find_artist(&client, &artist_name, &known_bp_tracks).await? {
-                    Some(artist) => bp_get_artist_releases(&client, &artist, None).await,
-                    None => Ok(vec![]),
-                }
+                bp_get_artist_tracks(&client, &artist_name, &known_bp_tracks).await
             },
             async {
                 if sources.contains(&TrackSource::Soundcloud) {
-                    sc_tracks_by_person(&client, &artist_name, limit, false).await
+                    sc_get_artist_tracks(&client, &artist_name, limit).await
                 } else {
                     Ok(vec![])
                 }
             },
             async {
-                // Volumo has no dedicated artist-catalog endpoint; approximate with a text search.
                 if sources.contains(&TrackSource::Volumo) {
-                    vl_search_tracks(&client, &artist_name, limit).await
+                    vl_get_artist_tracks(&client, &artist_name, limit).await
                 } else {
                     Ok(vec![])
                 }
             },
             async {
-                // Same for Traxsource.
                 if sources.contains(&TrackSource::Traxsource) {
-                    tx_search_tracks(&client, &artist_name).await
+                    tx_get_artist_tracks(&client, &artist_name).await
                 } else {
                     Ok(vec![])
                 }
             },
             async {
-                // Same for Spotify.
+                // Spotify's search has no artist-catalog endpoint, so its text search results
+                // are checked for the artist below.
                 if sources.contains(&TrackSource::Spotify) {
                     spotify::search_tracks(&client, &artist_name, limit).await
                 } else {
@@ -2763,13 +3044,11 @@ pub async fn search_by_artist(
         let mut failures = Vec::new();
         let bp_tracks = source_results(bp_res, "Beatport", "artist search", &mut failures);
         let sc_tracks = source_results(sc_res, "SoundCloud", "artist search", &mut failures);
-        let mut vl_tracks = source_results(vl_res, "Volumo", "artist search", &mut failures);
-        let mut tx_tracks = source_results(tx_res, "Traxsource", "artist search", &mut failures);
+        let vl_tracks = source_results(vl_res, "Volumo", "artist search", &mut failures);
+        let tx_tracks = source_results(tx_res, "Traxsource", "artist search", &mut failures);
         let mut sp_tracks = source_results(sp_res, "Spotify", "artist search", &mut failures);
         let mut am_tracks = source_results(am_res, "Apple Music", "artist search", &mut failures);
         report_source_failures(&tx, &failures).await;
-        vl_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, &t.mix_name, &artist_name));
-        tx_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, &t.mix_name, &artist_name));
         sp_tracks.retain(|t| credits_artist(&t.artists, &t.track_name, "", &artist_name));
         // Apple joins its artists into one credit, whose separators also occur within names
         // ("Earth, Wind & Fire"), so it is matched as written too.
@@ -2800,9 +3079,8 @@ pub async fn search_by_artist(
 }
 
 /// Fetches releases by a single artist or label name across the selected sources, dropping
-/// anything released before `cutoff`. Beatport supports a native date-range query; the other
-/// backends only offer plain-text search, so their results are filtered client-side. Apple Music
-/// is left out, since this runs for many names at once and it allows only about 20 searches a
+/// anything released before `cutoff`. Each source's artist or label catalog is filtered by date
+/// here, as not all of them honor a date range. Apple Music is left out, since this runs for many names at once and it allows only about 20 searches a
 /// minute.
 async fn gather_new_release_raw_tracks(
     client: &Client,
@@ -2838,17 +3116,21 @@ async fn gather_new_release_raw_tracks(
             }
         },
         async {
-            if sources.contains(&TrackSource::Volumo) {
-                vl_search_tracks(client, name, per_source_limit).await
-            } else {
+            if !sources.contains(&TrackSource::Volumo) {
                 Ok(vec![])
+            } else if is_label {
+                vl_get_label_tracks(client, name, per_source_limit).await
+            } else {
+                vl_get_artist_tracks(client, name, per_source_limit).await
             }
         },
         async {
-            if sources.contains(&TrackSource::Traxsource) {
-                tx_search_tracks(client, name).await
-            } else {
+            if !sources.contains(&TrackSource::Traxsource) {
                 Ok(vec![])
+            } else if is_label {
+                tx_get_label_tracks(client, name).await
+            } else {
+                tx_get_artist_tracks(client, name).await
             }
         },
     );
@@ -2882,7 +3164,6 @@ async fn gather_new_release_raw_tracks(
         })
         .into_iter()
         .filter(|t| in_range(t.release_date))
-        .filter(|t| is_label || credits_artist(&t.artists, &t.track_name, &t.mix_name, name))
         .collect();
     let tx_tracks: Vec<TXTrack> = tx_res
         .unwrap_or_else(|e| {
@@ -2891,7 +3172,6 @@ async fn gather_new_release_raw_tracks(
         })
         .into_iter()
         .filter(|t| in_range(t.release_date))
-        .filter(|t| is_label || credits_artist(&t.artists, &t.track_name, &t.mix_name, name))
         .collect();
 
     bp_tracks
@@ -3347,6 +3627,39 @@ mod remix_match_tests {
     }
 
     #[test]
+    fn find_tx_label_path_picks_named_label() {
+        let doc = Html::parse_document(
+            r#"<a href="/label/34118/traxsource-weekend-weapons" class="flt">Weekend Weapons</a>
+            <div class="trk-row"><div class="trk-cell label"><a href="/label/57/ith">ITH</a></div></div>
+            <div class="label-grid"><a href="/label/51/defected" class="title">Defected</a></div>"#,
+        );
+        assert_eq!(
+            find_tx_credit_path(&doc, Credit::Label, "Defected Records").as_deref(),
+            Some("/label/51/defected")
+        );
+        assert_eq!(
+            find_tx_credit_path(&doc, Credit::Label, "ITH").as_deref(),
+            Some("/label/57/ith")
+        );
+        assert_eq!(
+            find_tx_credit_path(&doc, Credit::Label, "Weekend Weapons"),
+            None
+        );
+    }
+
+    #[test]
+    fn is_same_label_ignores_generic_suffixes() {
+        assert!(is_same_label("RADIANT.", "RADIANT."));
+        assert!(is_same_label("Radiant", "RADIANT."));
+        assert!(is_same_label("Defected Records", "Defected"));
+        assert!(is_same_label("Defected", "Defected Records"));
+        assert!(!is_same_label("Tactician Sound", "RADIANT."));
+        assert!(!is_same_label("Elliptical Sun Recordings", "Radiant"));
+        assert!(!is_same_label("Radiant Sun Recordings", "Radiant"));
+        assert!(!is_same_label("Records", ""));
+    }
+
+    #[test]
     fn credits_artist_as_artist_or_remixer() {
         let artists = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert!(credits_artist(
@@ -3374,6 +3687,18 @@ mod remix_match_tests {
             "Luch"
         ));
         assert!(!credits_artist(&artists(&["LuchQ"]), "Energy", "", "Luch"));
+        assert!(credits_artist(
+            &artists(&["Joe Smooth"]),
+            "Promised Land",
+            "Solomun Extended Remix",
+            "Solomun"
+        ));
+        assert!(!credits_artist(
+            &artists(&["Joe Smooth"]),
+            "Promised Land",
+            "Extended Mix",
+            "Extended"
+        ));
         assert!(!credits_artist(
             &artists(&["St.Ego", "Lucho (AR)"]),
             "Choice (Lucho AR Remix)",

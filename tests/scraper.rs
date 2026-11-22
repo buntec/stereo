@@ -50,6 +50,14 @@ async fn test_health_check() {
             "Traxsource",
             "Spotify",
             "Apple Music",
+            "Beatport labels",
+            "SoundCloud labels",
+            "Volumo labels",
+            "Traxsource labels",
+            "Beatport artists",
+            "SoundCloud artists",
+            "Volumo artists",
+            "Traxsource artists",
             "YouTube",
             "Shazam",
             "Shazam lookup",
@@ -415,4 +423,68 @@ async fn test_search_by_artist() {
     assert!(!tracks.is_empty(), "expected artist release results");
     assert!(!tracks[0].yt_id.is_empty());
     assert!(!tracks[0].artists.is_empty());
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_tx_get_label_tracks() {
+    let tracks = scraper::tx_get_label_tracks(&client(), "Defected")
+        .await
+        .unwrap();
+    let today = chrono::Local::now().date_naive();
+    println!(
+        "{} tracks, newest {:?}",
+        tracks.len(),
+        tracks.first().map(|t| t.release_date)
+    );
+    assert!(tracks.len() > 20);
+    assert!(tracks
+        .iter()
+        .all(|t| t.label == "Defected" && t.release_date <= today));
+    assert!(tracks
+        .windows(2)
+        .all(|w| w[0].release_date >= w[1].release_date));
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_vl_get_label_tracks() {
+    let tracks = scraper::vl_get_label_tracks(&client(), "Magnifik Music", 50)
+        .await
+        .unwrap();
+    let today = chrono::Local::now().date_naive();
+    println!(
+        "{} tracks, newest {:?}",
+        tracks.len(),
+        tracks.first().map(|t| t.release_date)
+    );
+    assert!(tracks.len() > 10);
+    assert!(tracks
+        .iter()
+        .all(|t| t.label == "Magnifik Music" && t.release_date <= today));
+    assert!(tracks
+        .windows(2)
+        .all(|w| w[0].release_date >= w[1].release_date));
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_artist_catalogs() {
+    let today = chrono::Local::now().date_naive();
+    let tx = scraper::tx_get_artist_tracks(&client(), "Solomun")
+        .await
+        .unwrap();
+    let vl = scraper::vl_get_artist_tracks(&client(), "Solomun", 50)
+        .await
+        .unwrap();
+    println!("Traxsource {} tracks, Volumo {} tracks", tx.len(), vl.len());
+    assert!(tx.len() > 20 && vl.len() > 20);
+    assert!(tx.iter().all(|t| t.release_date <= today));
+    assert!(vl.iter().all(|t| t.release_date <= today));
+    assert!(tx
+        .windows(2)
+        .all(|w| w[0].release_date >= w[1].release_date));
+    assert!(vl
+        .windows(2)
+        .all(|w| w[0].release_date >= w[1].release_date));
 }
