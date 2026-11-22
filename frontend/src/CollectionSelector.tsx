@@ -138,6 +138,10 @@ function CollectionSelector({
     .filter(Boolean)
     .join(" · ");
 
+  const statsLabel = selectedCollection
+    ? `${collectionLabel(selectedCollection)} stats`
+    : "Collection stats";
+
   // An actionable sync status joins the menu's button, so it reads as the collection's.
   const showSync = showGitSyncStatus(syncState, syncRetryable);
 
@@ -257,16 +261,8 @@ function CollectionSelector({
         {menu}
         <Button
           className="collection-stats"
-          label={
-            selectedCollection
-              ? `${collectionLabel(selectedCollection)} stats`
-              : "Collection stats"
-          }
-          tooltip={
-            selectedCollection
-              ? `${collectionLabel(selectedCollection)} stats`
-              : "Collection stats"
-          }
+          label={statsLabel}
+          tooltip={statsLabel}
           icon={<BarChartIcon />}
           isIconOnly
           variant={showSync ? "secondary" : "ghost"}

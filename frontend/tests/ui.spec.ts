@@ -1571,6 +1571,28 @@ test("resetting filters and sorting keeps the displayed columns", async ({
   await expect(clear).toHaveCount(0);
 });
 
+test("a sort restored from the last session can be reset", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (localStorage.getItem("stereo_app_grid_state_v2")) return;
+    localStorage.setItem(
+      "stereo_app_grid_state_v2",
+      JSON.stringify({
+        sort: { sortModel: [{ colId: "title", sort: "asc" }] },
+      }),
+    );
+  });
+  await openApp(page);
+  const titleHeader = page.locator('.ag-header-cell[col-id="title"]');
+  await expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+  await page
+    .getByRole("button", { name: "Reset filters and sorting", exact: true })
+    .click();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "none");
+  await expect(
+    page.locator('.ag-header-cell[col-id="release_date"]'),
+  ).toHaveAttribute("aria-sort", "descending");
+});
+
 test("grid arrow keys move between rows without skipping playback", async ({
   page,
 }) => {

@@ -190,7 +190,6 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) =>
     />
   ) : null;
 
-// Overlays are module-level components so AG Grid does not remount them on every render.
 // Identifies a grid view by its filters and sort, as compared between a row request and
 // the grid's current state.
 const viewKey = (
@@ -202,6 +201,7 @@ const viewKey = (
     (sortModel ?? []).map(({ colId, sort }) => [colId, sort]),
   ]);
 
+// Overlays are module-level components so AG Grid does not remount them on every render.
 const SearchingOverlay = () => <Spinner label="Searching for tracks…" />;
 
 const NoSearchResultsOverlay = ({
