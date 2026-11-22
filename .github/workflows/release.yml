@@ -7,10 +7,22 @@ on:
   # A trial run: builds everything, but keeps it as workflow artifacts instead of releasing it.
   workflow_dispatch:
 
+# macOS signing and notarization use the secrets of the `release` environment, which only `main`
+# and `v*` tags may use:
+#   MACOS_CERTIFICATE_P12       base64 of the "Developer ID Application" certificate and key (.p12)
+#   MACOS_CERTIFICATE_PASSWORD  the .p12 file's password
+#   APPLE_API_KEY_P8            the App Store Connect API key (.p8 file contents)
+#   APPLE_API_KEY_ID            its key ID
+#   APPLE_API_ISSUER_ID         its issuer ID
+# Without MACOS_CERTIFICATE_P12 the Mac builds are only ad-hoc signed.
+
 jobs:
   build:
     name: Build (${{ matrix.artifact_name }})
     runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
+    # Notarization usually takes minutes, but Apple sometimes takes hours.
+    timeout-minutes: 300
     permissions:
       contents: write
     strategy:
@@ -27,9 +39,11 @@ jobs:
           - os: macos-15-intel
             binary: stereo
             artifact_name: stereo-macos-x86_64
+            environment: release
           - os: macos-latest
             binary: stereo
             artifact_name: stereo-macos-aarch64
+            environment: release
           - os: windows-latest
             binary: stereo.exe
             artifact_name: stereo-windows-x86_64.exe
@@ -37,6 +51,9 @@ jobs:
     env:
       # linuxdeploy, which bundles the AppImage, is an AppImage itself; the runners have no FUSE.
       APPIMAGE_EXTRACT_AND_RUN: 1
+      # Whether to sign with the Developer ID and notarize. Only the flag here: the secrets go to
+      # the steps that need them.
+      MACOS_SIGN: ${{ startsWith(matrix.os, 'macos') && secrets.MACOS_CERTIFICATE_P12 != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -89,6 +106,62 @@ jobs:
         shell: bash
         run: strip target/release/${{ matrix.binary }}
 
+      - name: Warn that macOS builds are only ad-hoc signed
+        if: startsWith(matrix.os, 'macos') && env.MACOS_SIGN != 'true'
+        run: echo "::warning::MACOS_CERTIFICATE_P12 isn't set, so the binary and app aren't notarized"
+
+      # Into a temporary keychain, which codesign and the desktop build below find the identity in.
+      - name: Import Developer ID certificate
+        if: env.MACOS_SIGN == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          # The certificate's issuer, in case the runner image lacks it. Pinned by fingerprint.
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" \
+            https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          fingerprint="$(openssl x509 -inform der -in "$RUNNER_TEMP/DeveloperIDG2CA.cer" -noout -fingerprint -sha256)"
+          if [[ "$fingerprint" != *F1:6C:D3:C5:4C:7F:83:CE:A4:BF:1A:3E:6A:08:19:C8:AA:A8:E4:A1:52:8F:D1:44:71:5F:35:06:43:D2:DF:3A ]]; then
+            echo "::error::unexpected Developer ID G2 CA certificate: $fingerprint"
+            exit 1
+          fi
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)"
+          if [ -z "$identity" ]; then
+            echo "::error::MACOS_CERTIFICATE_P12 holds no Developer ID Application identity"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          # The App Store Connect API key, for notarytool and the desktop build.
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+
+      # A bare executable can't have its ticket stapled: Gatekeeper looks it up online.
+      - name: Sign and notarize binary
+        if: env.MACOS_SIGN == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          binary=target/release/${{ matrix.binary }}
+          codesign --force --options runtime --timestamp -s "$APPLE_SIGNING_IDENTITY" "$binary"
+          codesign --verify --strict --verbose=1 "$binary"
+          ditto -c -k "$binary" "$RUNNER_TEMP/binary.zip"
+          .github/scripts/notarize.sh "$RUNNER_TEMP/binary.zip"
+
       - name: Package binary
         shell: bash
         run: cp target/release/${{ matrix.binary }} ${{ matrix.artifact_name }}
@@ -123,18 +196,40 @@ jobs:
           ext="${{ runner.os == 'Windows' && '.exe' || '' }}"
           cp "target/release/stereo$ext" "desktop/src-tauri/binaries/stereo-$(rustc --print host-tuple)$ext"
 
+      # With MACOS_SIGN, Tauri signs the app, sidecar and .dmg with APPLE_SIGNING_IDENTITY and
+      # notarizes and staples the app with the API key.
       - name: Build desktop app
         shell: bash
         working-directory: desktop
+        env:
+          APPLE_API_KEY: ${{ env.MACOS_SIGN == 'true' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ env.MACOS_SIGN == 'true' && secrets.APPLE_API_ISSUER_ID || '' }}
         run: |
           bun install
-          if [ "$RUNNER_OS" = macOS ]; then
-            # Not signed with a Developer ID or notarized: ad-hoc signed, so that the app opens
-            # once allowed in System Settings › Privacy & Security, rather than "is damaged".
+          if [ "$RUNNER_OS" = macOS ] && [ "$MACOS_SIGN" != true ]; then
+            # Ad-hoc signed, so that the app opens once allowed in System Settings › Privacy &
+            # Security, rather than "is damaged".
             bun run build -- --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
           else
             bun run build
           fi
+
+      # Tauri notarizes the app inside but not the .dmg, which Gatekeeper checks when it's opened.
+      - name: Notarize desktop app disk image
+        if: env.MACOS_SIGN == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          app=desktop/src-tauri/target/release/bundle/macos/Stereo.app
+          codesign --verify --deep --strict --verbose=1 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          for dmg in desktop/src-tauri/target/release/bundle/dmg/*.dmg; do
+            .github/scripts/notarize.sh "$dmg"
+            xcrun stapler staple "$dmg"
+            spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+          done
 
       - name: Upload desktop app to GitHub release
         if: startsWith(github.ref, 'refs/tags/')
@@ -162,3 +257,9 @@ jobs:
             desktop/src-tauri/target/release/bundle/deb/*.deb
             desktop/src-tauri/target/release/bundle/rpm/*.rpm
             desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Remove the signing keychain and notary key
+        if: always() && env.MACOS_SIGN == 'true'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8"

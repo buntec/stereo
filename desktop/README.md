@@ -71,9 +71,17 @@ The app sets `window.__STEREO_DESKTOP__`; the UI checks it with `inDesktopApp` (
 Each target architecture needs its own bundled `stereo` binary. The release workflow
 (`.github/workflows/release.yml`) builds the app on each platform it builds `stereo` for, and
 adds the bundles to the release: a `.dmg` per Mac architecture, Windows `.msi` and setup `.exe`,
-Linux `.deb`, `.rpm` and `.AppImage`. Its Mac apps are only ad-hoc signed, not with a Developer ID
-nor notarized, so macOS refuses to open a downloaded one until it's allowed in System Settings ›
-Privacy & Security; sign and notarize the bundle before distributing it to other users.
+Linux `.deb`, `.rpm` and `.AppImage`.
+
+On macOS the workflow signs the `stereo` binary, the app and its `.dmg` with a Developer ID and
+notarizes them, using the secrets of the repository's `release` environment, which the workflow
+lists: the Developer ID Application certificate as a `.p12` file and an App Store Connect API key
+(App Store Connect › Users and Access › Integrations › Team Keys, Developer access). Both belong to
+the team, not the app, so another app's can be reused. Without `MACOS_CERTIFICATE_P12` it ad-hoc
+signs them and warns, and macOS refuses to open a downloaded app until it's allowed in System
+Settings › Privacy & Security. A notarized app's ticket is stapled to it and the `.dmg`; the bare
+`stereo` binary can't hold one, so Gatekeeper looks it up online. Locally, `just desktop-build`
+signs with a Developer ID only when `APPLE_SIGNING_IDENTITY` names one.
 
 `app-icon.svg` is the icon's source, Stereo's logo on a tile. After editing it, run
 `cd desktop && bunx tauri icon app-icon.svg -o src-tauri/icons` and delete the generated
