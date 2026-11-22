@@ -6,8 +6,8 @@ your finds in local SQLite collections that store track metadata. Stereo needs n
 or subscription.
 
 <p>
-  <img src="https://github.com/user-attachments/assets/0b58f6ba-2891-4800-8a0e-9cf61f4813e3" alt="Stereo with the light theme" width="49%">
-  <img src="https://github.com/user-attachments/assets/a77b0524-f409-4684-a301-9ef9e01b4d88" alt="Stereo with the dark theme" width="49%">
+  <img src="https://github.com/user-attachments/assets/2e984654-33e8-4264-af3a-1e95d9bb3092" alt="Stereo with the light theme" width="49%">
+  <img src="https://github.com/user-attachments/assets/8614962e-b090-478d-b033-e481825d43ba" alt="Stereo with the dark theme" width="49%">
 </p>
 
 ## Install
