@@ -13,6 +13,7 @@ import {
 
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { Icon } from "@astryxdesign/core/Icon";
 import Rating from "./Rating";
 import { Button } from "@astryxdesign/core/Button";
 import { Text } from "@astryxdesign/core/Text";
@@ -463,15 +464,32 @@ const SearchPlayControlRenderer: React.FC<
             : []),
         ]}
       />
-      <IconButton
-        variant="secondary"
-        size="sm"
-        onClick={handleAdd}
-        isDisabled={exists}
-        label={exists ? "Track exists in collection" : "Add to collection"}
-        tooltip={exists ? "Track exists in collection" : "Add to collection"}
-        icon={<PlusIcon />}
-      />
+      {exists ? (
+        // A status, not a disabled "+": a different glyph and color read at a glance in a
+        // single row, where a dimmed button only stands out next to an enabled one.
+        <Tooltip
+          content="Track exists in collection"
+          hasHoverIndication={false}
+        >
+          <HStack width="var(--spacing-7)" hAlign="center" vAlign="center">
+            <Icon
+              icon="success"
+              color="success"
+              size="sm"
+              label="Track exists in collection"
+            />
+          </HStack>
+        </Tooltip>
+      ) : (
+        <IconButton
+          variant="secondary"
+          size="sm"
+          onClick={handleAdd}
+          label="Add to collection"
+          tooltip="Add to collection"
+          icon={<PlusIcon />}
+        />
+      )}
     </HStack>
   );
 };
