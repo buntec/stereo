@@ -687,9 +687,11 @@ async fn migrate_schema(pool: &SqlitePool) -> anyhow::Result<()> {
 }
 
 /// Copies the collection file `data` to `dest`, which must not exist, as is, and returns its
-/// number of tracks. The file is checked in a temp dir first, so that nothing is left in the repo
-/// unless it is a valid collection, and copied with `VACUUM INTO`, which refuses to overwrite.
+/// number of tracks. The file is checked in a temp dir first, then copied with `VACUUM INTO` to a
+/// temp file beside `dest`, which takes `dest`'s name only once complete and without overwriting,
+/// so that a failed import leaves nothing in the repo.
 pub async fn import_collection(data: &[u8], dest: &Path) -> anyhow::Result<i64> {
+    ensure_standalone(data)?;
     let dir = tempfile::tempdir()?;
     let src = dir.path().join("import.db");
     tokio::fs::write(&src, data).await?;
@@ -697,6 +699,14 @@ pub async fn import_collection(data: &[u8], dest: &Path) -> anyhow::Result<i64> 
         validate_db_schema(&src).await,
         "not a Stereo collection file"
     );
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("no directory for {}", dest.display()))?;
+    // Not named `*.db`, so not listed as a collection meanwhile; `VACUUM INTO` takes an empty file.
+    let staged = tempfile::Builder::new()
+        .prefix(".stereo-import-")
+        .suffix(".tmp")
+        .tempfile_in(parent)?;
     let opts = SqliteConnectOptions::new()
         .filename(&src)
         .create_if_missing(false);
@@ -707,14 +717,33 @@ pub async fn import_collection(data: &[u8], dest: &Path) -> anyhow::Result<i64> 
     let result = async {
         let n = count_rows(&pool, &Default::default()).await?;
         sqlx::query("VACUUM INTO ?")
-            .bind(dest.to_string_lossy().as_ref())
+            .bind(staged.path().to_string_lossy().as_ref())
             .execute(&pool)
             .await?;
         anyhow::Ok(n)
     }
     .await;
     pool.close().await;
-    result
+    let n = result?;
+    staged.persist_noclobber(dest).map_err(|e| e.error)?;
+    Ok(n)
+}
+
+/// Refuses a database in WAL mode, whose latest changes may be in a `-wal` file beside it that
+/// wasn't uploaded. Stereo's own files, and its downloads, use a rollback journal.
+fn ensure_standalone(data: &[u8]) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        data.starts_with(b"SQLite format 3\0") && data.len() >= 100,
+        "not an SQLite database"
+    );
+    // The header's file format write and read versions: 2 for WAL.
+    anyhow::ensure!(
+        data[18] != 2 && data[19] != 2,
+        "the file is in WAL mode, so some of its changes may be in a separate -wal file. \
+         Import a standalone copy, such as Stereo's download of it or one made with \
+         `sqlite3 file.db \"VACUUM INTO 'copy.db'\"`"
+    );
+    Ok(())
 }
 
 pub async fn validate_db_schema(path: &Path) -> bool {

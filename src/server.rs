@@ -2755,43 +2755,44 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             schedule_collection_sync(state, tx).await;
         }
 
-        MsgClient::ImportCollection { name, data } => {
+        MsgClient::ImportCollection {
+            id,
+            repo,
+            name,
+            data,
+        } => {
             let _repo_guard = lock_current_repo(state).await;
-            let Some(repo) = state.repo.clone() else {
-                notify(tx, "No repo selected", "error").await;
-                return Ok(());
+            // The repo the dialog was opened for: a session that has just (re)connected may not
+            // have it yet, and the import mustn't land elsewhere.
+            let repo_path = std::path::PathBuf::from(&repo);
+            let Some(current) = state.repo.clone().filter(|r| *r == repo_path) else {
+                anyhow::bail!("Cannot import: {repo} isn't the open repository yet, try again");
             };
             let name = name.trim();
-            if name.is_empty() || name.contains('/') || name.contains('\\') {
-                notify(tx, "Invalid collection name", "error").await;
-                return Ok(());
-            }
-            let path = repo.join(format!("{name}.db"));
-            if path.exists() {
-                notify(
-                    tx,
-                    &format!("Cannot import — a collection named {name} already exists"),
-                    "error",
-                )
+            anyhow::ensure!(
+                !name.is_empty() && !name.contains('/') && !name.contains('\\'),
+                "Invalid collection name"
+            );
+            let path = current.join(format!("{name}.db"));
+            anyhow::ensure!(
+                !path.exists(),
+                "Cannot import — a collection named {name} already exists"
+            );
+            let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &data)
+                .with_context(|| format!("Could not import {name}"))?;
+            let size = db::import_collection(&bytes, &path)
+                .await
+                .with_context(|| format!("Could not import {name}"))?;
+            state.set_collection(path.clone(), false).await?;
+            let _ = tx
+                .send(MsgServer::CollectionImported {
+                    id,
+                    path: path.to_string_lossy().into_owned(),
+                })
                 .await;
-                return Ok(());
-            }
-            let imported =
-                match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &data) {
-                    Ok(bytes) => db::import_collection(&bytes, &path).await,
-                    Err(e) => Err(e.into()),
-                };
-            let size = match imported {
-                Ok(size) => size,
-                Err(e) => {
-                    notify(tx, &format!("Could not import {name}: {e:#}"), "error").await;
-                    return Ok(());
-                }
-            };
-            state.set_collection(path, false).await?;
             let _ = tx
                 .send(MsgServer::Collections {
-                    collections: utils::list_repo_collections(&repo),
+                    collections: utils::list_repo_collections(&current),
                 })
                 .await;
             let _ = tx

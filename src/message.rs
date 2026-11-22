@@ -172,6 +172,11 @@ pub enum MsgServer {
         id: i64,
         track: Option<Track>,
     },
+    /// Reply to `ImportCollection`: the new collection's path.
+    CollectionImported {
+        id: i64,
+        path: String,
+    },
     /// Reply to `PrepareCollectionDownload`: the token for `/collection-download/{token}`.
     CollectionDownload {
         id: i64,
@@ -565,9 +570,12 @@ pub enum MsgClient {
     CreateCollection {
         name: String,
     },
-    /// Adds a collection file to the current repo as `name` (without the `.db` extension), as
-    /// is, with its ratings and play counts, and opens it.
+    /// Adds a collection file to `repo`, which must be the current repo, as `name` (without the
+    /// `.db` extension), as is, with its ratings and play counts, and opens it. Answered with
+    /// `CollectionImported`.
     ImportCollection {
+        id: i64,
+        repo: String,
         name: String,
         /// The file's contents, base64-encoded.
         data: String,
@@ -843,6 +851,7 @@ impl MsgClient {
             | Self::CollectionContainsIds { id, .. }
             | Self::GetCollectionTrack { id, .. }
             | Self::PrepareCollectionDownload { id, .. }
+            | Self::ImportCollection { id, .. }
             | Self::GetWaveform { id, .. }
             | Self::CreatePairingCode { id }
             | Self::GetNewReleasesCandidates { id }

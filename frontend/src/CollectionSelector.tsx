@@ -45,8 +45,10 @@ export type CollectionSelectorProps = {
   value: string;
   setValue: (path: string) => void;
   onCreate: (name: string) => void;
-  // Adds a collection file (base64-encoded) to the repo as is.
-  onImport: (name: string, data: string) => void;
+  // Adds a collection file (base64-encoded) to a repository as is; resolves once it is
+  // imported, rejects with the reason it isn't.
+  onImport: (repoPath: string, name: string, data: string) => Promise<void>;
+  isConnected: boolean;
   onDelete: (path: string) => void;
   onRename: (path: string, name: string) => void;
   // Downloads the collection's SQLite file.
@@ -73,6 +75,7 @@ function CollectionSelector({
   setValue,
   onCreate,
   onImport,
+  isConnected,
   onDelete,
   onRename,
   onDownload,
@@ -91,6 +94,8 @@ function CollectionSelector({
 }: CollectionSelectorProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // The repository the import dialog adds to: the one selected when it opened.
+  const [importRepoPath, setImportRepoPath] = useState<string>();
   const [cloneOpen, setCloneOpen] = useState(false);
   const [remoteOpen, setRemoteOpen] = useState(false);
   // The repository whose remote the dialog edits: the one selected when it opened, even if
@@ -196,7 +201,10 @@ function CollectionSelector({
         icon={<FileUp />}
         label="Import collection file…"
         isDisabled={!selectedRepo}
-        onClick={() => setImportOpen(true)}
+        onClick={() => {
+          setImportRepoPath(selectedRepo?.path);
+          setImportOpen(true);
+        }}
       />
       <DropdownMenuItem
         icon={<Pencil1Icon />}
@@ -310,7 +318,12 @@ function CollectionSelector({
       <ImportCollectionDialog
         isOpen={importOpen}
         onOpenChange={setImportOpen}
-        onImport={onImport}
+        onImport={(name, data) =>
+          importRepoPath
+            ? onImport(importRepoPath, name, data)
+            : Promise.reject(new Error("No repository"))
+        }
+        isConnected={isConnected}
       />
       <RenameCollectionDialog
         currentName={pendingRename && collectionLabel(pendingRename)}

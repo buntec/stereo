@@ -2987,9 +2987,29 @@ function App() {
                   onCreate={(name) =>
                     sendMsg({ type: "create-collection", name })
                   }
-                  onImport={(name, data) =>
-                    sendMsg({ type: "import-collection", name, data })
+                  onImport={(repo, name, data) =>
+                    new Promise<void>((resolve, reject) =>
+                      requestReply(
+                        { type: "import-collection", repo, name, data },
+                        (msg) => {
+                          if (msg.type === "collection-imported") resolve();
+                          else if (
+                            msg.type === "error-reply" &&
+                            "message" in msg
+                          )
+                            reject(new Error(msg.message));
+                          else
+                            // The backend may have imported it before the connection went.
+                            reject(
+                              new Error(
+                                "Lost the connection to Stereo. Check the collections before importing again.",
+                              ),
+                            );
+                        },
+                      ),
+                    )
                   }
+                  isConnected={backendReady}
                   onDelete={(path) =>
                     sendMsg({ type: "delete-collection", path })
                   }
