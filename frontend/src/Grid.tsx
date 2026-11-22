@@ -191,6 +191,17 @@ const RatingRenderer = (params: ICellRendererParams<ITrack, number>) =>
   ) : null;
 
 // Overlays are module-level components so AG Grid does not remount them on every render.
+// Identifies a grid view by its filters and sort, as compared between a row request and
+// the grid's current state.
+const viewKey = (
+  filterModel: unknown,
+  sortModel: { colId: string; sort: string }[] | undefined,
+) =>
+  JSON.stringify([
+    filterModel ?? {},
+    (sortModel ?? []).map(({ colId, sort }) => [colId, sort]),
+  ]);
+
 const SearchingOverlay = () => <Spinner label="Searching for tracks…" />;
 
 const NoSearchResultsOverlay = ({
@@ -912,6 +923,7 @@ export const ColumnsMenu = ({
       onOpenChange={handleOpenChange}
       button={{
         label: "View",
+        className: "columns-menu",
         icon: <ColumnsIcon />,
         isIconOnly,
         variant: "ghost",
@@ -1145,27 +1157,42 @@ export const TracksGrid = ({
   const dataSource = useMemo<IDatasource>(() => {
     return {
       rowCount: undefined,
-      getRows: (params: IGetRowsParams<ITrack>) => {
-        logger.debug("asking for " + params.startRow + " to " + params.endRow);
-        requestReply(
-          { type: "get-rows", ...params },
-          function (msg: ServerMsg | { type: string }) {
-            if ("rows" in msg) {
-              params.successCallback(msg.rows, msg.last_row);
-              onRowsLoaded();
-              if (msg.last_row !== undefined) {
-                onRowCountChange?.(msg.last_row);
-                if (msg.last_row === 0)
-                  gridRef.current?.api.showNoRowsOverlay();
-                else gridRef.current?.api.hideOverlay();
+      getRows: (params: IGetRowsParams<ITrack>) =>
+        // Filters and sort can change together (resetting them, opening a playlist), and
+        // the grid asks for rows after each change. Wait for the changes to settle and
+        // skip a request whose view is already gone: the grid has discarded its block.
+        queueMicrotask(() => {
+          const api = gridRef.current?.api;
+          if (
+            api &&
+            viewKey(params.filterModel, params.sortModel) !==
+              viewKey(api.getFilterModel(), api.getState().sort?.sortModel)
+          ) {
+            logger.debug("skipping rows for a superseded view");
+            return;
+          }
+          logger.debug(
+            "asking for " + params.startRow + " to " + params.endRow,
+          );
+          requestReply(
+            { type: "get-rows", ...params },
+            function (msg: ServerMsg | { type: string }) {
+              if ("rows" in msg) {
+                params.successCallback(msg.rows, msg.last_row);
+                onRowsLoaded();
+                if (msg.last_row !== undefined) {
+                  onRowCountChange?.(msg.last_row);
+                  if (msg.last_row === 0)
+                    gridRef.current?.api.showNoRowsOverlay();
+                  else gridRef.current?.api.hideOverlay();
+                }
+              } else {
+                params.failCallback();
               }
-            } else {
-              params.failCallback();
-            }
-          },
-          3000,
-        );
-      },
+            },
+            3000,
+          );
+        }),
     };
   }, [requestReply, onRowCountChange, onRowsLoaded, gridRef]);
 

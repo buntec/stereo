@@ -1510,7 +1510,7 @@ test("filtered collections offer a working clear-filters action", async ({
 test("resetting filters and sorting keeps the displayed columns", async ({
   page,
 }) => {
-  await openApp(page);
+  const { messages } = await openApp(page);
   const clear = page.getByRole("button", {
     name: "Reset filters and sorting",
     exact: true,
@@ -1535,12 +1535,34 @@ test("resetting filters and sorting keeps the displayed columns", async ({
     page.getByRole("heading", { name: "No tracks match these filters" }),
   ).toBeVisible();
 
-  await clear.click();
+  // From the keyboard, focus moves on to the View menu as the button goes away.
+  const before = messages.length;
+  await clear.focus();
+  await page.keyboard.press("Enter");
   await expect(
     page
       .locator('.ag-row[row-index="0"]')
       .getByText("Example track 1", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "View", exact: true }),
+  ).toBeFocused();
+  // One page query, for the final view, not one per change (besides the playback
+  // queue's refresh, which asks for up to 10000 rows).
+  expect(
+    messages
+      .slice(before)
+      .filter(
+        (message) => message.type === "get-rows" && message.endRow === 100,
+      ),
+  ).toEqual([
+    expect.objectContaining({
+      filterModel: {},
+      sortModel: [
+        expect.objectContaining({ colId: "release_date", sort: "desc" }),
+      ],
+    }),
+  ]);
   await expect(titleHeader).toHaveAttribute("aria-sort", "none");
   await expect(
     page.locator('.ag-header-cell[col-id="release_date"]'),
@@ -2843,4 +2865,29 @@ test("the collection widget opens the open collection's stats", async ({
   await expect(
     page.getByRole("dialog").getByText("Example artist", { exact: true }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // Another collection opens: its stats come after, and until then (or if they never
+  // do) there are none to show, not the previous collection's.
+  send({
+    type: "collection-info",
+    collection: { path: "/tmp/other.db", size: 42 },
+  });
+  await expect(stats).toBeDisabled();
+  send({
+    type: "collection-stats",
+    top_artists_five_star: [
+      { name: "Other artist", count: 2, weighted_avg_days_since_release: 5 },
+    ],
+    top_artists_four_plus: [],
+    top_labels_five_star: [],
+    top_labels_four_plus: [],
+  });
+  await stats.click();
+  await expect(
+    page.getByRole("dialog").getByText("Other artist", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("Example artist", { exact: true }),
+  ).toHaveCount(0);
 });

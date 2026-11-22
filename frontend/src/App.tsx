@@ -535,6 +535,7 @@ const reducer = (state: State, action: Action): State => {
         return {
           ...state,
           collection: undefined,
+          collection_stats: undefined,
           collection_is_valid: false,
           should_purge_grid: true,
           collection_last_update: Date.now(),
@@ -543,6 +544,12 @@ const reducer = (state: State, action: Action): State => {
       return {
         ...state,
         collection: action.collection,
+        // Another collection's stats don't apply; its own follow this message, unless
+        // computing them fails.
+        collection_stats:
+          action.collection?.path === state.collection?.path
+            ? state.collection_stats
+            : undefined,
         collection_is_valid: true,
         should_purge_grid: true,
         collection_last_update: Date.now(),
@@ -1794,15 +1801,25 @@ function App() {
 
   // Clears filters and restores the default sort, but keeps the columns'
   // visibility, order and widths.
-  const resetFiltersAndSort = useCallback(() => {
-    const api = gridRef.current?.api;
-    if (!api) return;
-    api.setFilterModel(null);
-    api.applyColumnState({
-      state: defaultSortModel(api),
-      defaultState: { sort: null },
-    });
-  }, []);
+  const resetFiltersAndSort = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      const api = gridRef.current?.api;
+      if (!api) return;
+      // The button goes away with the filters and sort, so keyboard focus moves to
+      // the View menu beside it rather than falling to the page.
+      if (document.activeElement === event.currentTarget)
+        document
+          .querySelector<HTMLElement>(".collection-toolbar .columns-menu")
+          ?.focus();
+      // The grid asks for rows only for the final view (see TracksGrid's datasource).
+      api.setFilterModel(null);
+      api.applyColumnState({
+        state: defaultSortModel(api),
+        defaultState: { sort: null },
+      });
+    },
+    [],
+  );
 
   // Deletes wait for confirmation in an AlertDialog.
   const [pendingDelete, setPendingDelete] = useState<{
