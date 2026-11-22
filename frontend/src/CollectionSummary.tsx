@@ -77,7 +77,7 @@ function CollectionSummary({
       <Layout
         header={
           <DialogHeader
-            title="Library stats"
+            title="Collection stats"
             onOpenChange={() => onOpenChange(false)}
             endContent={
               totalTracks !== undefined ? (

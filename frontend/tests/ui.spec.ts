@@ -1507,6 +1507,92 @@ test("filtered collections offer a working clear-filters action", async ({
   ).toBeVisible();
 });
 
+test("resetting filters and sorting keeps the displayed columns", async ({
+  page,
+}) => {
+  const { messages } = await openApp(page);
+  const clear = page.getByRole("button", {
+    name: "Reset filters and sorting",
+    exact: true,
+  });
+  await expect(clear).toHaveCount(0);
+
+  await page.getByRole("button", { name: "View", exact: true }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Genre" }).click();
+  await page.keyboard.press("Escape");
+  const genreHeader = page.locator('.ag-header-cell[col-id="genre"]');
+  await expect(genreHeader).toHaveCount(0);
+
+  const titleHeader = page.locator('.ag-header-cell[col-id="title"]');
+  await titleHeader.getByText("Title", { exact: true }).click();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+  await titleHeader.locator(".ag-header-cell-filter-button").click();
+  await page
+    .getByRole("textbox", { name: "Filter Value", exact: true })
+    .fill("no match");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("heading", { name: "No tracks match these filters" }),
+  ).toBeVisible();
+
+  // From the keyboard, focus moves on to the View menu as the button goes away.
+  const before = messages.length;
+  await clear.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page
+      .locator('.ag-row[row-index="0"]')
+      .getByText("Example track 1", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "View", exact: true }),
+  ).toBeFocused();
+  // One page query, for the final view, not one per change (besides the playback
+  // queue's refresh, which asks for up to 10000 rows).
+  expect(
+    messages
+      .slice(before)
+      .filter(
+        (message) => message.type === "get-rows" && message.endRow === 100,
+      ),
+  ).toEqual([
+    expect.objectContaining({
+      filterModel: {},
+      sortModel: [
+        expect.objectContaining({ colId: "release_date", sort: "desc" }),
+      ],
+    }),
+  ]);
+  await expect(titleHeader).toHaveAttribute("aria-sort", "none");
+  await expect(
+    page.locator('.ag-header-cell[col-id="release_date"]'),
+  ).toHaveAttribute("aria-sort", "descending");
+  await expect(genreHeader).toHaveCount(0);
+  await expect(clear).toHaveCount(0);
+});
+
+test("a sort restored from the last session can be reset", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (localStorage.getItem("stereo_app_grid_state_v2")) return;
+    localStorage.setItem(
+      "stereo_app_grid_state_v2",
+      JSON.stringify({
+        sort: { sortModel: [{ colId: "title", sort: "asc" }] },
+      }),
+    );
+  });
+  await openApp(page);
+  const titleHeader = page.locator('.ag-header-cell[col-id="title"]');
+  await expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+  await page
+    .getByRole("button", { name: "Reset filters and sorting", exact: true })
+    .click();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "none");
+  await expect(
+    page.locator('.ag-header-cell[col-id="release_date"]'),
+  ).toHaveAttribute("aria-sort", "descending");
+});
+
 test("grid arrow keys move between rows without skipping playback", async ({
   page,
 }) => {
@@ -2777,4 +2863,53 @@ test("the desktop app offers a collection download as a link @webkit", async ({
   await popup;
   await request;
   await expect(dialog).toHaveCount(0);
+});
+
+test("the collection widget opens the open collection's stats", async ({
+  page,
+}) => {
+  const { send } = await openApp(page);
+  const stats = page.locator(".collection-group .collection-stats");
+  await expect(stats).toBeDisabled();
+  send({
+    type: "collection-stats",
+    top_artists_five_star: [
+      { name: "Example artist", count: 3, weighted_avg_days_since_release: 10 },
+    ],
+    top_artists_four_plus: [],
+    top_labels_five_star: [],
+    top_labels_four_plus: [],
+  });
+  await stats.click();
+  await expect(
+    page.getByRole("dialog").getByText("Collection stats", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("Example artist", { exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // Another collection opens: its stats come after, and until then (or if they never
+  // do) there are none to show, not the previous collection's.
+  send({
+    type: "collection-info",
+    collection: { path: "/tmp/other.db", size: 42 },
+  });
+  await expect(stats).toBeDisabled();
+  send({
+    type: "collection-stats",
+    top_artists_five_star: [
+      { name: "Other artist", count: 2, weighted_avg_days_since_release: 5 },
+    ],
+    top_artists_four_plus: [],
+    top_labels_five_star: [],
+    top_labels_four_plus: [],
+  });
+  await stats.click();
+  await expect(
+    page.getByRole("dialog").getByText("Other artist", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("Example artist", { exact: true }),
+  ).toHaveCount(0);
 });
