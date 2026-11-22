@@ -2930,6 +2930,45 @@ test("the collection menu imports a collection file as is @webkit", async ({
   await expect(dialog).toHaveCount(0);
 });
 
+test("importing a collection leaves the open playlist", async ({ page }) => {
+  const { messages, send } = await openApp(page);
+  send({
+    type: "playlists",
+    playlists: [
+      {
+        id: "p1",
+        name: "Warmup",
+        collection: "/audit/collection.db",
+        filter_model: {},
+        sort_model: [],
+        limit: null,
+        spotify: null,
+        youtube: null,
+        updated_at: 1,
+        spotify_status: null,
+        youtube_status: null,
+      },
+    ],
+  });
+  await page.getByRole("button", { name: "Playlists", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /Warmup/ }).click();
+  await expect(
+    page.getByRole("button", { name: "Warmup", exact: true }),
+  ).toBeVisible();
+
+  const dialog = await pickCollectionFile(page);
+  await dialog.getByRole("button", { name: "Import" }).click();
+  const imports = () => messages.filter((m) => m.type === "import-collection");
+  await expect.poll(() => imports().length).toBe(1);
+  const { id } = imports()[0] as { id: number };
+  send({ type: "collection-imported", id, path: "/audit/Warm-up sets.db" });
+  await expect(dialog).toHaveCount(0);
+  // The backend has opened the imported collection, which the playlist doesn't show.
+  await expect(
+    page.getByRole("button", { name: "Playlists", exact: true }),
+  ).toBeVisible();
+});
+
 test("cancelling while the file is read doesn't import it @webkit", async ({
   page,
 }) => {

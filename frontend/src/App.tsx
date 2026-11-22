@@ -2984,16 +2984,21 @@ function App() {
                     }
                     setSettings({ ...settings, collectionPath: path });
                   }}
-                  onCreate={(name) =>
-                    sendMsg({ type: "create-collection", name })
-                  }
+                  onCreate={(name) => {
+                    // The backend opens the new collection, which no playlist shows.
+                    setActivePlaylistId(undefined);
+                    sendMsg({ type: "create-collection", name });
+                  }}
                   onImport={(repo, name, data) =>
                     new Promise<void>((resolve, reject) =>
                       requestReply(
                         { type: "import-collection", repo, name, data },
                         (msg) => {
-                          if (msg.type === "collection-imported") resolve();
-                          else if (
+                          if (msg.type === "collection-imported") {
+                            // The backend opens the imported collection, which no playlist shows.
+                            setActivePlaylistId(undefined);
+                            resolve();
+                          } else if (
                             msg.type === "error-reply" &&
                             "message" in msg
                           )
