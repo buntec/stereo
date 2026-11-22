@@ -272,6 +272,7 @@ mod tests {
             response.headers()[header::CONTENT_DISPOSITION],
             "attachment; filename=\"mine.db\"; filename*=UTF-8''mine.db"
         );
+        assert!(file.exists(), "kept until sent");
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();

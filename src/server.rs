@@ -2304,8 +2304,20 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 "{} is no longer the open collection",
                 utils::collection_label(&collection)
             );
-            let token = crate::collection_download::prepare(pool, &open.path).await?;
-            let _ = tx.send(MsgServer::CollectionDownload { id, token }).await;
+            // A large collection takes a while to copy, so off the session's message loop.
+            let (pool, path, tx) = (pool.clone(), open.path.clone(), tx.clone());
+            tokio::spawn(async move {
+                match crate::collection_download::prepare(&pool, &path).await {
+                    Ok(token) => {
+                        let _ = tx.send(MsgServer::CollectionDownload { id, token }).await;
+                    }
+                    Err(e) => {
+                        let message = format!("Download failed: {e:#}");
+                        notify(&tx, &message, "error").await;
+                        reply_error(&tx, id, &message).await;
+                    }
+                }
+            });
         }
 
         MsgClient::SearchCancelAll {} => {
