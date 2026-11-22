@@ -1507,6 +1507,48 @@ test("filtered collections offer a working clear-filters action", async ({
   ).toBeVisible();
 });
 
+test("resetting filters and sorting keeps the displayed columns", async ({
+  page,
+}) => {
+  await openApp(page);
+  const clear = page.getByRole("button", {
+    name: "Reset filters and sorting",
+    exact: true,
+  });
+  await expect(clear).toHaveCount(0);
+
+  await page.getByRole("button", { name: "View", exact: true }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Genre" }).click();
+  await page.keyboard.press("Escape");
+  const genreHeader = page.locator('.ag-header-cell[col-id="genre"]');
+  await expect(genreHeader).toHaveCount(0);
+
+  const titleHeader = page.locator('.ag-header-cell[col-id="title"]');
+  await titleHeader.getByText("Title", { exact: true }).click();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+  await titleHeader.locator(".ag-header-cell-filter-button").click();
+  await page
+    .getByRole("textbox", { name: "Filter Value", exact: true })
+    .fill("no match");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("heading", { name: "No tracks match these filters" }),
+  ).toBeVisible();
+
+  await clear.click();
+  await expect(
+    page
+      .locator('.ag-row[row-index="0"]')
+      .getByText("Example track 1", { exact: true }),
+  ).toBeVisible();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "none");
+  await expect(
+    page.locator('.ag-header-cell[col-id="release_date"]'),
+  ).toHaveAttribute("aria-sort", "descending");
+  await expect(genreHeader).toHaveCount(0);
+  await expect(clear).toHaveCount(0);
+});
+
 test("grid arrow keys move between rows without skipping playback", async ({
   page,
 }) => {
@@ -2777,4 +2819,28 @@ test("the desktop app offers a collection download as a link @webkit", async ({
   await popup;
   await request;
   await expect(dialog).toHaveCount(0);
+});
+
+test("the collection widget opens the open collection's stats", async ({
+  page,
+}) => {
+  const { send } = await openApp(page);
+  const stats = page.locator(".collection-group .collection-stats");
+  await expect(stats).toBeDisabled();
+  send({
+    type: "collection-stats",
+    top_artists_five_star: [
+      { name: "Example artist", count: 3, weighted_avg_days_since_release: 10 },
+    ],
+    top_artists_four_plus: [],
+    top_labels_five_star: [],
+    top_labels_four_plus: [],
+  });
+  await stats.click();
+  await expect(
+    page.getByRole("dialog").getByText("Collection stats", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog").getByText("Example artist", { exact: true }),
+  ).toBeVisible();
 });

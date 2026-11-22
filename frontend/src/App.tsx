@@ -11,7 +11,11 @@ import {
 } from "react";
 
 import { AgGridReact } from "ag-grid-react";
-import { type GridState, type StateUpdatedEvent } from "ag-grid-community";
+import {
+  type GridApi,
+  type GridState,
+  type StateUpdatedEvent,
+} from "ag-grid-community";
 import logger from "./logger.tsx";
 
 import {
@@ -24,6 +28,7 @@ import {
   PauseIcon,
   TrackPreviousIcon,
 } from "@radix-ui/react-icons";
+import { FunnelX } from "lucide-react";
 
 import { Theme } from "@astryxdesign/core/theme";
 import { stereoTheme } from "./theme";
@@ -1070,6 +1075,27 @@ const saveGridState = (state: GridState) => {
   }
 };
 
+// The sort the columns start with (their `initialSort`).
+const defaultSortModel = (api: GridApi<ITrack>) =>
+  (api.getColumns() ?? []).flatMap((column) => {
+    const sort = column.getColDef().initialSort;
+    return sort === "asc" || sort === "desc"
+      ? [{ colId: column.getColId(), sort }]
+      : [];
+  });
+
+// Whether the grid shows no filters and its default sort.
+const isDefaultView = (api: GridApi<ITrack>, state: GridState) => {
+  const sort = (state.sort?.sortModel ?? []).map(({ colId, sort }) => ({
+    colId,
+    sort,
+  }));
+  return (
+    Object.keys(state.filter?.filterModel ?? {}).length === 0 &&
+    JSON.stringify(sort) === JSON.stringify(defaultSortModel(api))
+  );
+};
+
 // The part of the grid's state that makes a view, as the playlists save it.
 type GridView = Pick<GridState, "filter" | "sort">;
 const gridViewOf = (state: GridState | undefined): GridView => ({
@@ -1147,6 +1173,7 @@ function App() {
   const [gridView, setGridView] = useState<GridView>(() =>
     gridViewOf(initialGridState),
   );
+  const [isGridDefaultView, setIsGridDefaultView] = useState(true);
 
   const wsOnMessage = useCallback(
     (msg: ServerMsg | ServerMsg[]) => {
@@ -1763,6 +1790,18 @@ function App() {
   const resetColumnState = useCallback(() => {
     gridRef.current?.api?.resetColumnState();
     gridRef.current?.api?.setFilterModel(null);
+  }, []);
+
+  // Clears filters and restores the default sort, but keeps the columns'
+  // visibility, order and widths.
+  const resetFiltersAndSort = useCallback(() => {
+    const api = gridRef.current?.api;
+    if (!api) return;
+    api.setFilterModel(null);
+    api.applyColumnState({
+      state: defaultSortModel(api),
+      defaultState: { sort: null },
+    });
   }, []);
 
   // Deletes wait for confirmation in an AlertDialog.
@@ -2586,6 +2625,7 @@ function App() {
       setGridView((prev) =>
         JSON.stringify(prev) === JSON.stringify(view) ? prev : view,
       );
+      setIsGridDefaultView(isDefaultView(ev.api, ev.state));
     },
     [updatePlaylist, settings.shufflePlay],
   );
@@ -3263,6 +3303,20 @@ function App() {
                           }
                         />
                         {importMenu(narrow)}
+                        {!isGridDefaultView &&
+                          state.collection &&
+                          state.collection.size > 0 && (
+                            <Button
+                              label="Reset filters and sorting"
+                              icon={<FunnelX size="1em" aria-hidden />}
+                              isIconOnly={narrow}
+                              tooltip={
+                                narrow ? "Reset filters and sorting" : undefined
+                              }
+                              variant="ghost"
+                              onClick={resetFiltersAndSort}
+                            />
+                          )}
                         {state.collection && state.collection.size > 0 && (
                           <ColumnsMenu
                             isIconOnly={narrow}

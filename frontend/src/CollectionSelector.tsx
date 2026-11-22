@@ -7,6 +7,7 @@ import {
 } from "@astryxdesign/core/DropdownMenu";
 import { Divider } from "@astryxdesign/core/Divider";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Button } from "@astryxdesign/core/Button";
 import { ButtonGroup } from "@astryxdesign/core/ButtonGroup";
 import { AlertDialog } from "@astryxdesign/core/AlertDialog";
 import {
@@ -149,7 +150,8 @@ function CollectionSelector({
           : "Select collection",
         // Grouped with the sync status, both are outlined to show the group's outline.
         variant: showSync ? "secondary" : "ghost",
-        width: 220,
+        // With the stats button, the group keeps the 220 px the header is laid out for.
+        width: 188,
         // Shrinks (truncating the name) to stay beside the logo on narrow screens.
         style: { maxWidth: "100%", minWidth: 0 },
         tooltip,
@@ -244,15 +246,6 @@ function CollectionSelector({
         label="Clone repository…"
         onClick={() => setCloneOpen(true)}
       />
-
-      <Divider />
-
-      <DropdownMenuItem
-        icon={<BarChartIcon />}
-        label="Library stats"
-        isDisabled={!onShowStats}
-        onClick={onShowStats}
-      />
     </DropdownMenu>
   );
 
@@ -262,6 +255,24 @@ function CollectionSelector({
           when the status comes and goes. */}
       <ButtonGroup label="Collection" className="collection-group">
         {menu}
+        <Button
+          className="collection-stats"
+          label={
+            selectedCollection
+              ? `${collectionLabel(selectedCollection)} stats`
+              : "Collection stats"
+          }
+          tooltip={
+            selectedCollection
+              ? `${collectionLabel(selectedCollection)} stats`
+              : "Collection stats"
+          }
+          icon={<BarChartIcon />}
+          isIconOnly
+          variant={showSync ? "secondary" : "ghost"}
+          isDisabled={!onShowStats}
+          onClick={onShowStats}
+        />
         {showSync && syncState && (
           <GitSyncStatusButton
             state={syncState}
