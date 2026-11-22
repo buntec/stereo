@@ -15,8 +15,7 @@ or subscription.
 Install Git on the machine running Stereo. Download a standalone binary for macOS, Windows
 or Linux from the [latest release](https://github.com/buntec/stereo/releases/latest).
 For the desktop app, use a release installer when available or follow the
-[desktop build instructions](desktop/README.md). On macOS, allow a downloaded desktop app
-under System Settings › Privacy & Security on first launch.
+[desktop build instructions](desktop/README.md).
 
 For browser use, run `stereo` and open `http://localhost:8005`. On macOS,
 `stereo install` runs it as a login service. To build the binary from source with Rust and Bun:
