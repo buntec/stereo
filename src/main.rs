@@ -298,7 +298,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/info", get(info))
         .route(
             "/collection-download/{token}",
-            get(stereo_backend::collection_download::handler),
+            stereo_backend::collection_download::route(),
         )
         .with_state(settings.clone());
 

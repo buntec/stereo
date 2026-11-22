@@ -96,12 +96,16 @@ import {
   shuffleArray,
   hasCollectionStats,
   downloadUrl,
+  inDesktopApp,
 } from "./Utils.tsx";
 import { TracksGrid, SearchResultsGrid, ColumnsMenu } from "./Grid.tsx";
 import { scrollGridToTop } from "./useGridScrollState.ts";
 import SearchBox from "./SearchBox.tsx";
 import Rating from "./Rating.tsx";
 import CollectionSelector, { collectionLabel } from "./CollectionSelector.tsx";
+import CollectionDownloadDialog, {
+  type ReadyDownload,
+} from "./CollectionDownloadDialog.tsx";
 import ImportMenu from "./ImportMenu.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
 import {
@@ -800,6 +804,7 @@ const reducer = (state: State, action: Action): State => {
     case "health-check-progress":
     case "health-check":
     case "collection-track": // a reply, for BpmCheck
+    case "collection-download": // a reply, for the collection menu
     case "waveform": // a reply, for useWaveform
     case "audio-cached": // these three are kept in AudioCache.ts's store
     case "audio-evicted":
@@ -1119,6 +1124,11 @@ function App() {
   );
   const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
+  // A prepared collection download for the desktop app to offer.
+  const [readyDownload, setReadyDownload] = useState<ReadyDownload | null>(
+    null,
+  );
+  const closeReadyDownload = useCallback(() => setReadyDownload(null), []);
 
   const [newReleasesOpen, setNewReleasesOpen] = useState(false);
   // Keyed by collection path.
@@ -2932,12 +2942,17 @@ function App() {
                       { type: "prepare-collection-download", collection },
                       (msg) => {
                         if (
-                          msg.type === "collection-download" &&
-                          "token" in msg
+                          msg.type !== "collection-download" ||
+                          !("token" in msg)
                         )
-                          downloadUrl(
-                            `/collection-download/${encodeURIComponent(msg.token)}`,
-                          );
+                          return;
+                        const url = `/collection-download/${encodeURIComponent(msg.token)}`;
+                        if (inDesktopApp)
+                          setReadyDownload({
+                            url,
+                            fileName: `${collectionLabel(collection)}.db`,
+                          });
+                        else downloadUrl(url);
                       },
                     )
                   }
@@ -3515,6 +3530,10 @@ function App() {
             requestReply={requestReply}
             onCancel={() => dispatch({ type: "clear-youtube-fixup-result" })}
             onCommit={commitYouTubeStaging}
+          />
+          <CollectionDownloadDialog
+            download={readyDownload}
+            onClose={closeReadyDownload}
           />
           <SavePlaylistDialog
             isOpen={savePlaylistOpen}

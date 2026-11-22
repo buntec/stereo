@@ -6,6 +6,8 @@ import {
   type Route,
   type WebSocketRoute,
 } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { collectionFixture } from "./fixture-server.ts";
 
 const exampleTracks = Array.from({ length: 12 }, (_, index) => ({
   title: `Example track ${index + 1}`,
@@ -2716,8 +2718,12 @@ test("label searches explain that Spotify can't search by label", async ({
   await expect(spotify).toContainText("Can't search by label");
 });
 
-test("the collection menu downloads the collection file", async ({ page }) => {
-  const { messages, send } = await openApp(page);
+/** Opens the collection menu, downloads the open collection and answers with the
+ * token `fixture-server.ts` serves. */
+async function prepareDownload(
+  page: Page,
+  { messages, send }: Awaited<ReturnType<typeof openApp>>,
+) {
   await page
     .locator(".collection-controls")
     .getByRole("button")
@@ -2731,8 +2737,44 @@ test("the collection menu downloads the collection file", async ({ page }) => {
   await expect
     .poll(requests)
     .toEqual([expect.objectContaining({ collection: "/audit/collection.db" })]);
+  send({ type: "collection-download", id: requests()[0].id, token: "fixture" });
+}
+
+test("the collection menu downloads the collection file @webkit", async ({
+  page,
+}) => {
+  const app = await openApp(page);
   const download = page.waitForEvent("download");
-  send({ type: "collection-download", id: requests()[0].id, token: "abc" });
+  await prepareDownload(page, app);
   const file = await download;
-  expect(file.url()).toMatch(/\/collection-download\/abc$/);
+  expect(await file.failure()).toBeNull();
+  expect(file.suggestedFilename().normalize()).toBe("Tänze.db");
+  const path = await file.path();
+  expect(readFileSync(path, "utf8")).toBe(collectionFixture);
+});
+
+test("the desktop app offers a collection download as a link @webkit", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as { __STEREO_DESKTOP__?: boolean }).__STEREO_DESKTOP__ = true;
+  });
+  const app = await openApp(page);
+  await prepareDownload(page, app);
+  const dialog = page.getByRole("dialog", { name: "Download Collection" });
+  // Opened by the click, not from script once the reply arrives, so WebKitGTK
+  // doesn't block it as a popup; the app opens it in the browser.
+  const link = dialog.getByRole("link", { name: "Download" });
+  await expect(link).toHaveAttribute("href", "/collection-download/fixture");
+  await expect(link).toHaveAttribute("target", "_blank");
+  const request = page
+    .context()
+    .waitForEvent("request", (r) =>
+      r.url().endsWith("/collection-download/fixture"),
+    );
+  const popup = page.waitForEvent("popup");
+  await link.click();
+  await popup;
+  await request;
+  await expect(dialog).toHaveCount(0);
 });

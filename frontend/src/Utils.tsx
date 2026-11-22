@@ -26,17 +26,9 @@ export const openInBrowser = () => {
   );
 };
 
-/** Downloads `url`, which the server sends as an attachment. The desktop app's
- * webview has no downloads, so there it opens in the browser, which saves it. */
+/** Downloads `url`, which the server sends as an attachment. Not in the desktop
+ * app, whose webview has no downloads (see `CollectionDownloadDialog.tsx`). */
 export const downloadUrl = (url: string) => {
-  if (inDesktopApp) {
-    window.open(
-      new URL(url, window.location.href).href,
-      "_blank",
-      "noopener,noreferrer",
-    );
-    return;
-  }
   const a = document.createElement("a");
   a.href = url;
   a.download = "";

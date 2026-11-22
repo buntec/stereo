@@ -35,7 +35,9 @@ open `http://localhost:8055` and use the Tailscale button's pairing QR code.
 
 Run a single Rust test with `cargo test <test_name>`. The external-service tests in
 `tests/scraper.rs` are ignored by default. Run them with `cargo test --test scraper -- --ignored`.
-Playwright starts Vite and mocks the WebSocket and YouTube APIs. Set
+Playwright starts Vite and mocks the WebSocket and YouTube APIs. Downloads, which
+Chromium doesn't route through Playwright, come from `frontend/tests/fixture-server.ts`
+behind Vite's proxy. Set
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chromium. Tests tagged `@webkit`
 also run in WebKit, the desktop app's engine. Tag tests of behavior that differs there.
 
@@ -70,9 +72,11 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
   `FilterModel` and `SortModelItem` mirror the grid's filter and sort shapes.
 - **`scraper.rs`** — search backends. Beatport, SoundCloud, Volumo, Traxsource, Spotify (`spotify.rs`) and Apple Music (`apple_music.rs`) are queried in parallel and interleaved (`interleave`) into candidate `RawTrack`s with metadata (artist/label/bpm/key/release date), which are then matched against YouTube search results (`find_best_match`/`score_match`, resolved concurrently and de-duplicated by YouTube id in `stream_matched_tracks`) since actual playback comes from YouTube. A failing backend is reported to the client as a warning rather than silently yielding fewer results. Label and artist searches, and latest releases, fetch each source's catalog for the name instead of searching text: `Credit` and `pick_credit` resolve the name to the source's label or artist, preferring an exact name over one with a disambiguator or a label suffix such as "Records" (and searching again without the suffix if needed). Traxsource's `/label/…` and `/artist/…` pages are Cloudflare-challenge-protected, so they're loaded through `/scripts/builder.php`, the site's in-page navigation route, paging past pre-orders; Volumo's come from `/api/v1/contributors/{recordlabel,artist}` and the track list's id filters. Spotify and Apple Music can't list a label (`CATALOG_SOURCES`), so label searches and latest releases skip them and the search box marks them unavailable there. Shazam provides "similar songs" searches (a collection track is found on Shazam through its Apple Music id, which Shazam maps to its own); `fixup_track` fills in missing metadata from Beatport/Traxsource/Volumo. Beatport is scraped via its embedded `__NEXT_DATA__` JSON (no official API); SoundCloud requires first fetching a client_id from SoundCloud's own JS bundle. `create_client()` uses `wreq` (a `reqwest`-like client with Chrome TLS fingerprint impersonation) specifically to get past Beatport's bot detection — a plain `reqwest` client gets blocked. Search results stream back to the client incrementally via `MsgServer::SearchResult`/`SearchComplete` over an mpsc channel, not as one batch response.
 - **`collection_download.rs`** lets the collection menu download the open collection's
-  file. `PrepareCollectionDownload` snapshots it with `VACUUM INTO` and replies with a
-  random token, single use and valid for two minutes, which stands in for the WebSocket
-  token in a plain link. The desktop app opens the link in the browser, which saves it.
+  file. `PrepareCollectionDownload` snapshots it with `VACUUM INTO` into a temp file and
+  replies with a random token, single use and valid for two minutes, which stands in for
+  the WebSocket token in a plain link. `GET` streams and deletes the file, `HEAD` leaves
+  the token. The desktop app offers the link in `CollectionDownloadDialog.tsx`, since its
+  webview has no downloads and WebKitGTK blocks a window opened outside a click.
 - **`git.rs`** manages repositories under `~/.local/share/stereo/gitrepos` by default.
   A repo may track a Git remote. `schedule_git_sync` in `server.rs` coalesces edits
   into a sync five minutes after the first change. Startup sync picks up uncommitted
