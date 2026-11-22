@@ -149,8 +149,9 @@ fn summarize<T: ProbeItem>(items: &[T]) -> anyhow::Result<String> {
     })
 }
 
-/// Like [`summarize`], for a label search: every result must also be on the label, since
-/// label searches that fall back to text matches return tracks whose title merely resembles it.
+/// Like [`summarize`], for a label search: every result must also be on the label, so a lookup
+/// that resolves to the wrong label, or a text search's tracks whose title merely resembles
+/// the label, fails the check.
 fn summarize_label<T: ProbeItem>(
     items: &[T],
     label_of: impl Fn(&T) -> Option<&str>,

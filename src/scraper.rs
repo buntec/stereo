@@ -1255,32 +1255,48 @@ impl Credit {
 }
 
 /// Picks the catalog for `wanted` among a source's `candidates`, given in the source's
-/// relevance order: an exact name first, so "Solid Grooves" isn't taken for "Solid Grooves
-/// Records" listed above it, then the first alias that [`Credit::matches`] accepts. Several
-/// matching aliases and no exact name are usually one label listed twice, so the source's
-/// ranking decides between them.
+/// relevance order. The best kind of match wins, then the source's ranking: exactly the same
+/// name, then the same name with a disambiguator ("Lucho (AR)" for "Lucho"), then a label
+/// alias that [`Credit::matches`] accepts ("Solid Grooves Records" for "Solid Grooves"). So
+/// "Lucho" isn't taken for "Lucho (VE)", nor "Solid Grooves" for "Solid Grooves Records",
+/// when the source lists them first. Several equally good matches, such as two aliases, are
+/// usually one label listed twice, so the source's ranking decides between them.
 fn pick_credit<T>(
     credit: Credit,
     wanted: &str,
     candidates: impl IntoIterator<Item = (String, T)>,
 ) -> Option<T> {
-    let mut aliases = vec![];
-    for (name, id) in candidates {
-        if is_same_name(&name, wanted) {
-            return Some(id);
+    let wanted_key = crate::utils::normalize_for_match(wanted);
+    let tier = |name: &str| {
+        if crate::utils::normalize_for_match(name) == wanted_key {
+            Some(0)
+        } else if is_same_name(name, wanted) {
+            Some(1)
+        } else if credit.matches(name, wanted) {
+            Some(2)
+        } else {
+            None
         }
-        if credit.matches(&name, wanted) {
-            aliases.push((name, id));
-        }
-    }
-    if aliases.len() > 1 {
-        let names: Vec<&str> = aliases.iter().map(|(name, _)| name.as_str()).collect();
+    };
+    let mut ranked: Vec<(u8, String, T)> = candidates
+        .into_iter()
+        .filter_map(|(name, id)| Some((tier(&name)?, name, id)))
+        .collect();
+    // Stable, so the source's order decides within a tier.
+    ranked.sort_by_key(|(tier, _, _)| *tier);
+    let best = ranked.first().map(|(tier, _, _)| *tier)?;
+    let ties: Vec<&str> = ranked
+        .iter()
+        .take_while(|(tier, _, _)| *tier == best)
+        .map(|(_, name, _)| name.as_str())
+        .collect();
+    if best > 0 && ties.len() > 1 {
         tracing::info!(
-            "Several {}s match {wanted:?}: {names:?}; taking the first",
+            "Several {}s match {wanted:?}: {ties:?}; taking the first",
             credit.noun()
         );
     }
-    aliases.into_iter().next().map(|(_, id)| id)
+    ranked.into_iter().next().map(|(_, _, id)| id)
 }
 
 /// Fetches up to `limit` tracks released on the Volumo label named `name`, newest first and
@@ -3863,12 +3879,26 @@ mod remix_match_tests {
             pick_credit(Credit::Label, "Defected", aliases),
             Some(827022)
         );
-        // Artists match exactly only.
+        // Artists match by name only, preferring one without a disambiguator, which Volumo
+        // lists after "Lucho (VE)" and "Lucho (AR)".
         let artists = [
             ("Lucho Salari".to_string(), 1),
-            ("Lucho (AR)".to_string(), 2),
+            ("Lucho (VE)".to_string(), 2),
+            ("Lucho (AR)".to_string(), 3),
+            ("Lucho".to_string(), 4),
         ];
-        assert_eq!(pick_credit(Credit::Artist, "Lucho", artists), Some(2));
+        assert_eq!(
+            pick_credit(Credit::Artist, "Lucho", artists.clone()),
+            Some(4)
+        );
+        assert_eq!(
+            pick_credit(Credit::Artist, "Lucho (AR)", artists.clone()),
+            Some(3)
+        );
+        assert_eq!(
+            pick_credit(Credit::Artist, "Lucho", artists[..3].to_vec()),
+            Some(2)
+        );
     }
 
     #[tokio::test]
