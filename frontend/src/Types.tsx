@@ -118,6 +118,26 @@ export const isChartSearchKind = (kind: SearchBoxKind) =>
 export const isQuerylessSearchKind = (kind: SearchBoxKind) =>
   kind === "new-releases" || isChartSearchKind(kind);
 
+/**
+ * Whether a search kind can use a source. Label searches and latest releases need a source
+ * that lists a label's or artist's catalog, which Spotify and Apple Music can't (the backend's
+ * `CATALOG_SOURCES`).
+ */
+export const searchKindSupportsSource = (
+  kind: SearchBoxKind,
+  source: TrackSource,
+) =>
+  !(
+    (kind === "by-label" || kind === "new-releases") &&
+    (source === "spotify" || source === "apple-music")
+  );
+
+/** The selected sources a search kind can use. */
+export const usableSearchSources = (
+  kind: SearchBoxKind,
+  sources: TrackSource[],
+) => sources.filter((source) => searchKindSupportsSource(kind, source));
+
 /** Whether a backend run with `--tailscale` serves its tailnet URL yet. */
 export type TailscaleStatus =
   | { state: "starting" }

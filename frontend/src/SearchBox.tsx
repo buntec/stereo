@@ -19,6 +19,8 @@ import { MenuHeading } from "./Menu.tsx";
 import {
   isChartSearchKind,
   isQuerylessSearchKind,
+  searchKindSupportsSource,
+  usableSearchSources,
   type SearchBoxKind,
   type TrackSource,
 } from "./Types.tsx";
@@ -116,9 +118,17 @@ function SearchBox({
     );
   };
 
+  const sourceCount = usableSearchSources(searchKind, searchSources).length;
+  const noSourceMessage =
+    isTop100 || sourceCount
+      ? undefined
+      : searchSources.length
+        ? `Spotify and Apple Music can't ${searchKind === "by-label" ? "search by label" : "find latest releases"}. Choose another source in Search options`
+        : "Choose a source in Search options";
+
   const optionsSummary = isTop100
     ? `Up to ${searchLimit} results`
-    : `Up to ${searchLimit} results from ${searchSources.length} source${searchSources.length === 1 ? "" : "s"}`;
+    : `Up to ${searchLimit} results from ${sourceCount} source${sourceCount === 1 ? "" : "s"}`;
 
   return (
     <HStack width="100%" gap={1} vAlign="center" className="search-box">
@@ -129,11 +139,8 @@ function SearchBox({
           status={
             errorMessage
               ? { type: "error", message: errorMessage }
-              : !isTop100 && !searchSources.length
-                ? {
-                    type: "warning",
-                    message: "Choose a source in Search options",
-                  }
+              : noSourceMessage
+                ? { type: "warning", message: noSourceMessage }
                 : undefined
           }
         >
@@ -219,14 +226,26 @@ function SearchBox({
             <Divider />
 
             <MenuHeading>Sources</MenuHeading>
-            {ALL_SEARCH_SOURCES.map((s) => (
-              <DropdownMenuCheckboxItem
-                key={s.value}
-                label={s.label}
-                value={searchSources.includes(s.value)}
-                onChange={(checked) => toggleSearchSource(s.value, checked)}
-              />
-            ))}
+            {ALL_SEARCH_SOURCES.map((s) => {
+              const isSupported = searchKindSupportsSource(searchKind, s.value);
+              return (
+                <DropdownMenuCheckboxItem
+                  key={s.value}
+                  label={s.label}
+                  description={
+                    isSupported
+                      ? undefined
+                      : searchKind === "by-label"
+                        ? "Can't search by label"
+                        : "Not used for latest releases"
+                  }
+                  // The selection is kept for the other search kinds.
+                  value={isSupported && searchSources.includes(s.value)}
+                  isDisabled={!isSupported}
+                  onChange={(checked) => toggleSearchSource(s.value, checked)}
+                />
+              );
+            })}
           </>
         )}
       </DropdownMenu>
@@ -239,7 +258,7 @@ function SearchBox({
         isLoading={searchBusy}
         isDisabled={
           (!isQuerylessSearchKind(searchKind) && value.trim().length === 0) ||
-          (!isTop100 && !searchSources.length)
+          noSourceMessage !== undefined
         }
         onClick={onSearch}
       />

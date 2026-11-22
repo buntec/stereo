@@ -21,6 +21,9 @@ use crate::{
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(45);
 const SEARCH_QUERY: &str = "Solomun";
+// Traxsource lists the label as "Defected", so this also checks the retry without the suffix.
+const LABEL_QUERY: &str = "Defected Records";
+const ARTIST_QUERY: &str = "Solomun";
 const SHAZAM_SONG_URL: &str = "https://www.shazam.com/song/1243689211/fiore-and-i";
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -146,6 +149,46 @@ fn summarize<T: ProbeItem>(items: &[T]) -> anyhow::Result<String> {
     })
 }
 
+/// Like [`summarize`], for a label search: every result must also be on the label, so a lookup
+/// that resolves to the wrong label, or a text search's tracks whose title merely resembles
+/// the label, fails the check.
+fn summarize_label<T: ProbeItem>(
+    items: &[T],
+    label_of: impl Fn(&T) -> Option<&str>,
+) -> anyhow::Result<String> {
+    let summary = summarize(items)?;
+    if let Some(other) = items
+        .iter()
+        .find(|item| !label_of(item).is_some_and(|l| scraper::is_same_label(l, LABEL_QUERY)))
+    {
+        anyhow::bail!(
+            "{} is on {}, not {LABEL_QUERY}",
+            other.describe(),
+            label_of(other)
+                .filter(|l| !l.is_empty())
+                .unwrap_or("no label"),
+        );
+    }
+    Ok(summary)
+}
+
+/// Like [`summarize`], for an artist search: most results must credit the artist, as artist or
+/// remixer. Not all of them, since a catalog's remix credits aren't always in the track's
+/// title or mix name, and a SoundCloud account uploads other artists' tracks too.
+fn summarize_artist<T: ProbeItem>(
+    items: &[T],
+    credits: impl Fn(&T) -> bool,
+) -> anyhow::Result<String> {
+    let summary = summarize(items)?;
+    let credited = items.iter().filter(|item| credits(item)).count();
+    anyhow::ensure!(
+        credited * 2 >= items.len(),
+        "Only {credited} of {} results credit {ARTIST_QUERY}",
+        items.len()
+    );
+    Ok(summary)
+}
+
 type ProbeFuture = Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send>>;
 
 struct Probe {
@@ -168,6 +211,8 @@ fn probe(
 
 fn probes(client: &Client) -> Vec<Probe> {
     let search_probe = format!("Search for “{SEARCH_QUERY}”");
+    let label_probe = format!("Tracks on the label “{LABEL_QUERY}”");
+    let artist_probe = format!("Tracks by the artist “{ARTIST_QUERY}”");
     let c = || client.clone();
     vec![
         probe("Beatport", &search_probe, {
@@ -202,6 +247,72 @@ fn probes(client: &Client) -> Vec<Probe> {
                     )
                     .await?,
                 )
+            }
+        }),
+        probe("Beatport labels", &label_probe, {
+            let client = c();
+            async move {
+                let known = Default::default();
+                let tracks = scraper::bp_get_label_tracks(&client, LABEL_QUERY, &known).await?;
+                summarize_label(&tracks, |t| Some(&t.label))
+            }
+        }),
+        probe("SoundCloud labels", &label_probe, {
+            let client = c();
+            async move {
+                let tracks = scraper::sc_get_label_tracks(&client, LABEL_QUERY, 3).await?;
+                summarize_label(&tracks, |t| t.label.as_deref())
+            }
+        }),
+        probe("Volumo labels", &label_probe, {
+            let client = c();
+            async move {
+                let tracks = scraper::vl_get_label_tracks(&client, LABEL_QUERY, 3, None).await?;
+                summarize_label(&tracks, |t| Some(&t.label))
+            }
+        }),
+        probe("Traxsource labels", &label_probe, {
+            let client = c();
+            async move {
+                let tracks = scraper::tx_get_label_tracks(&client, LABEL_QUERY, 20, None).await?;
+                summarize_label(&tracks, |t| Some(&t.label))
+            }
+        }),
+        probe("Beatport artists", &artist_probe, {
+            let client = c();
+            async move {
+                let known = Default::default();
+                let tracks = scraper::bp_get_artist_tracks(&client, ARTIST_QUERY, &known).await?;
+                summarize_artist(&tracks, |t| {
+                    scraper::credits_artist(&t.artists, &t.track_name, &t.mix_name, ARTIST_QUERY)
+                })
+            }
+        }),
+        probe("SoundCloud artists", &artist_probe, {
+            let client = c();
+            async move {
+                let tracks = scraper::sc_get_artist_tracks(&client, ARTIST_QUERY, 3).await?;
+                summarize_artist(&tracks, |t| {
+                    scraper::credits_artist(&t.artists, &t.track_name, "", ARTIST_QUERY)
+                })
+            }
+        }),
+        probe("Volumo artists", &artist_probe, {
+            let client = c();
+            async move {
+                let tracks = scraper::vl_get_artist_tracks(&client, ARTIST_QUERY, 3, None).await?;
+                summarize_artist(&tracks, |t| {
+                    scraper::credits_artist(&t.artists, &t.track_name, &t.mix_name, ARTIST_QUERY)
+                })
+            }
+        }),
+        probe("Traxsource artists", &artist_probe, {
+            let client = c();
+            async move {
+                let tracks = scraper::tx_get_artist_tracks(&client, ARTIST_QUERY, 20, None).await?;
+                summarize_artist(&tracks, |t| {
+                    scraper::credits_artist(&t.artists, &t.track_name, &t.mix_name, ARTIST_QUERY)
+                })
             }
         }),
         probe("YouTube", "Search for “Daft Punk One More Time”", {

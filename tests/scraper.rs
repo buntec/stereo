@@ -50,6 +50,14 @@ async fn test_health_check() {
             "Traxsource",
             "Spotify",
             "Apple Music",
+            "Beatport labels",
+            "SoundCloud labels",
+            "Volumo labels",
+            "Traxsource labels",
+            "Beatport artists",
+            "SoundCloud artists",
+            "Volumo artists",
+            "Traxsource artists",
             "YouTube",
             "Shazam",
             "Shazam lookup",
@@ -415,4 +423,79 @@ async fn test_search_by_artist() {
     assert!(!tracks.is_empty(), "expected artist release results");
     assert!(!tracks[0].yt_id.is_empty());
     assert!(!tracks[0].artists.is_empty());
+}
+
+fn assert_catalog<T>(tracks: &[T], date: impl Fn(&T) -> chrono::NaiveDate) {
+    let today = chrono::Local::now().date_naive();
+    assert!(
+        tracks.iter().all(|t| date(t) <= today),
+        "a pre-order slipped through"
+    );
+    assert!(
+        tracks.windows(2).all(|w| date(&w[0]) >= date(&w[1])),
+        "not newest first"
+    );
+}
+
+/// Traxsource lists the label as "Defected" and its search finds nothing for "Defected
+/// Records". Pre-orders fill much of the first page, so 150 released tracks take more pages.
+#[tokio::test]
+#[ignore]
+async fn test_tx_get_label_tracks() {
+    let tracks = scraper::tx_get_label_tracks(&client(), "Defected Records", 150, None)
+        .await
+        .unwrap();
+    println!(
+        "{} tracks, newest {:?}",
+        tracks.len(),
+        tracks.first().map(|t| t.release_date)
+    );
+    assert_eq!(tracks.len(), 150);
+    assert!(tracks.iter().all(|t| t.label == "Defected"));
+    assert_catalog(&tracks, |t| t.release_date);
+
+    let since = chrono::Local::now().date_naive() - chrono::Duration::days(60);
+    let recent = scraper::tx_get_label_tracks(&client(), "Defected", 1000, Some(since))
+        .await
+        .unwrap();
+    println!("{} tracks since {since}", recent.len());
+    assert!(recent.len() < 300, "paged on past `since`");
+}
+
+/// Volumo ranks "Solid Grooves Records" above the exact, unrelated "Solid Grooves".
+#[tokio::test]
+#[ignore]
+async fn test_vl_get_label_tracks() {
+    let tracks = scraper::vl_get_label_tracks(&client(), "Magnifik Music", 50, None)
+        .await
+        .unwrap();
+    println!(
+        "{} tracks, newest {:?}",
+        tracks.len(),
+        tracks.first().map(|t| t.release_date)
+    );
+    assert!(tracks.len() > 10);
+    assert!(tracks.iter().all(|t| t.label == "Magnifik Music"));
+    assert_catalog(&tracks, |t| t.release_date);
+
+    let exact = scraper::vl_get_label_tracks(&client(), "Solid Grooves", 50, None)
+        .await
+        .unwrap();
+    assert!(!exact.is_empty());
+    assert!(exact.iter().all(|t| t.label == "Solid Grooves"));
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_artist_catalogs() {
+    let tx = scraper::tx_get_artist_tracks(&client(), "Solomun", 100, None)
+        .await
+        .unwrap();
+    let vl = scraper::vl_get_artist_tracks(&client(), "Solomun", 50, None)
+        .await
+        .unwrap();
+    println!("Traxsource {} tracks, Volumo {} tracks", tx.len(), vl.len());
+    assert!(tx.len() > 20 && vl.len() > 20);
+    assert_catalog(&tx, |t| t.release_date);
+    assert_catalog(&vl, |t| t.release_date);
 }

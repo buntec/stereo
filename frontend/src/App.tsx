@@ -72,6 +72,7 @@ import {
   DEFAULT_BACKGROUND_SHOWN,
   DEFAULT_DISCO_BALL,
   isChartSearchKind,
+  usableSearchSources,
   isQuerylessSearchKind,
   playlistSyncKey,
 } from "./Types.tsx";
@@ -406,6 +407,8 @@ const PLAYLIST_AUTO_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 const PLAYLIST_AUTO_SYNC_CHECK_MS = 5 * 60 * 1000;
 
 const NO_SEARCH_SOURCES_MESSAGE = "Choose a source in Search options";
+const NO_LABEL_SOURCES_MESSAGE =
+  "Spotify and Apple Music can't search by label. Choose another source in Search options";
 
 const isConnectionClosedMessage = (message: string) =>
   message.startsWith("WebSocket connection closed");
@@ -1644,7 +1647,10 @@ function App() {
   );
 
   const handleSearch = useCallback(() => {
-    if (!isChartSearchKind(state.search_kind) && !state.search_sources.length)
+    if (
+      !isChartSearchKind(state.search_kind) &&
+      !usableSearchSources(state.search_kind, state.search_sources).length
+    )
       return;
     if (state.search_kind === "new-releases") {
       setNewReleasesOpen(true);
@@ -2598,10 +2604,12 @@ function App() {
 
   const handleLabelClick = useCallback(
     (name: string) => {
-      if (!state.search_sources.length) {
+      if (!usableSearchSources("by-label", state.search_sources).length) {
         dispatch({
           type: "notification",
-          message: NO_SEARCH_SOURCES_MESSAGE,
+          message: state.search_sources.length
+            ? NO_LABEL_SOURCES_MESSAGE
+            : NO_SEARCH_SOURCES_MESSAGE,
           kind: "warning",
         });
         return;
