@@ -3097,7 +3097,28 @@ test("the version shows whether a newer release is out", async ({ page }) => {
     upToDate.getByRole("link", { name: /Release notes for v0\.2\.0/ }),
   ).toHaveAttribute("href", "https://github.com/buntec/stereo/releases");
 
-  // A failed refresh after a successful check shows, with the earlier result.
+  // A failed refresh leaves a recent result standing, but mentions it.
+  await page.mouse.move(0, 400);
+  await expect(upToDate).toBeHidden();
+  send({
+    type: "update-check",
+    status: {
+      state: "up-to-date",
+      latest: updateRelease,
+      checked_at: new Date(Date.now() - 86400_000).toISOString(),
+      refresh_error: {
+        message: "network is unreachable",
+        failed_at: new Date().toISOString(),
+        is_stale: false,
+      },
+    },
+  });
+  await page.getByRole("button", { name: "Stereo is up to date" }).hover();
+  await expect(upToDate).toContainText(
+    "Checking again failed just now: network is unreachable",
+  );
+
+  // Once the result is old, the failure turns the icon into a warning.
   await page.mouse.move(0, 400);
   await expect(upToDate).toBeHidden();
   send({
@@ -3109,6 +3130,7 @@ test("the version shows whether a newer release is out", async ({ page }) => {
       refresh_error: {
         message: "connection refused",
         failed_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+        is_stale: true,
       },
     },
   });

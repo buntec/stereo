@@ -69,7 +69,7 @@ function UpdateIndicator({
         // The backend compares versions; the wording leaves it at that, since
         // equal versions may be spelled differently (`0.2` and `0.2.0`).
         lines = [`You're running v${version}.`];
-        if (refresh_error) {
+        if (refresh_error?.is_stale) {
           // Maybe out of date by now.
           label = "Couldn't check for updates";
           lines.push(`The latest release was v${latest.version} when checked.`);

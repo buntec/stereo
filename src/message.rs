@@ -921,6 +921,7 @@ mod tests {
             refresh_error: Some(crate::update_check::RefreshError {
                 message: "proxy refused".into(),
                 failed_at: "2026-11-28T06:00:00Z".parse().unwrap(),
+                is_stale: true,
             }),
         });
         assert_eq!(up_to_date["status"]["state"], "up-to-date");
@@ -932,6 +933,7 @@ mod tests {
             up_to_date["status"]["refresh_error"]["failed_at"],
             "2026-11-28T06:00:00Z"
         );
+        assert_eq!(up_to_date["status"]["refresh_error"]["is_stale"], true);
 
         let error = message(UpdateStatus::Error {
             message: "GitHub replied 403".into(),

@@ -153,7 +153,13 @@ export type Release = {
 };
 
 /** A check that failed after an earlier one succeeded. */
-export type RefreshError = { message: string; failed_at: string };
+export type RefreshError = {
+  message: string;
+  failed_at: string;
+  /** Whether the earlier result is old enough to doubt (two days): a single
+   * failure, say right after waking, leaves a fresh one standing. */
+  is_stale: boolean;
+};
 
 /** How the running version compares with the latest release, checked daily. */
 export type UpdateStatus =

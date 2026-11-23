@@ -20,6 +20,9 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// The longest single timer wait. Tokio's timers stop while the system sleeps (on macOS at
 /// least), so waits are cut up and checked against the wall clock, catching up soon after a wake.
 const MAX_WAIT: Duration = Duration::from_secs(5 * 60);
+/// How old a result must be before a failed refresh casts doubt on it. Checks run daily, so a
+/// single failure, say right after waking before the network is up, leaves a fresh one standing.
+const STALE_AFTER: Duration = Duration::from_secs(2 * 24 * 60 * 60);
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 static STATUS: OnceLock<watch::Sender<Option<UpdateStatus>>> = OnceLock::new();
@@ -37,6 +40,9 @@ pub struct Release {
 pub struct RefreshError {
     pub message: String,
     pub failed_at: DateTime<Utc>,
+    /// Whether the earlier result is older than `STALE_AFTER`, as of `failed_at`; resent with
+    /// each hourly retry.
+    pub is_stale: bool,
 }
 
 /// How the running version compares with the latest release.
@@ -148,6 +154,23 @@ fn status_of(saved: Option<&SavedCheck>, failure: Option<&RefreshError>) -> Opti
     })
 }
 
+/// Whether the saved result is old enough at `now` that a failed refresh casts doubt on it.
+fn is_stale(saved: Option<&SavedCheck>, now: DateTime<Utc>) -> bool {
+    saved.is_some_and(|check| {
+        (now - check.checked_at)
+            .to_std()
+            .is_ok_and(|age| age > STALE_AFTER)
+    })
+}
+
+/// When to check first: a day after the saved check, but no later than a day from now, so a
+/// saved time in the future (a clock that was wrong, an edited file) can't put checks off.
+fn first_check(saved: Option<&SavedCheck>, now: DateTime<Utc>) -> DateTime<Utc> {
+    saved.map_or(now, |check| {
+        (check.checked_at + CHECK_INTERVAL).min(now + CHECK_INTERVAL)
+    })
+}
+
 /// How long to wait before looking at the clock again on the way to `deadline`, or `None` once
 /// it has passed.
 fn next_wait(deadline: DateTime<Utc>, now: DateTime<Utc>) -> Option<Duration> {
@@ -227,9 +250,7 @@ async fn run(path: PathBuf, status: watch::Sender<Option<UpdateStatus>>) {
     };
     let mut saved = load(&path).await;
     let mut failure: Option<RefreshError> = None;
-    let mut next_check = saved
-        .as_ref()
-        .map_or_else(Utc::now, |check| check.checked_at + CHECK_INTERVAL);
+    let mut next_check = first_check(saved.as_ref(), Utc::now());
     loop {
         if let Some(current) = status_of(saved.as_ref(), failure.as_ref()) {
             status.send_replace(Some(current));
@@ -249,6 +270,7 @@ async fn run(path: PathBuf, status: watch::Sender<Option<UpdateStatus>>) {
                 failure = Some(RefreshError {
                     message: format!("{e:#}"),
                     failed_at: checked_at,
+                    is_stale: is_stale(saved.as_ref(), checked_at),
                 });
                 next_check = checked_at + RETRY_INTERVAL;
             }
@@ -315,11 +337,39 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_check_in_the_future_doesnt_put_checks_off() {
+        let now: DateTime<Utc> = "2026-11-23T06:00:00Z".parse().unwrap();
+        let saved = |checked_at: &str| SavedCheck {
+            latest: release(
+                "0.2.0",
+                "https://github.com/buntec/stereo/releases/tag/v0.2.0",
+            ),
+            checked_at: checked_at.parse().unwrap(),
+        };
+        assert_eq!(first_check(None, now), now);
+        assert!(!is_stale(None, now));
+        let recent = saved("2026-11-23T00:00:00Z");
+        assert_eq!(
+            first_check(Some(&recent), now),
+            recent.checked_at + CHECK_INTERVAL
+        );
+        let old = saved("2026-11-01T00:00:00Z");
+        assert!(first_check(Some(&old), now) < now);
+        // A failure right after a day's wait leaves the result standing; two days on, it doesn't.
+        assert!(!is_stale(Some(&recent), recent.checked_at + CHECK_INTERVAL));
+        assert!(is_stale(Some(&old), now));
+        let future = saved("2099-01-01T00:00:00Z");
+        assert!(!is_stale(Some(&future), now));
+        assert_eq!(first_check(Some(&future), now), now + CHECK_INTERVAL);
+    }
+
+    #[test]
     fn a_failed_refresh_is_reported_with_the_earlier_result() {
         let failed_at: DateTime<Utc> = "2026-11-28T06:00:00Z".parse().unwrap();
         let failure = RefreshError {
             message: "proxy refused".into(),
             failed_at,
+            is_stale: true,
         };
         assert_eq!(status_of(None, None), None);
         assert_eq!(

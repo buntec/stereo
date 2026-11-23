@@ -99,7 +99,8 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
   after a failure) whether a newer release is out. The result is saved in the data
   dir's `update_check.json`, so restarts don't check again within the day, and goes
   to every session as `MsgServer::UpdateCheck`, with any failure since as
-  `refresh_error`. Versions it can't compare and URLs other than the repo's release
+  `refresh_error` (`is_stale` once the result is two days old, which turns the icon
+  into a warning). Versions it can't compare and URLs other than the repo's release
   pages are refused, from the API and the file alike. Waits are measured by the wall
   clock in steps of at most five minutes, since Tokio's timers stop while the system
   sleeps. `UpdateIndicator.tsx` shows it as an icon beside the version number. Its
