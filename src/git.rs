@@ -1596,14 +1596,16 @@ mod tests {
     }
 
     async fn play(db_path: &Path) {
-        let pool = db::open_pool(db_path).await.unwrap();
-        db::inc_play_count(
-            &pool,
-            "one",
+        play_on(
+            db_path,
             chrono::NaiveDate::from_ymd_opt(2026, 8, 18).unwrap(),
         )
-        .await
-        .unwrap();
+        .await;
+    }
+
+    async fn play_on(db_path: &Path, date: chrono::NaiveDate) {
+        let pool = db::open_pool(db_path).await.unwrap();
+        db::inc_play_count(&pool, "one", date).await.unwrap();
         pool.close().await;
     }
 
@@ -1690,6 +1692,39 @@ mod tests {
         let tracked = String::from_utf8_lossy(&tracked.stdout);
         assert!(tracked.contains("playlists.json"), "{tracked}");
         assert!(tracked.contains("music.db"), "{tracked}");
+    }
+
+    #[tokio::test]
+    async fn sync_adds_up_plays_of_the_same_track_on_both_sides() {
+        let temp = tempfile::tempdir().unwrap();
+        let (remote, first, second) = two_clones(temp.path()).await;
+        let earlier = chrono::NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
+        let later = chrono::NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        play_on(&first.join("music.db"), later).await;
+        play_on(&first.join("music.db"), later).await;
+        let report = sync_repository(first.clone(), None, false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        play_on(&second.join("music.db"), earlier).await;
+        let report = sync_repository(second.clone(), None, false, None).await;
+        assert_eq!(report.state, GitSyncState::ConflictRequiresAttention);
+        let report = sync_repository(second.clone(), None, true, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        let merged = track_one(&second.join("music.db")).await;
+        assert_eq!(merged.play_count, 3);
+        assert_eq!(merged.last_played, Some(later));
+
+        let report = sync_repository(first.clone(), None, true, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+        assert_eq!(track_one(&first.join("music.db")).await, merged);
+        let pushed = run_git(&remote, &["rev-parse", "HEAD"], GIT_TIMEOUT)
+            .await
+            .unwrap();
+        let local = run_git(&first, &["rev-parse", "HEAD"], GIT_TIMEOUT)
+            .await
+            .unwrap();
+        assert_eq!(output_text(pushed), output_text(local));
     }
 
     #[tokio::test]
