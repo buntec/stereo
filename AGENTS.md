@@ -86,7 +86,8 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
 - **`tracks_file.rs`** is the JSON format for sharing tracks between users: the Export
   menu's "JSON file" sends the selection or view in `PrepareTracksDownload`, served like
   a collection download by `collection_download::prepare_file`. `ImportJsonDialog.tsx`
-  sends the file's text in `ImportTracks` for the open collection, which skips tracks it
+  parses the file and sends it in `ImportTracks` (as a value, not a string, which escaping
+  would enlarge past the message limit) for the open collection, which skips tracks it
   already has. Ratings and play history are optional on both sides.
 - **`git.rs`** manages repositories under `~/.local/share/stereo/gitrepos` by default.
   A repo may track a Git remote. `schedule_git_sync` in `server.rs` coalesces edits

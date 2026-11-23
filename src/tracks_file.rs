@@ -42,7 +42,7 @@ struct Header {
 }
 
 /// The tracks in an exported file, parsed as JSON, without their user data unless
-/// `keep_user_data`. Fails without any tracks if one couldn't be played.
+/// `keep_user_data`, each id once (the first). Fails without any tracks if one couldn't be played.
 pub fn import(value: Value, keep_user_data: bool) -> anyhow::Result<Vec<Track>> {
     let header = Header::deserialize(&value).unwrap_or(Header {
         format: None,
@@ -75,6 +75,8 @@ pub fn import(value: Value, keep_user_data: bool) -> anyhow::Result<Vec<Track>> 
             track.yt_id
         );
     }
+    let mut seen = std::collections::HashSet::new();
+    tracks.retain(|t| seen.insert(t.yt_id.clone()));
     if !keep_user_data {
         for track in &mut tracks {
             track.rating = None;
@@ -131,6 +133,16 @@ mod tests {
         assert_eq!(import(parse(&text), true).unwrap(), vec![without.clone()]);
         let text = String::from_utf8(export(&[track()], true).unwrap()).unwrap();
         assert_eq!(import(parse(&text), false).unwrap(), vec![without]);
+    }
+
+    #[test]
+    fn keeps_the_first_of_tracks_with_the_same_id() {
+        let other = Track {
+            title: "Other".into(),
+            ..track()
+        };
+        let text = String::from_utf8(export(&[track(), other], true).unwrap()).unwrap();
+        assert_eq!(import(parse(&text), true).unwrap(), vec![track()]);
     }
 
     #[test]
