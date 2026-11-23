@@ -628,8 +628,13 @@ async fn tracks_from(path: &Path) -> anyhow::Result<HashMap<String, Track>> {
 /// The play count of a track merged from both sides. Plays recorded on both sides since the
 /// merge base are separate plays, so both sides' increases add up. A side below the base reset
 /// the track's history (deleted it and added it again without it), and its count is all that
-/// side has; the other side's plays since the base are added to it.
-fn merge_play_count(base: i64, local: i64, remote: i64) -> i64 {
+/// side has; the other side's plays since the base are added to it. Without a base (both sides
+/// added the track), the counts may share history imported on both, which mustn't count twice,
+/// so the larger count is kept (see `merge_track`).
+fn merge_play_count(base: Option<i64>, local: i64, remote: i64) -> i64 {
+    let Some(base) = base else {
+        return local.max(remote);
+    };
     if local < base && remote < base {
         // Both reset: what each recorded since can't be told apart from the other's.
         local.max(remote)
@@ -670,7 +675,7 @@ fn merge_track(base: Option<&Track>, local: &Track, remote: &Track) -> anyhow::R
             .unwrap_or(&Value::Null);
         let value = if field == "play_count" {
             Value::from(merge_play_count(
-                base_field.as_i64().unwrap_or(0),
+                base.map(|_| base_field.as_i64().unwrap_or(0)),
                 local_field.as_i64().unwrap_or(0),
                 remote_field.as_i64().unwrap_or(0),
             ))
@@ -1085,8 +1090,19 @@ async fn merge_diverged(
         if resolution.is_some() {
             continue;
         }
+        // Either side's file is a fine result, so one that can't be merged (say, one Stereo
+        // can't read) is left as it is rather than failing the sync.
         let (merged, changed) =
-            build_merged_database(repo, &base, remote_ref, &conflict, temp.path()).await?;
+            match build_merged_database(repo, &base, remote_ref, &conflict, temp.path()).await {
+                Ok(result) => result,
+                Err(e) => {
+                    tracing::warn!(
+                        "Kept identical {} without merging plays: {e:#}",
+                        conflict.path
+                    );
+                    continue;
+                }
+            };
         if changed {
             let unique = temp.path().join(conflict.path.replace('/', "__"));
             tokio::fs::copy(merged, &unique).await?;
@@ -1901,8 +1917,8 @@ mod tests {
         let report = sync_repository(first, None, false, None).await;
         assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
 
-        // Committed in the same second as the first clone's: only the author tells the commits
-        // apart, which would otherwise be the very same commit, with nothing to merge.
+        // Usually committed in the same second as the first clone's, where only the author tells
+        // the commits apart, which would otherwise be the very same commit, with nothing to merge.
         play(&second.join("music.db")).await;
         let report = sync_repository(second.clone(), None, false, None).await;
         assert_eq!(report.state, GitSyncState::ConflictRequiresAttention);
@@ -1946,12 +1962,15 @@ mod tests {
 
     #[test]
     fn play_counts_add_up_from_the_base_or_a_reset() {
-        assert_eq!(merge_play_count(4, 6, 5), 7);
-        assert_eq!(merge_play_count(4, 4, 5), 5);
+        assert_eq!(merge_play_count(Some(4), 6, 5), 7);
+        assert_eq!(merge_play_count(Some(4), 4, 5), 5);
         // The local side reset the track's history; upstream's one play since the base counts.
-        assert_eq!(merge_play_count(4, 0, 5), 1);
-        assert_eq!(merge_play_count(4, 6, 1), 3);
-        assert_eq!(merge_play_count(4, 1, 2), 2);
+        assert_eq!(merge_play_count(Some(4), 0, 5), 1);
+        assert_eq!(merge_play_count(Some(4), 6, 1), 3);
+        assert_eq!(merge_play_count(Some(4), 1, 2), 2);
+        // Added on both sides, say from the same import of five plays, then played once more on
+        // one: the import counts once.
+        assert_eq!(merge_play_count(None, 5, 6), 6);
     }
 
     async fn execute(db_path: &Path, sql: &str) {
