@@ -34,6 +34,7 @@ use crate::{
     settings::Settings,
     spotify,
     tailscale::{self, TailscaleStatus},
+    update_check,
     utils::{self, PathKind},
     youtube,
 };
@@ -499,6 +500,28 @@ async fn forward_tailscale(
     }
 }
 
+/// Sends the session the update check's result once known, then every change.
+async fn forward_update_check(
+    mut status: tokio::sync::watch::Receiver<Option<update_check::UpdateStatus>>,
+    server_tx: mpsc::Sender<MsgServer>,
+) {
+    loop {
+        let current = status.borrow_and_update().clone();
+        if let Some(status) = current {
+            if server_tx
+                .send(MsgServer::UpdateCheck { status })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+        if status.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
 /// `paired` is the token to hand to a client that connected with a pairing code.
 async fn handle_socket(mut socket: WebSocket, settings: Arc<Settings>, paired: Option<String>) {
     // First and straight away, not after the send loop's batching delay: the pairing code is
@@ -540,6 +563,8 @@ async fn handle_socket(mut socket: WebSocket, settings: Arc<Settings>, paired: O
         .await;
     let tailscale_task = tailscale::subscribe()
         .map(|status| tokio::spawn(forward_tailscale(status, server_tx.clone())));
+    let update_task = update_check::subscribe()
+        .map(|status| tokio::spawn(forward_update_check(status, server_tx.clone())));
     // After BackendInfo, which makes the client forget downloads it knew from a previous connection.
     let downloads_task = audio::subscribe().await.map(|(snapshot, updates)| {
         tokio::spawn(forward_audio_cache(snapshot, updates, server_tx.clone()))
@@ -607,7 +632,10 @@ async fn handle_socket(mut socket: WebSocket, settings: Arc<Settings>, paired: O
     recv_task.abort();
     moves_task.abort();
     playlist_changes_task.abort();
-    for task in [downloads_task, tailscale_task].into_iter().flatten() {
+    for task in [downloads_task, tailscale_task, update_task]
+        .into_iter()
+        .flatten()
+    {
         task.abort();
     }
     send_task.abort();

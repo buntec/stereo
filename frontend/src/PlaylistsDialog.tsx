@@ -17,6 +17,7 @@ import { TextInput } from "@astryxdesign/core/TextInput";
 import { LinkBreak2Icon, TrashIcon, UpdateIcon } from "@radix-ui/react-icons";
 import { collectionLabel } from "./CollectionSelector.tsx";
 import { describeView } from "./playlists.ts";
+import { timeAgo } from "./Utils.tsx";
 import {
   playlistSyncKey,
   type ICollection,
@@ -34,15 +35,6 @@ const serviceLabels: Record<PlaylistService, string> = {
   spotify: "Spotify",
   youtube: "YouTube",
 };
-
-function timeAgo(ms: number): string {
-  const minutes = Math.round((Date.now() - ms) / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
-  return new Date(ms).toLocaleDateString();
-}
 
 type ServiceSectionProps = {
   service: PlaylistService;

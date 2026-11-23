@@ -70,6 +70,7 @@ import type {
   PlaylistSyncStatus,
   SortModelItem,
   TailscaleStatus,
+  UpdateStatus,
 } from "./Types.tsx";
 import {
   DEFAULT_AIR,
@@ -265,6 +266,8 @@ type State = {
   audio_key?: string;
   /** Set when the backend runs with `--tailscale`. */
   tailscale?: TailscaleStatus;
+  /** Whether a newer release is out, once the backend has checked. */
+  update?: UpdateStatus;
   home_dir?: string;
   repos?: IRepo[];
   collections?: ICollection[];
@@ -510,10 +513,14 @@ const reducer = (state: State, action: Action): State => {
         audio_key: action.audio_key ?? undefined,
         // Follows if the backend still runs with --tailscale.
         tailscale: undefined,
+        update: undefined,
       };
 
     case "tailscale":
       return { ...state, tailscale: action.status };
+
+    case "update-check":
+      return { ...state, update: action.status };
 
     case "set-import-from":
       // Drop the previous source's validity; a fresh check-import-from follows.
@@ -3268,6 +3275,7 @@ function App() {
                 <NavBarControls
                   isCompact={narrow}
                   version={state.backend_version}
+                  update={state.update}
                   appearance={settings.appearance}
                   setAppearance={(appearance) =>
                     setSettings({ ...settings, appearance })

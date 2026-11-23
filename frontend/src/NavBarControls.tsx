@@ -15,6 +15,7 @@ import SpotifySessionDialog from "./SpotifySessionDialog.tsx";
 import SettingsMenu from "./SettingsMenu.tsx";
 import TailscaleButton from "./TailscaleButton.tsx";
 import HealthCheckButton from "./HealthCheckButton.tsx";
+import UpdateIndicator from "./UpdateIndicator.tsx";
 import BeatportSessionDialog from "./BeatportSessionDialog.tsx";
 import YouTubeSessionDialog from "./YouTubeSessionDialog.tsx";
 import { inDesktopApp } from "./Utils.tsx";
@@ -26,11 +27,14 @@ import {
   type BackgroundSettings,
   type DiscoBallSettings,
   type TailscaleStatus,
+  type UpdateStatus,
   type YouTubeConnection,
 } from "./Types.tsx";
 
 type NavBarControlsProps = {
   version?: string;
+  /** Whether a newer release is out, once the backend has checked. */
+  update?: UpdateStatus;
   appearance: AppearanceType;
   setAppearance: (appearance: AppearanceType) => void;
   backgroundShown: boolean;
@@ -108,6 +112,7 @@ function AccountButton({
 
 function NavBarControls({
   version,
+  update,
   appearance,
   setAppearance,
   backgroundShown,
@@ -188,9 +193,14 @@ function NavBarControls({
   };
 
   const versionText = (
-    <Text type="supporting" color="secondary">
-      v{version}
-    </Text>
+    <HStack vAlign="center" gap={0.5}>
+      <Text type="supporting" color="secondary">
+        v{version}
+      </Text>
+      {version && update && (
+        <UpdateIndicator version={version} status={update} />
+      )}
+    </HStack>
   );
   const appearanceControl = (
     <SegmentedControl
