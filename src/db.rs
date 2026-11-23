@@ -162,6 +162,40 @@ pub async fn insert_tracks(
     Ok(written)
 }
 
+/// Writes every column Stereo knows of `track` to its row, leaving any other columns the
+/// collection has as they are (unlike [`insert_tracks`]' `REPLACE`, which drops them).
+pub async fn overwrite_track(
+    conn: &mut sqlx::SqliteConnection,
+    track: &Track,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE tracks SET bp_id = ?, sp_id = ?, mb_id = ?, title = ?, mix_name = ?, artists = ?, \
+         release_date = ?, label = ?, album = ?, length = ?, bpm = ?, genre = ?, key = ?, \
+         mood = ?, rating = ?, play_count = ?, last_played = ? WHERE yt_id = ?",
+    )
+    .bind(track.bp_id)
+    .bind(&track.sp_id)
+    .bind(&track.mb_id)
+    .bind(&track.title)
+    .bind(&track.mix_name)
+    .bind(track.artists_json())
+    .bind(track.release_date_str())
+    .bind(&track.label)
+    .bind(&track.album)
+    .bind(track.length)
+    .bind(track.bpm)
+    .bind(&track.genre)
+    .bind(&track.key)
+    .bind(&track.mood)
+    .bind(track.rating)
+    .bind(track.play_count)
+    .bind(track.last_played_str())
+    .bind(&track.yt_id)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// Writes `track`'s metadata (everything but the user data: rating, play count, last played) to
 /// the row currently keyed by `old_yt_id`, re-keying it if `track.yt_id` differs. Fails rather
 /// than overwrite a different track that already has the new id.
