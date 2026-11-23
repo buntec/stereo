@@ -98,8 +98,10 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
 - **`update_check.rs`** asks GitHub's latest-release API once a day (hourly retries
   after a failure) whether a newer release is out. The result is saved in the data
   dir's `update_check.json`, so restarts don't check again within the day, and goes
-  to every session as `MsgServer::UpdateCheck`. `UpdateIndicator.tsx` shows it as an
-  icon beside the version number, with details on hover, linking to the release.
+  to every session as `MsgServer::UpdateCheck`. Versions it can't compare and URLs
+  other than the repo's release pages are refused, from the API and the file alike.
+  `UpdateIndicator.tsx` shows it as an icon beside the version number, with a
+  HoverCard (also opened by a tap) holding the details and a link to the release.
 - **`health.rs`** powers the manual search diagnostics in `HealthCheckButton.tsx`.
   Probes run concurrently with individual timeouts, independent of enabled sources
   or the open collection. A new `RunHealthCheck` replaces the session's previous

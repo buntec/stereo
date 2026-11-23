@@ -889,6 +889,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn update_check_protocol_matches_status_tags() {
+        use crate::update_check::{Release, UpdateStatus};
+        let latest = Release {
+            version: "0.2.0".into(),
+            url: "https://github.com/buntec/stereo/releases/tag/v0.2.0".into(),
+            published_at: Some("2026-11-22T16:18:52Z".parse().unwrap()),
+        };
+        let checked_at: chrono::DateTime<chrono::Utc> = "2026-11-23T06:00:00Z".parse().unwrap();
+        let message = |status| serde_json::to_value(MsgServer::UpdateCheck { status }).unwrap();
+
+        let available = message(UpdateStatus::Available {
+            latest: latest.clone(),
+            checked_at,
+        });
+        assert_eq!(available["type"], "update-check");
+        assert_eq!(available["status"]["state"], "available");
+        assert_eq!(available["status"]["latest"]["version"], "0.2.0");
+        assert_eq!(available["status"]["latest"]["url"], latest.url);
+        assert_eq!(
+            available["status"]["latest"]["published_at"],
+            "2026-11-22T16:18:52Z"
+        );
+        assert_eq!(available["status"]["checked_at"], "2026-11-23T06:00:00Z");
+
+        let up_to_date = message(UpdateStatus::UpToDate { latest, checked_at });
+        assert_eq!(up_to_date["status"]["state"], "up-to-date");
+
+        let error = message(UpdateStatus::Error {
+            message: "GitHub replied 403".into(),
+            checked_at,
+        });
+        assert_eq!(error["status"]["state"], "error");
+        assert_eq!(error["status"]["message"], "GitHub replied 403");
+    }
+
+    #[test]
     fn health_check_protocol_matches_request_reply_and_status_tags() {
         let request: MsgClient = serde_json::from_value(serde_json::json!({
             "type": "run-health-check", "id": 42,

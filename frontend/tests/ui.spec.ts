@@ -3043,3 +3043,97 @@ test("the collection widget opens the open collection's stats", async ({
     page.getByRole("dialog").getByText("Example artist", { exact: true }),
   ).toHaveCount(0);
 });
+
+const updateRelease = {
+  version: "0.2.0",
+  url: "https://github.com/buntec/stereo/releases/tag/v0.2.0",
+  published_at: "2026-11-22T16:18:52Z",
+};
+
+test("the version shows whether a newer release is out", async ({ page }) => {
+  const { send } = await openApp(page);
+  await expect(page.getByText("vtest", { exact: true })).toBeVisible();
+  // Nothing until the backend has checked.
+  await expect(page.getByRole("button", { name: /^Stereo / })).toHaveCount(0);
+
+  send({
+    type: "update-check",
+    status: {
+      state: "available",
+      latest: updateRelease,
+      checked_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    },
+  });
+  const available = page.getByRole("button", {
+    name: "Stereo v0.2.0 is available",
+  });
+  await available.hover();
+  const card = page.getByRole("dialog", { name: "Stereo v0.2.0 is available" });
+  await expect(card).toContainText("You're running vtest.");
+  await expect(card).toContainText("Checked 3 h ago");
+  await expect(
+    card.getByRole("link", { name: /What's new in v0\.2\.0/ }),
+  ).toHaveAttribute("href", updateRelease.url);
+
+  await page.mouse.move(0, 400);
+  await expect(card).toBeHidden();
+  send({
+    type: "update-check",
+    status: {
+      state: "up-to-date",
+      latest: { ...updateRelease, url: "javascript:alert(1)" },
+      checked_at: new Date(Date.now() - 2 * 86400_000).toISOString(),
+    },
+  });
+  await page.getByRole("button", { name: "Stereo is up to date" }).hover();
+  const upToDate = page.getByRole("dialog", { name: "Stereo is up to date" });
+  await expect(upToDate).toContainText("Checked on ");
+  // Only release pages are linked.
+  await expect(
+    upToDate.getByRole("link", { name: /Release notes for v0\.2\.0/ }),
+  ).toHaveAttribute("href", "https://github.com/buntec/stereo/releases");
+
+  await page.mouse.move(0, 400);
+  send({
+    type: "update-check",
+    status: {
+      state: "error",
+      message: "GitHub replied 403 Forbidden",
+      checked_at: new Date().toISOString(),
+    },
+  });
+  await page
+    .getByRole("button", { name: "Couldn't check for updates" })
+    .hover();
+  await expect(
+    page.getByRole("dialog", { name: "Couldn't check for updates" }),
+  ).toContainText("GitHub replied 403 Forbidden");
+});
+
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test(
+    "a tap on the update icon shows the details",
+    {
+      tag: "@webkit",
+    },
+    async ({ page }) => {
+      const { send } = await openApp(page);
+      send({
+        type: "update-check",
+        status: {
+          state: "error",
+          message: "GitHub replied 403 Forbidden",
+          checked_at: new Date().toISOString(),
+        },
+      });
+      await page
+        .getByRole("button", { name: "Couldn't check for updates" })
+        .tap();
+      await expect(
+        page.getByRole("dialog", { name: "Couldn't check for updates" }),
+      ).toContainText("GitHub replied 403 Forbidden");
+    },
+  );
+});

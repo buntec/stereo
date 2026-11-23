@@ -61,13 +61,44 @@ struct GitHubRelease {
     published_at: Option<DateTime<Utc>>,
 }
 
-/// The numeric components of `1.2.3`, `v1.2.3` or `1.2.3-rc.1` (whose suffix is ignored).
-fn parse_version(version: &str) -> Option<Vec<u64>> {
-    let version = version.trim().trim_start_matches('v');
-    let core = version.split(['-', '+']).next()?;
-    core.split('.').map(|part| part.parse().ok()).collect()
+/// Where release pages live; any other URL from the API or the saved file is refused.
+const RELEASE_URL_PREFIX: &str = "https://github.com/buntec/stereo/releases/";
+
+/// A version such as `1.2.3`, `v1.2.3` or `1.2.3-rc.1`: its numeric components, without
+/// trailing zeros so `1.2` and `1.2.0` are equal, and whether it is a pre-release. Build
+/// metadata (`+…`) is ignored.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Version {
+    core: Vec<u64>,
+    /// Sorts a final release (`true`) after its pre-releases.
+    is_final: bool,
 }
 
+fn parse_version(version: &str) -> Option<Version> {
+    let version = version.trim().trim_start_matches(['v', 'V']);
+    let version = version.split('+').next()?;
+    let (core, pre) = match version.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (version, None),
+    };
+    let mut core = core
+        .split('.')
+        .map(|part| part.parse().ok())
+        .collect::<Option<Vec<u64>>>()?;
+    if pre.is_some_and(str::is_empty) {
+        return None;
+    }
+    while core.last() == Some(&0) {
+        core.pop();
+    }
+    Some(Version {
+        core,
+        is_final: pre.is_none(),
+    })
+}
+
+/// Whether `latest` is newer than `current`; pre-releases of the same version are older than
+/// it and are not ordered among themselves.
 fn is_newer(latest: &str, current: &str) -> bool {
     match (parse_version(latest), parse_version(current)) {
         (Some(latest), Some(current)) => latest > current,
@@ -83,6 +114,17 @@ fn status_of(latest: Release, checked_at: DateTime<Utc>) -> UpdateStatus {
     }
 }
 
+/// A release whose version can be compared and whose page is on GitHub.
+fn validate(release: &Release) -> anyhow::Result<()> {
+    if parse_version(&release.version).is_none() {
+        anyhow::bail!("unrecognized release version {:?}", release.version);
+    }
+    if !release.url.starts_with(RELEASE_URL_PREFIX) {
+        anyhow::bail!("unexpected release URL {:?}", release.url);
+    }
+    Ok(())
+}
+
 async fn fetch_latest(client: &wreq::Client) -> anyhow::Result<Release> {
     let response = client
         .get(LATEST_RELEASE_URL)
@@ -95,15 +137,24 @@ async fn fetch_latest(client: &wreq::Client) -> anyhow::Result<Release> {
         anyhow::bail!("GitHub replied {status}");
     }
     let release: GitHubRelease = response.json().await?;
-    Ok(Release {
-        version: release.tag_name.trim_start_matches('v').to_string(),
+    let release = Release {
+        version: release
+            .tag_name
+            .trim()
+            .trim_start_matches(['v', 'V'])
+            .to_string(),
         url: release.html_url,
         published_at: release.published_at,
-    })
+    };
+    validate(&release)?;
+    Ok(release)
 }
 
+/// The saved result, unless it's missing, malformed or fails validation (then checked again).
 async fn load(path: &Path) -> Option<SavedCheck> {
-    serde_json::from_slice(&tokio::fs::read(path).await.ok()?).ok()
+    let check: SavedCheck = serde_json::from_slice(&tokio::fs::read(path).await.ok()?).ok()?;
+    validate(&check.latest).ok()?;
+    Some(check)
 }
 
 async fn save(path: &Path, check: &SavedCheck) {
@@ -179,10 +230,89 @@ mod tests {
     fn compares_versions_numerically() {
         assert!(is_newer("0.1.10", "0.1.9"));
         assert!(is_newer("v0.2.0", "0.1.74"));
+        assert!(is_newer("V0.2.0", "0.1.74"));
         assert!(is_newer("1.0.0", "0.99.99"));
         assert!(!is_newer("0.1.74", "0.1.74"));
         assert!(!is_newer("0.1.73", "0.1.74"));
-        assert!(!is_newer("0.1.74-rc.1", "0.1.74"));
         assert!(!is_newer("nightly", "0.1.74"));
+        assert!(!is_newer("0.1.74+build.5", "0.1.74"));
+    }
+
+    #[test]
+    fn ignores_trailing_zeros() {
+        assert!(!is_newer("0.2.0", "0.2"));
+        assert!(!is_newer("0.2", "0.2.0"));
+        assert!(is_newer("0.2.1", "0.2"));
+    }
+
+    #[test]
+    fn a_final_release_is_newer_than_its_pre_releases() {
+        assert!(is_newer("0.2.0", "0.2.0-rc.1"));
+        assert!(!is_newer("0.2.0-rc.1", "0.2.0"));
+        assert!(is_newer("0.2.0-rc.1", "0.1.74"));
+        assert!(!is_newer("0.2.0-rc.2", "0.2.0-rc.1"));
+        assert!(!is_newer("0.2.0-", "0.1.0"));
+    }
+
+    fn release(version: &str, url: &str) -> Release {
+        Release {
+            version: version.to_string(),
+            url: url.to_string(),
+            published_at: None,
+        }
+    }
+
+    #[test]
+    fn validates_version_and_url() {
+        let url = "https://github.com/buntec/stereo/releases/tag/v0.2.0";
+        assert!(validate(&release("0.2.0", url)).is_ok());
+        assert!(validate(&release("nightly", url)).is_err());
+        assert!(validate(&release("0.2.0", "javascript:alert(1)")).is_err());
+        assert!(validate(&release(
+            "0.2.0",
+            "http://github.com/buntec/stereo/releases/"
+        ))
+        .is_err());
+        assert!(validate(&release("0.2.0", "https://example.com/")).is_err());
+    }
+
+    #[tokio::test]
+    async fn saved_checks_round_trip_and_bad_files_are_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(CHECK_FILE);
+        assert!(load(&path).await.is_none());
+
+        let latest = Release {
+            published_at: Some("2026-11-22T16:18:52Z".parse().unwrap()),
+            ..release(
+                "0.2.0",
+                "https://github.com/buntec/stereo/releases/tag/v0.2.0",
+            )
+        };
+        let checked_at: DateTime<Utc> = "2026-11-23T06:00:00Z".parse().unwrap();
+        save(
+            &path,
+            &SavedCheck {
+                latest: latest.clone(),
+                checked_at,
+            },
+        )
+        .await;
+        let loaded = load(&path).await.unwrap();
+        assert_eq!(loaded.latest, latest);
+        assert_eq!(loaded.checked_at, checked_at);
+        assert!(!path.with_extension("json.tmp").exists());
+
+        tokio::fs::write(&path, b"{not json").await.unwrap();
+        assert!(load(&path).await.is_none());
+
+        let tampered = SavedCheck {
+            latest: release("0.2.0", "https://example.com/"),
+            checked_at,
+        };
+        tokio::fs::write(&path, serde_json::to_vec(&tampered).unwrap())
+            .await
+            .unwrap();
+        assert!(load(&path).await.is_none());
     }
 }
