@@ -1,6 +1,6 @@
 [package]
 name = "stereo-desktop"
-version = "0.1.75"
+version = "0.1.76"
 description = "Desktop app for Stereo"
 edition = "2021"
 publish = false
