@@ -141,3 +141,14 @@ export function hasCollectionStats(stats?: ICollectionStats): boolean {
       stats.top_labels_four_plus.length > 0)
   );
 }
+
+/** How long ago `ms` was, to follow a verb: "just now", "5 min ago", "3 h ago"
+ * or, from a day on, "on 11/21/2026". */
+export function timeAgo(ms: number): string {
+  const minutes = Math.round((Date.now() - ms) / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return `on ${new Date(ms).toLocaleDateString()}`;
+}

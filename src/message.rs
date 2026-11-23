@@ -60,6 +60,10 @@ pub enum MsgServer {
     Tailscale {
         status: crate::tailscale::TailscaleStatus,
     },
+    /// Whether a newer release is out, sent on connect once known and after each daily check.
+    UpdateCheck {
+        status: crate::update_check::UpdateStatus,
+    },
     /// Reply to `CreatePairingCode`: a single-use code that signs a browser on the tailnet in,
     /// valid for `expires_in` seconds.
     PairingCode {
@@ -883,6 +887,61 @@ impl MsgClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_check_protocol_matches_status_tags() {
+        use crate::update_check::{Release, UpdateStatus};
+        let latest = Release {
+            version: "0.2.0".into(),
+            url: "https://github.com/buntec/stereo/releases/tag/v0.2.0".into(),
+            published_at: Some("2026-11-22T16:18:52Z".parse().unwrap()),
+        };
+        let checked_at: chrono::DateTime<chrono::Utc> = "2026-11-23T06:00:00Z".parse().unwrap();
+        let message = |status| serde_json::to_value(MsgServer::UpdateCheck { status }).unwrap();
+
+        let available = message(UpdateStatus::Available {
+            latest: latest.clone(),
+            checked_at,
+            refresh_error: None,
+        });
+        assert_eq!(available["type"], "update-check");
+        assert_eq!(available["status"]["state"], "available");
+        assert_eq!(available["status"]["latest"]["version"], "0.2.0");
+        assert_eq!(available["status"]["latest"]["url"], latest.url);
+        assert_eq!(
+            available["status"]["latest"]["published_at"],
+            "2026-11-22T16:18:52Z"
+        );
+        assert_eq!(available["status"]["checked_at"], "2026-11-23T06:00:00Z");
+        assert!(available["status"]["refresh_error"].is_null());
+
+        let up_to_date = message(UpdateStatus::UpToDate {
+            latest,
+            checked_at,
+            refresh_error: Some(crate::update_check::RefreshError {
+                message: "proxy refused".into(),
+                failed_at: "2026-11-28T06:00:00Z".parse().unwrap(),
+                is_stale: true,
+            }),
+        });
+        assert_eq!(up_to_date["status"]["state"], "up-to-date");
+        assert_eq!(
+            up_to_date["status"]["refresh_error"]["message"],
+            "proxy refused"
+        );
+        assert_eq!(
+            up_to_date["status"]["refresh_error"]["failed_at"],
+            "2026-11-28T06:00:00Z"
+        );
+        assert_eq!(up_to_date["status"]["refresh_error"]["is_stale"], true);
+
+        let error = message(UpdateStatus::Error {
+            message: "GitHub replied 403".into(),
+            checked_at,
+        });
+        assert_eq!(error["status"]["state"], "error");
+        assert_eq!(error["status"]["message"], "GitHub replied 403");
+    }
 
     #[test]
     fn health_check_protocol_matches_request_reply_and_status_tags() {

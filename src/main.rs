@@ -289,6 +289,7 @@ async fn main() -> anyhow::Result<()> {
     stereo_backend::git::recover_pending_repositories(&repos_dir).await;
     stereo_backend::beatport::init(&home).await;
     audio::init(&settings).await;
+    stereo_backend::update_check::spawn(&home);
 
     let settings = Arc::new(settings);
 
