@@ -1838,6 +1838,52 @@ test(
   },
 );
 
+test(
+  "the large thumbnail stays closed after Escape though it covered the thumbnail",
+  { tag: "@webkit" },
+  async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await openApp(page);
+    await page.route(
+      "https://i.ytimg.com/vi/audit0/maxresdefault.jpg",
+      (route) =>
+        route.fulfill({
+          contentType: "image/svg+xml",
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"/>',
+        }),
+    );
+    const thumbnail = page.getByRole("img", {
+      name: "Thumbnail of the playing track",
+    });
+    const card = page.getByRole("dialog", {
+      name: "Thumbnail of the playing track",
+    });
+    await thumbnail.hover();
+    await expect(card).toBeVisible();
+    await card.evaluate((el) =>
+      Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)),
+    );
+    // The large thumbnail covers the pointer.
+    const trigger = (await thumbnail.boundingBox())!;
+    const box = (await card.boundingBox())!;
+    const [x, y] = [
+      trigger.x + trigger.width / 2,
+      trigger.y + trigger.height / 2,
+    ];
+    expect(x > box.x && x < box.x + box.width).toBe(true);
+    expect(y > box.y && y < box.y + box.height).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(card).toBeHidden();
+    // Past the hover delay, with the pointer still where it was.
+    await page.waitForTimeout(1000);
+    await expect(card).toBeHidden();
+    // Leaving the thumbnail and coming back opens it again.
+    await page.mouse.move(640, 100);
+    await thumbnail.hover();
+    await expect(card).toBeVisible();
+  },
+);
+
 test("the speakers' clearance doesn't wrap the header where it would fit", async ({
   page,
 }) => {
