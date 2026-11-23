@@ -641,7 +641,9 @@ fn merge_play_count(base: i64, local: i64, remote: i64) -> i64 {
 fn merge_track(base: Option<&Track>, local: &Track, remote: &Track) -> anyhow::Result<Track> {
     // Identical rows still add up plays that both sides recorded since the base (one play each
     // on the same day leaves them identical). Rows that agree on no more plays than the base,
-    // or on a reset, are kept as they are.
+    // or on a reset, are kept as they are. So are identical rows of a track both sides added:
+    // the same history imported on both can't be told apart from the same plays recorded on
+    // both, and counting it twice would be worse than missing a play.
     if local == remote && base.is_none_or(|base| local.play_count <= base.play_count) {
         return Ok(local.clone());
     }
@@ -2040,6 +2042,32 @@ mod tests {
         assert_eq!((merged.rating, merged.play_count), (Some(5), 1));
         assert_eq!(notes(&second_db, "one").await.as_deref(), Some("keep"));
         assert_eq!(notes(&second_db, "two").await.as_deref(), Some("new"));
+    }
+
+    /// A known limitation (`merge_track`): one play each of a track both sides added, on the same
+    /// day, counts once, as the rows can't be told apart from the same history imported on both.
+    #[tokio::test]
+    async fn sync_counts_same_day_plays_of_a_track_both_sides_added_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_remote, first, second) = two_clones(temp.path()).await;
+        for clone in [&first, &second] {
+            let pool = db::open_pool(&clone.join("music.db")).await.unwrap();
+            db::insert_track(&pool, &track("two"), false).await.unwrap();
+            db::inc_play_count(
+                &pool,
+                "two",
+                chrono::NaiveDate::from_ymd_opt(2026, 8, 18).unwrap(),
+            )
+            .await
+            .unwrap();
+            pool.close().await;
+        }
+        reconcile(&first, &second).await;
+
+        let pool = db::open_pool(&second.join("music.db")).await.unwrap();
+        let merged = db::get_track(&pool, "two").await.unwrap().unwrap();
+        pool.close().await;
+        assert_eq!(merged.play_count, 1);
     }
 
     #[tokio::test]
