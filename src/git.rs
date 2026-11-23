@@ -589,7 +589,9 @@ async fn tracks_from(path: &Path) -> anyhow::Result<HashMap<String, Track>> {
 }
 
 fn merge_track(base: Option<&Track>, local: &Track, remote: &Track) -> anyhow::Result<Track> {
-    if local == remote {
+    // Plays recorded on both sides since the merge base are separate plays even when they left
+    // the rows identical (one play each on the same day), so their counts still add up.
+    if local == remote && base.is_none_or(|base| base.play_count == local.play_count) {
         return Ok(local.clone());
     }
     if base == Some(local) {
@@ -696,7 +698,8 @@ impl Conflict {
 }
 
 /// The paths both sides changed (with renames counted as deletion plus addition, see
-/// `changed_paths`), skipping those that ended up the same on both sides. A path one side
+/// `changed_paths`), skipping those that ended up the same on both sides, except collections,
+/// whose identical play counts may still have to be added up (`merge_track`). A path one side
 /// deleted because it renamed it, which the other side edited, follows the rename, so that the
 /// edit is merged into the renamed collection rather than conflicting with its deletion.
 async fn find_conflicts(
@@ -712,7 +715,8 @@ async fn find_conflicts(
     for path in local_paths.intersection(remote_paths) {
         let local_blob = show_blob(repo, "HEAD", path).await?;
         let remote_blob = show_blob(repo, remote_ref, path).await?;
-        if local_blob == remote_blob {
+        // Identical collections still need merging: both sides may have recorded the same plays.
+        if local_blob == remote_blob && !(local_blob.is_some() && path.ends_with(".db")) {
             continue;
         }
         let mut conflict = Conflict {
@@ -1572,6 +1576,11 @@ mod tests {
 
     /// Two clones of a remote that has `music.db` with track "one".
     async fn two_clones(temp: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        two_clones_of(temp, &track("one")).await
+    }
+
+    /// A remote holding a collection with `seed`, and two clones of it.
+    async fn two_clones_of(temp: &Path, seed: &Track) -> (PathBuf, PathBuf, PathBuf) {
         let remote = temp.join("remote.git");
         std::fs::create_dir(&remote).unwrap();
         command(&remote, &["init", "--bare"]);
@@ -1581,7 +1590,7 @@ mod tests {
             .await
             .unwrap();
         let db_path = first.join("music.db");
-        create_collection(&db_path, &track("one")).await;
+        create_collection(&db_path, seed).await;
         let report = sync_repository(first.clone(), Some(db_path), false, None).await;
         assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
         let second = temp.join("second");
@@ -1697,7 +1706,12 @@ mod tests {
     #[tokio::test]
     async fn sync_adds_up_plays_of_the_same_track_on_both_sides() {
         let temp = tempfile::tempdir().unwrap();
-        let (remote, first, second) = two_clones(temp.path()).await;
+        // Plays before the clones diverged count once, not once per side.
+        let seeded = Track {
+            play_count: 4,
+            ..track("one")
+        };
+        let (remote, first, second) = two_clones_of(temp.path(), &seeded).await;
         let earlier = chrono::NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
         let later = chrono::NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         play_on(&first.join("music.db"), later).await;
@@ -1712,7 +1726,7 @@ mod tests {
         assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
 
         let merged = track_one(&second.join("music.db")).await;
-        assert_eq!(merged.play_count, 3);
+        assert_eq!(merged.play_count, 7);
         assert_eq!(merged.last_played, Some(later));
 
         let report = sync_repository(first.clone(), None, true, None).await;
@@ -1725,6 +1739,47 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(output_text(pushed), output_text(local));
+    }
+
+    /// One play on each side on the same day leaves the rows, and possibly the whole files,
+    /// identical; they're still two plays.
+    async fn merge_same_day_plays(other_change_upstream: bool) {
+        let temp = tempfile::tempdir().unwrap();
+        let (_remote, first, second) = two_clones(temp.path()).await;
+        play(&first.join("music.db")).await;
+        if other_change_upstream {
+            let pool = db::open_pool(&first.join("music.db")).await.unwrap();
+            db::insert_track(&pool, &track("two"), false).await.unwrap();
+            pool.close().await;
+        }
+        let report = sync_repository(first, None, false, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        // Stereo's commits name the same author and message everywhere, so identical files
+        // committed in the same second would be the very same commit, with nothing to merge.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        play(&second.join("music.db")).await;
+        let report = sync_repository(second.clone(), None, false, None).await;
+        assert_eq!(report.state, GitSyncState::ConflictRequiresAttention);
+        let report = sync_repository(second.clone(), None, true, None).await;
+        assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
+
+        let merged = track_one(&second.join("music.db")).await;
+        assert_eq!(merged.play_count, 2);
+        let pool = db::open_pool(&second.join("music.db")).await.unwrap();
+        let has_two = db::get_track(&pool, "two").await.unwrap().is_some();
+        pool.close().await;
+        assert_eq!(has_two, other_change_upstream);
+    }
+
+    #[tokio::test]
+    async fn sync_adds_up_same_day_plays_in_identical_collections() {
+        merge_same_day_plays(false).await;
+    }
+
+    #[tokio::test]
+    async fn sync_adds_up_same_day_plays_in_otherwise_different_collections() {
+        merge_same_day_plays(true).await;
     }
 
     #[tokio::test]
