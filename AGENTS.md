@@ -21,6 +21,7 @@ just install             # build and install the standalone binary
 just test                # cargo test
 just lint                # cargo clippy
 just format              # format both Rust crates and frontend/src
+just clean               # remove build artifacts (keeps node_modules)
 bun run build            # tsc -b and Vite production build
 bun run lint             # ESLint
 bunx playwright install chromium webkit   # once; skip chromium if an executable is configured

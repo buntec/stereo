@@ -67,6 +67,14 @@ desktop-check:
     just _desktop-sidecar debug
     cd desktop/src-tauri && cargo clippy && cargo test
 
+# Installed dependencies (node_modules) stay, apart from their build caches.
+# Remove build artifacts of the backend, frontend, desktop app and browser tests
+clean:
+    cargo clean
+    cargo clean --manifest-path desktop/src-tauri/Cargo.toml
+    rm -rf dist node_modules/.tmp node_modules/.vite playwright-report test-results
+    rm -rf desktop/src-tauri/binaries desktop/src-tauri/gen/schemas
+
 run-backend *args:
     cargo run --release -- {{ args }}
 
