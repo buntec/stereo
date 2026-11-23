@@ -113,6 +113,7 @@ import CollectionDownloadDialog, {
 } from "./CollectionDownloadDialog.tsx";
 import ImportMenu from "./ImportMenu.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
+import ExportJsonDialog, { type JsonExport } from "./ExportJsonDialog.tsx";
 import {
   YouTubePlaylistDialog,
   YouTubePlaylistProgressDialog,
@@ -2079,6 +2080,110 @@ function App() {
     }
   }, [requestReply]);
 
+  const [jsonExport, setJsonExport] = useState<JsonExport | null>(null);
+  const closeJsonExport = useCallback(() => setJsonExport(null), []);
+
+  const exportSelectionToJson = useCallback(() => {
+    getSelectedTracks((tracks) => {
+      if (tracks.length > 0)
+        setJsonExport({
+          tracks,
+          name: collectionLabel(openCollectionPath ?? "tracks"),
+        });
+    });
+  }, [getSelectedTracks, openCollectionPath]);
+
+  const exportAllToJson = useCallback(() => {
+    const api = gridRef.current?.api;
+    if (!api) return;
+    requestReply(
+      {
+        type: "get-rows",
+        startRow: 0,
+        // The whole view; the server's limit is `endRow - startRow`.
+        endRow: Number.MAX_SAFE_INTEGER,
+        filterModel: api.getState().filter?.filterModel,
+        sortModel: api.getState().sort?.sortModel,
+      },
+      (r) => {
+        if ("rows" in r && r.rows.length > 0)
+          setJsonExport({
+            tracks: r.rows as ITrack[],
+            name: collectionLabel(openCollectionPath ?? "tracks"),
+          });
+      },
+    );
+  }, [requestReply, openCollectionPath]);
+
+  const downloadJson = useCallback(
+    (name: string, tracks: ITrack[], includeUserData: boolean) =>
+      // An error reply comes with a notification saying why.
+      requestReply(
+        {
+          type: "prepare-tracks-download",
+          name,
+          tracks,
+          include_user_data: includeUserData,
+        },
+        (msg) => {
+          if (msg.type !== "collection-download" || !("token" in msg)) return;
+          const url = `/collection-download/${encodeURIComponent(msg.token)}`;
+          if (inDesktopApp)
+            setReadyDownload({
+              url,
+              fileName: `${name}.json`,
+              title: "Download Tracks",
+            });
+          else downloadUrl(url);
+        },
+      ),
+    [requestReply],
+  );
+
+  const importJson = useCallback(
+    (data: string, keepUserData: boolean) =>
+      new Promise<void>((resolve, reject) => {
+        const collection = openCollectionPath;
+        if (!collection) {
+          reject(new Error("Open a collection to import into"));
+          return;
+        }
+        requestReply(
+          {
+            type: "import-tracks",
+            collection,
+            data,
+            keep_user_data: keepUserData,
+          },
+          (msg) => {
+            if (msg.type === "tracks-imported" && "imported" in msg) {
+              const count = (n: number) =>
+                `${n} ${n === 1 ? "track" : "tracks"}`;
+              const skipped =
+                msg.skipped > 0
+                  ? `, skipped ${count(msg.skipped)} already in ${collectionLabel(collection)}`
+                  : "";
+              dispatch({
+                type: "notification",
+                message: `Imported ${count(msg.imported)}${skipped}`,
+                kind: "info",
+              });
+              resolve();
+            } else if (msg.type === "error-reply" && "message" in msg)
+              reject(new Error(msg.message));
+            else
+              // The backend may have imported them before the connection went.
+              reject(
+                new Error(
+                  "Lost the connection to Stereo. Check the collection before importing again.",
+                ),
+              );
+          },
+        );
+      }),
+    [requestReply, openCollectionPath],
+  );
+
   const addTracksToCollection = useCallback(
     async (tracks: ITrack[]) => {
       if (tracks.length === 0) return true;
@@ -2769,6 +2874,8 @@ function App() {
       )}
       requestReply={requestReply}
       onYouTubeImport={importYouTubePlaylist}
+      onJsonImport={importJson}
+      isConnected={backendReady}
     />
   );
 
@@ -3346,6 +3453,8 @@ function App() {
                           exportAllToSpotifyPlaylist={
                             exportAllToSpotifyPlaylist
                           }
+                          exportSelectionToJson={exportSelectionToJson}
+                          exportAllToJson={exportAllToJson}
                         />
                         {importMenu(narrow)}
                         {!isGridDefaultView &&
@@ -3633,6 +3742,13 @@ function App() {
           <CollectionDownloadDialog
             download={readyDownload}
             onClose={closeReadyDownload}
+          />
+          <ExportJsonDialog
+            // Each export starts from its own suggested name.
+            key={jsonExport ? "open" : "closed"}
+            pending={jsonExport}
+            onClose={closeJsonExport}
+            onExport={downloadJson}
           />
           <SavePlaylistDialog
             isOpen={savePlaylistOpen}

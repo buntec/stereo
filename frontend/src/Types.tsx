@@ -158,6 +158,20 @@ export type ClientMsg =
   | { type: "collection-contains-ids"; yt_ids: string[] }
   | { type: "get-collection-track"; yt_id: string; collection: string }
   | { type: "prepare-collection-download"; collection: string }
+  // Exports `tracks` as `<name>.json`; answered with "collection-download".
+  | {
+      type: "prepare-tracks-download";
+      name: string;
+      tracks: ITrack[];
+      include_user_data: boolean;
+    }
+  // `data` is the text of a JSON file of exported tracks; answered with "tracks-imported".
+  | {
+      type: "import-tracks";
+      collection: string;
+      data: string;
+      keep_user_data: boolean;
+    }
   | { type: "download-audio"; yt_id: string }
   | { type: "create-pairing-code" }
   | { type: "get-waveform"; yt_id: string }
@@ -451,6 +465,7 @@ export type ServerMsg =
   | { type: "set-git-remote-reply"; id: number; url: string | null }
   | { type: "error-reply"; id: number; message: string }
   | { type: "collection-imported"; id: number; path: string }
+  | { type: "tracks-imported"; id: number; imported: number; skipped: number }
   | { type: "collections"; collections: ICollection[] }
   | {
       type: "collection-stats";

@@ -3,6 +3,7 @@
 //! it, and hands back a token for `GET /collection-download/{token}`. A plain link can't send the
 //! WebSocket token, so the token stands in for it: random, single use and short-lived, like a
 //! pairing code. Snapshots wait in temp files, deleted once streamed, replaced or expired.
+//! `prepare_file` hands out other files the same way, such as tracks exported as JSON.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,7 @@ struct Snapshot {
     dir: tempfile::TempDir,
     path: PathBuf,
     file_name: String,
+    content_type: &'static str,
     created: Instant,
 }
 
@@ -58,11 +60,33 @@ pub async fn prepare(pool: &sqlx::SqlitePool, path: &Path) -> anyhow::Result<Str
         || "collection.db".into(),
         |n| n.to_string_lossy().into_owned(),
     );
+    Ok(register(dir, dest, file_name, "application/vnd.sqlite3"))
+}
+
+/// Writes `contents` to a temp file and returns the token to download it with as `file_name`.
+pub async fn prepare_file(
+    contents: Vec<u8>,
+    file_name: String,
+    content_type: &'static str,
+) -> anyhow::Result<String> {
+    let dir = tempfile::tempdir()?;
+    let dest = dir.path().join("download");
+    tokio::fs::write(&dest, contents).await?;
+    Ok(register(dir, dest, file_name, content_type))
+}
+
+fn register(
+    dir: tempfile::TempDir,
+    path: PathBuf,
+    file_name: String,
+    content_type: &'static str,
+) -> String {
     let token = uuid::Uuid::new_v4().simple().to_string();
     let snapshot = Snapshot {
         dir,
-        path: dest,
+        path,
         file_name,
+        content_type,
         created: Instant::now(),
     };
     let dropped = insert(&mut lock(), token.clone(), snapshot);
@@ -73,7 +97,7 @@ pub async fn prepare(pool: &sqlx::SqlitePool, path: &Path) -> anyhow::Result<Str
         let snapshot = lock().remove(&expired);
         drop(snapshot);
     });
-    Ok(token)
+    token
 }
 
 fn lock() -> std::sync::MutexGuard<'static, HashMap<String, Snapshot>> {
@@ -127,7 +151,7 @@ async fn handler(UrlPath(token): UrlPath<String>) -> Response {
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
     let len = file.metadata().await.map(|m| m.len()).ok();
-    let headers = headers(&snapshot.file_name, len);
+    let headers = headers(&snapshot.file_name, snapshot.content_type, len);
     // The stream owns the temp dir, so the file is deleted once it is sent (or the client goes).
     let dir = snapshot.dir;
     let body = Body::from_stream(tokio_util::io::ReaderStream::new(file).map(move |chunk| {
@@ -142,20 +166,17 @@ async fn head_handler(UrlPath(token): UrlPath<String>) -> Response {
     let found = lock()
         .get(&token)
         .filter(|s| s.created.elapsed() < LIFETIME)
-        .map(|s| (s.file_name.clone(), s.path.clone()));
-    let Some((file_name, path)) = found else {
+        .map(|s| (s.file_name.clone(), s.content_type, s.path.clone()));
+    let Some((file_name, content_type, path)) = found else {
         return expired();
     };
     let len = tokio::fs::metadata(&path).await.map(|m| m.len()).ok();
-    headers(&file_name, len).into_response()
+    headers(&file_name, content_type, len).into_response()
 }
 
-fn headers(file_name: &str, len: Option<u64>) -> HeaderMap {
+fn headers(file_name: &str, content_type: &'static str, len: Option<u64>) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/vnd.sqlite3"),
-    );
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     headers.insert(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_str(&content_disposition(file_name))
@@ -202,6 +223,7 @@ mod tests {
             dir,
             path,
             file_name: "c.db".into(),
+            content_type: "application/vnd.sqlite3",
             created,
         }
     }

@@ -2915,7 +2915,8 @@ test("the collection menu imports a collection file as is @webkit", async ({
 
   // A refusal keeps the file and name, saying why.
   send({ type: "error-reply", id: first.id, message: "Not a collection" });
-  await expect(dialog.getByText("Not a collection")).toBeVisible();
+  // Shown by the file input and announced by the dialog's live region.
+  await expect(dialog.getByText("Not a collection").first()).toBeVisible();
   await expect(name).toHaveValue("warmup");
 
   await dialog.getByRole("button", { name: "Import" }).click();
@@ -3042,4 +3043,99 @@ test("the collection widget opens the open collection's stats", async ({
   await expect(
     page.getByRole("dialog").getByText("Example artist", { exact: true }),
   ).toHaveCount(0);
+});
+
+test("the current view exports to a JSON file, optionally with user data", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as { __STEREO_DESKTOP__?: boolean }).__STEREO_DESKTOP__ = true;
+  });
+  const { messages, send } = await openApp(page);
+  const exports = () =>
+    messages.filter((m) => m.type === "prepare-tracks-download");
+
+  await page.getByRole("button", { name: "Export tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).last().click();
+  const dialog = page.getByRole("dialog", { name: "Export to JSON" });
+  await expect(dialog.getByText(/Saves \d+ tracks? as/)).toBeVisible();
+  const name = dialog.getByRole("textbox", { name: "File name" });
+  await expect(name).toHaveValue("collection");
+  await name.fill("for a friend");
+  await dialog
+    .getByRole("checkbox", { name: "Include ratings and play history" })
+    .check();
+  await dialog.getByRole("button", { name: "Export" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await expect.poll(() => exports().length).toBe(1);
+  const request = exports()[0] as {
+    id: number;
+    name: string;
+    tracks: { yt_id: string }[];
+    include_user_data: boolean;
+  };
+  expect(request.name).toBe("for a friend");
+  expect(request.include_user_data).toBe(true);
+  expect(request.tracks.length).toBeGreaterThan(0);
+
+  send({ type: "collection-download", id: request.id, token: "fixture" });
+  const download = page.getByRole("dialog", { name: "Download Tracks" });
+  await expect(download.getByText("for a friend.json")).toBeVisible();
+  await expect(
+    download.getByRole("link", { name: "Download" }),
+  ).toHaveAttribute("href", "/collection-download/fixture");
+});
+
+test("a JSON file of tracks imports into the open collection", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  const imports = () => messages.filter((m) => m.type === "import-tracks");
+  const file = JSON.stringify({
+    format: "stereo-tracks",
+    version: 1,
+    tracks: [],
+  });
+
+  await page.getByRole("button", { name: "Import tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).click();
+  const dialog = page.getByRole("dialog", { name: "Import from JSON" });
+  const importButton = dialog.getByRole("button", { name: "Import" });
+  await expect(importButton).toBeDisabled();
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "tracks.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(file),
+  });
+  await importButton.click();
+  await expect.poll(imports).toEqual([
+    {
+      type: "import-tracks",
+      id: expect.any(Number),
+      collection: "/audit/collection.db",
+      data: file,
+      keep_user_data: false,
+    },
+  ]);
+
+  // A refusal keeps the file, saying why.
+  const first = imports()[0] as { id: number };
+  send({ type: "error-reply", id: first.id, message: "Not a tracks file" });
+  await expect(dialog.getByText("Not a tracks file").first()).toBeVisible();
+
+  await dialog
+    .getByRole("checkbox", { name: "Keep ratings and play history" })
+    .check();
+  await importButton.click();
+  await expect.poll(() => imports().length).toBe(2);
+  const second = imports()[1] as { id: number; keep_user_data: boolean };
+  expect(second.keep_user_data).toBe(true);
+  send({ type: "tracks-imported", id: second.id, imported: 3, skipped: 1 });
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications" })
+      .getByText("Imported 3 tracks, skipped 1 track already in collection"),
+  ).toBeVisible();
 });

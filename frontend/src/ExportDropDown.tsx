@@ -13,6 +13,8 @@ type ExportDropDownProps = {
   exportAllToYTSavedPlaylist: () => void;
   exportSelectionToSpotifyPlaylist: () => void;
   exportAllToSpotifyPlaylist: () => void;
+  exportSelectionToJson: () => void;
+  exportAllToJson: () => void;
   isIconOnly?: boolean;
 };
 
@@ -26,6 +28,8 @@ function ExportDropDown({
   exportAllToYTSavedPlaylist,
   exportSelectionToSpotifyPlaylist,
   exportAllToSpotifyPlaylist,
+  exportSelectionToJson,
+  exportAllToJson,
   isIconOnly = false,
 }: ExportDropDownProps) {
   const hasSelection = selectionCount > 0;
@@ -70,6 +74,11 @@ function ExportDropDown({
               onClick: exportSelectionToSpotifyPlaylist,
               isDisabled: !hasSelection,
             },
+            {
+              label: "JSON file",
+              onClick: exportSelectionToJson,
+              isDisabled: !hasSelection,
+            },
           ],
         },
         { type: "divider" },
@@ -88,6 +97,10 @@ function ExportDropDown({
             {
               label: "Spotify playlist",
               onClick: exportAllToSpotifyPlaylist,
+            },
+            {
+              label: "JSON file",
+              onClick: exportAllToJson,
             },
           ],
         },
