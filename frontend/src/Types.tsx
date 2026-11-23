@@ -152,10 +152,18 @@ export type Release = {
   published_at?: string | null;
 };
 
+/** A check that failed after an earlier one succeeded. */
+export type RefreshError = { message: string; failed_at: string };
+
 /** How the running version compares with the latest release, checked daily. */
 export type UpdateStatus =
-  | { state: "up-to-date"; latest: Release; checked_at: string }
-  | { state: "available"; latest: Release; checked_at: string }
+  | {
+      state: "up-to-date" | "available";
+      latest: Release;
+      checked_at: string;
+      /** Set while checks fail since `checked_at`; retried hourly. */
+      refresh_error?: RefreshError | null;
+    }
   /** No check has succeeded yet; the backend retries hourly. */
   | { state: "error"; message: string; checked_at: string };
 

@@ -3088,12 +3088,49 @@ test("the version shows whether a newer release is out", async ({ page }) => {
   await page.getByRole("button", { name: "Stereo is up to date" }).hover();
   const upToDate = page.getByRole("dialog", { name: "Stereo is up to date" });
   await expect(upToDate).toContainText("Checked on ");
+  // The backend decides whether versions are equal; the card just names them.
+  await expect(upToDate).toContainText(
+    "You're running vtest.The latest release is v0.2.0.",
+  );
   // Only release pages are linked.
   await expect(
     upToDate.getByRole("link", { name: /Release notes for v0\.2\.0/ }),
   ).toHaveAttribute("href", "https://github.com/buntec/stereo/releases");
 
+  // A failed refresh after a successful check shows, with the earlier result.
   await page.mouse.move(0, 400);
+  await expect(upToDate).toBeHidden();
+  send({
+    type: "update-check",
+    status: {
+      state: "up-to-date",
+      latest: updateRelease,
+      checked_at: new Date(Date.now() - 5 * 86400_000).toISOString(),
+      refresh_error: {
+        message: "connection refused",
+        failed_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+      },
+    },
+  });
+  await page
+    .getByRole("button", { name: "Couldn't check for updates" })
+    .hover();
+  const stale = page.getByRole("dialog", {
+    name: "Couldn't check for updates",
+  });
+  await expect(stale).toContainText(
+    "The latest release was v0.2.0 when checked.",
+  );
+  await expect(stale).toContainText("Checked on ");
+  await expect(stale).toContainText(
+    "Checking again failed 20 min ago: connection refused",
+  );
+  await expect(
+    stale.getByRole("link", { name: /Release notes for v0\.2\.0/ }),
+  ).toHaveAttribute("href", updateRelease.url);
+
+  await page.mouse.move(0, 400);
+  await expect(stale).toBeHidden();
   send({
     type: "update-check",
     status: {
@@ -3109,6 +3146,40 @@ test("the version shows whether a newer release is out", async ({ page }) => {
     page.getByRole("dialog", { name: "Couldn't check for updates" }),
   ).toContainText("GitHub replied 403 Forbidden");
 });
+
+test(
+  "the update details open from the keyboard",
+  { tag: "@webkit" },
+  async ({ page }) => {
+    const { send } = await openApp(page);
+    send({
+      type: "update-check",
+      status: {
+        state: "available",
+        latest: updateRelease,
+        checked_at: new Date().toISOString(),
+      },
+    });
+    const button = page.getByRole("button", {
+      name: "Stereo v0.2.0 is available",
+    });
+    const card = page.getByRole("dialog", {
+      name: "Stereo v0.2.0 is available",
+    });
+    await button.focus();
+    await expect(card).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(card).toBeHidden();
+    await expect(button).toBeFocused();
+    // Pressing the focused button opens it again.
+    await page.keyboard.press("Enter");
+    await expect(card).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(card).toBeHidden();
+    await page.keyboard.press("Space");
+    await expect(card).toBeVisible();
+  },
+);
 
 test.describe("on a touch screen", () => {
   test.use({ hasTouch: true });

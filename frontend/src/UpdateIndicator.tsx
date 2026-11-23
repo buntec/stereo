@@ -1,5 +1,5 @@
 import { useReducer } from "react";
-import { HoverCard } from "@astryxdesign/core/HoverCard";
+import { useHoverCard } from "@astryxdesign/core/HoverCard";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Icon } from "@astryxdesign/core/Icon";
 import { Link } from "@astryxdesign/core/Link";
@@ -18,11 +18,15 @@ const releaseUrl = (url: string) =>
 const releaseDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString() : undefined;
 
-/** An icon beside the version number: whether it's the latest release. Hovering
- * or tapping it shows the details and a link to the release page, which the
- * desktop app opens in the browser. A HoverCard rather than a Tooltip, since
- * the card holds a link and a tap on touch screens must open it (the trigger
- * does nothing else). */
+const ago = (iso: string) => timeAgo(Date.parse(iso));
+
+/** An icon beside the version number: whether it's the latest release. Hovering,
+ * focusing, tapping or pressing it shows the details and a link to the release
+ * page, which the desktop app opens in the browser. A HoverCard rather than a
+ * Tooltip, since the card holds a link and a tap on touch screens must open it.
+ * The hook rather than the HoverCard component, for its `show()`: pressing the
+ * button (Enter, Space, a click) opens the card too, as a button should. A
+ * controlled `isOpen` can't do that, since a held `false` also blocks hover. */
 function UpdateIndicator({
   version,
   status,
@@ -38,45 +42,80 @@ function UpdateIndicator({
   let icon;
   let url = RELEASES_URL;
   let linkText = "All releases";
+  const footer: string[] = [];
   switch (status.state) {
-    case "available": {
-      const released = releaseDate(status.latest.published_at);
-      label = `Stereo v${status.latest.version} is available`;
-      lines = [
-        `You're running v${version}.`,
-        ...(released
-          ? [`v${status.latest.version} was released on ${released}.`]
-          : []),
-      ];
-      icon = <Icon icon={CircleArrowUp} color="info" size="sm" />;
-      url = releaseUrl(status.latest.url);
-      linkText = `What's new in v${status.latest.version}`;
+    case "available":
+    case "up-to-date": {
+      const { latest, refresh_error } = status;
+      url = releaseUrl(latest.url);
+      footer.push(`Checked ${ago(status.checked_at)}`);
+      if (refresh_error)
+        footer.push(
+          `Checking again failed ${ago(refresh_error.failed_at)}: ${refresh_error.message}`,
+        );
+      if (status.state === "available") {
+        const released = releaseDate(latest.published_at);
+        label = `Stereo v${latest.version} is available`;
+        lines = [
+          `You're running v${version}.`,
+          ...(released
+            ? [`v${latest.version} was released on ${released}.`]
+            : []),
+        ];
+        // Still true when a later check failed: there's no going back.
+        icon = <Icon icon={CircleArrowUp} color="info" size="sm" />;
+        linkText = `What's new in v${latest.version}`;
+      } else {
+        // The backend compares versions; the wording leaves it at that, since
+        // equal versions may be spelled differently (`0.2` and `0.2.0`).
+        lines = [`You're running v${version}.`];
+        if (refresh_error) {
+          // Maybe out of date by now.
+          label = "Couldn't check for updates";
+          lines.push(`The latest release was v${latest.version} when checked.`);
+          icon = <Icon icon="warning" color="tertiary" size="sm" />;
+        } else {
+          label = "Stereo is up to date";
+          lines.push(`The latest release is v${latest.version}.`);
+          icon = <Icon icon="success" color="success" size="sm" />;
+        }
+        linkText = `Release notes for v${latest.version}`;
+      }
       break;
     }
-    case "up-to-date":
-      label = "Stereo is up to date";
-      lines = [
-        status.latest.version === version
-          ? `v${version} is the latest release.`
-          : `v${version} is newer than the latest release, v${status.latest.version}.`,
-      ];
-      icon = <Icon icon="success" color="success" size="sm" />;
-      url = releaseUrl(status.latest.url);
-      linkText = `Release notes for v${status.latest.version}`;
-      break;
     case "error":
       label = "Couldn't check for updates";
       lines = [status.message];
+      footer.push(`Tried ${ago(status.checked_at)}`);
       icon = <Icon icon="warning" color="tertiary" size="sm" />;
       break;
   }
+  const {
+    ref: triggerRef,
+    isOpen,
+    id: cardId,
+    show,
+    renderHoverCard,
+  } = useHoverCard({
+    label,
+    placement: "below",
+    touchTrigger: "tap",
+    onShow: refresh,
+  });
   return (
-    <HoverCard
-      label={label}
-      placement="below"
-      touchTrigger="tap"
-      onOpenChange={(open) => open && refresh()}
-      content={
+    <>
+      <IconButton
+        ref={triggerRef}
+        label={label}
+        icon={icon}
+        variant="ghost"
+        size="sm"
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? cardId : undefined}
+        onClick={show}
+      />
+      {renderHoverCard(
         <VStack gap={1}>
           <Text type="supporting" color="primary" weight="semibold">
             {label}
@@ -86,17 +125,17 @@ function UpdateIndicator({
               {line}
             </Text>
           ))}
-          <Text type="supporting">
-            Checked {timeAgo(Date.parse(status.checked_at))}
-          </Text>
+          {footer.map((line) => (
+            <Text key={line} type="supporting">
+              {line}
+            </Text>
+          ))}
           <Link href={url} type="supporting" isExternalLink>
             {linkText}
           </Link>
-        </VStack>
-      }
-    >
-      <IconButton label={label} icon={icon} variant="ghost" size="sm" />
-    </HoverCard>
+        </VStack>,
+      )}
+    </>
   );
 }
 

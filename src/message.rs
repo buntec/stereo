@@ -902,6 +902,7 @@ mod tests {
         let available = message(UpdateStatus::Available {
             latest: latest.clone(),
             checked_at,
+            refresh_error: None,
         });
         assert_eq!(available["type"], "update-check");
         assert_eq!(available["status"]["state"], "available");
@@ -912,9 +913,25 @@ mod tests {
             "2026-11-22T16:18:52Z"
         );
         assert_eq!(available["status"]["checked_at"], "2026-11-23T06:00:00Z");
+        assert!(available["status"]["refresh_error"].is_null());
 
-        let up_to_date = message(UpdateStatus::UpToDate { latest, checked_at });
+        let up_to_date = message(UpdateStatus::UpToDate {
+            latest,
+            checked_at,
+            refresh_error: Some(crate::update_check::RefreshError {
+                message: "proxy refused".into(),
+                failed_at: "2026-11-28T06:00:00Z".parse().unwrap(),
+            }),
+        });
         assert_eq!(up_to_date["status"]["state"], "up-to-date");
+        assert_eq!(
+            up_to_date["status"]["refresh_error"]["message"],
+            "proxy refused"
+        );
+        assert_eq!(
+            up_to_date["status"]["refresh_error"]["failed_at"],
+            "2026-11-28T06:00:00Z"
+        );
 
         let error = message(UpdateStatus::Error {
             message: "GitHub replied 403".into(),

@@ -98,10 +98,13 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
 - **`update_check.rs`** asks GitHub's latest-release API once a day (hourly retries
   after a failure) whether a newer release is out. The result is saved in the data
   dir's `update_check.json`, so restarts don't check again within the day, and goes
-  to every session as `MsgServer::UpdateCheck`. Versions it can't compare and URLs
-  other than the repo's release pages are refused, from the API and the file alike.
-  `UpdateIndicator.tsx` shows it as an icon beside the version number, with a
-  HoverCard (also opened by a tap) holding the details and a link to the release.
+  to every session as `MsgServer::UpdateCheck`, with any failure since as
+  `refresh_error`. Versions it can't compare and URLs other than the repo's release
+  pages are refused, from the API and the file alike. Waits are measured by the wall
+  clock in steps of at most five minutes, since Tokio's timers stop while the system
+  sleeps. `UpdateIndicator.tsx` shows it as an icon beside the version number. Its
+  card opens on hover, focus, a tap or a press of the button (`useHoverCard`'s
+  `show()`; a controlled HoverCard's `false` would block hover).
 - **`health.rs`** powers the manual search diagnostics in `HealthCheckButton.tsx`.
   Probes run concurrently with individual timeouts, independent of enabled sources
   or the open collection. A new `RunHealthCheck` replaces the session's previous

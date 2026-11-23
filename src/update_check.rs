@@ -17,6 +17,9 @@ const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/buntec/stereo/rel
 const CHECK_FILE: &str = "update_check.json";
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// The longest single timer wait. Tokio's timers stop while the system sleeps (on macOS at
+/// least), so waits are cut up and checked against the wall clock, catching up soon after a wake.
+const MAX_WAIT: Duration = Duration::from_secs(5 * 60);
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 static STATUS: OnceLock<watch::Sender<Option<UpdateStatus>>> = OnceLock::new();
@@ -29,6 +32,13 @@ pub struct Release {
     pub published_at: Option<DateTime<Utc>>,
 }
 
+/// A check that failed after an earlier one succeeded, whose result is still shown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RefreshError {
+    pub message: String,
+    pub failed_at: DateTime<Utc>,
+}
+
 /// How the running version compares with the latest release.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
@@ -36,10 +46,13 @@ pub enum UpdateStatus {
     UpToDate {
         latest: Release,
         checked_at: DateTime<Utc>,
+        /// Set while checks fail since `checked_at`; retried hourly.
+        refresh_error: Option<RefreshError>,
     },
     Available {
         latest: Release,
         checked_at: DateTime<Utc>,
+        refresh_error: Option<RefreshError>,
     },
     /// No check has succeeded yet; retried hourly.
     Error {
@@ -106,11 +119,46 @@ fn is_newer(latest: &str, current: &str) -> bool {
     }
 }
 
-fn status_of(latest: Release, checked_at: DateTime<Utc>) -> UpdateStatus {
-    if is_newer(&latest.version, CURRENT) {
-        UpdateStatus::Available { latest, checked_at }
-    } else {
-        UpdateStatus::UpToDate { latest, checked_at }
+/// What to show for the last successful check, if any, and the failure since, if any.
+fn status_of(saved: Option<&SavedCheck>, failure: Option<&RefreshError>) -> Option<UpdateStatus> {
+    let refresh_error = failure.cloned();
+    Some(match (saved, refresh_error) {
+        (Some(check), refresh_error) => {
+            let latest = check.latest.clone();
+            let checked_at = check.checked_at;
+            if is_newer(&latest.version, CURRENT) {
+                UpdateStatus::Available {
+                    latest,
+                    checked_at,
+                    refresh_error,
+                }
+            } else {
+                UpdateStatus::UpToDate {
+                    latest,
+                    checked_at,
+                    refresh_error,
+                }
+            }
+        }
+        (None, Some(failure)) => UpdateStatus::Error {
+            message: failure.message,
+            checked_at: failure.failed_at,
+        },
+        (None, None) => return None,
+    })
+}
+
+/// How long to wait before looking at the clock again on the way to `deadline`, or `None` once
+/// it has passed.
+fn next_wait(deadline: DateTime<Utc>, now: DateTime<Utc>) -> Option<Duration> {
+    let remaining = (deadline - now).to_std().ok().filter(|d| !d.is_zero())?;
+    Some(remaining.min(MAX_WAIT))
+}
+
+/// Waits until `deadline` by the wall clock, including time the system spent asleep.
+async fn sleep_until(deadline: DateTime<Utc>) {
+    while let Some(wait) = next_wait(deadline, Utc::now()) {
+        tokio::time::sleep(wait).await;
     }
 }
 
@@ -178,32 +226,31 @@ async fn run(path: PathBuf, status: watch::Sender<Option<UpdateStatus>>) {
         }
     };
     let mut saved = load(&path).await;
+    let mut failure: Option<RefreshError> = None;
+    let mut next_check = saved
+        .as_ref()
+        .map_or_else(Utc::now, |check| check.checked_at + CHECK_INTERVAL);
     loop {
-        if let Some(check) = &saved {
-            status.send_replace(Some(status_of(check.latest.clone(), check.checked_at)));
-            let age = (Utc::now() - check.checked_at).to_std().unwrap_or_default();
-            tokio::time::sleep(CHECK_INTERVAL.saturating_sub(age)).await;
+        if let Some(current) = status_of(saved.as_ref(), failure.as_ref()) {
+            status.send_replace(Some(current));
         }
-        loop {
-            let checked_at = Utc::now();
-            match fetch_latest(&client).await {
-                Ok(latest) => {
-                    let check = SavedCheck { latest, checked_at };
-                    save(&path, &check).await;
-                    saved = Some(check);
-                    break;
-                }
-                Err(e) => {
-                    tracing::warn!("checking for a newer release failed: {e:#}");
-                    // An earlier result stays on show, if there is one.
-                    if saved.is_none() {
-                        status.send_replace(Some(UpdateStatus::Error {
-                            message: format!("{e:#}"),
-                            checked_at,
-                        }));
-                    }
-                    tokio::time::sleep(RETRY_INTERVAL).await;
-                }
+        sleep_until(next_check).await;
+        let checked_at = Utc::now();
+        match fetch_latest(&client).await {
+            Ok(latest) => {
+                let check = SavedCheck { latest, checked_at };
+                save(&path, &check).await;
+                saved = Some(check);
+                failure = None;
+                next_check = checked_at + CHECK_INTERVAL;
+            }
+            Err(e) => {
+                tracing::warn!("checking for a newer release failed: {e:#}");
+                failure = Some(RefreshError {
+                    message: format!("{e:#}"),
+                    failed_at: checked_at,
+                });
+                next_check = checked_at + RETRY_INTERVAL;
             }
         }
     }
@@ -252,6 +299,64 @@ mod tests {
         assert!(is_newer("0.2.0-rc.1", "0.1.74"));
         assert!(!is_newer("0.2.0-rc.2", "0.2.0-rc.1"));
         assert!(!is_newer("0.2.0-", "0.1.0"));
+    }
+
+    #[test]
+    fn waits_are_bounded_and_measured_by_the_wall_clock() {
+        let now: DateTime<Utc> = "2026-11-23T06:00:00Z".parse().unwrap();
+        assert_eq!(next_wait(now + CHECK_INTERVAL, now), Some(MAX_WAIT));
+        assert_eq!(
+            next_wait(now + Duration::from_secs(30), now),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(next_wait(now, now), None);
+        // After a long sleep the deadline has passed: check right away.
+        assert_eq!(next_wait(now, now + CHECK_INTERVAL), None);
+    }
+
+    #[test]
+    fn a_failed_refresh_is_reported_with_the_earlier_result() {
+        let failed_at: DateTime<Utc> = "2026-11-28T06:00:00Z".parse().unwrap();
+        let failure = RefreshError {
+            message: "proxy refused".into(),
+            failed_at,
+        };
+        assert_eq!(status_of(None, None), None);
+        assert_eq!(
+            status_of(None, Some(&failure)),
+            Some(UpdateStatus::Error {
+                message: "proxy refused".into(),
+                checked_at: failed_at,
+            })
+        );
+        let check = SavedCheck {
+            latest: release(CURRENT, "https://github.com/buntec/stereo/releases/tag/v0"),
+            checked_at: "2026-11-23T06:00:00Z".parse().unwrap(),
+        };
+        let Some(UpdateStatus::UpToDate {
+            checked_at,
+            refresh_error,
+            ..
+        }) = status_of(Some(&check), Some(&failure))
+        else {
+            panic!("expected up-to-date");
+        };
+        assert_eq!(checked_at, check.checked_at);
+        assert_eq!(refresh_error, Some(failure));
+        let newer = SavedCheck {
+            latest: release(
+                "999.0.0",
+                "https://github.com/buntec/stereo/releases/tag/v999.0.0",
+            ),
+            ..check
+        };
+        assert!(matches!(
+            status_of(Some(&newer), None),
+            Some(UpdateStatus::Available {
+                refresh_error: None,
+                ..
+            })
+        ));
     }
 
     fn release(version: &str, url: &str) -> Release {
