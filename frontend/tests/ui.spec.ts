@@ -1806,6 +1806,38 @@ test("shows the playing track's thumbnail, blurred, behind the app", async ({
   await expect(background).toHaveCount(0);
 });
 
+test(
+  "hovering the playing track's thumbnail shows it large, centered",
+  { tag: "@webkit" },
+  async ({ page }) => {
+    await openApp(page);
+    await page.route(
+      "https://i.ytimg.com/vi/audit0/maxresdefault.jpg",
+      (route) =>
+        route.fulfill({
+          contentType: "image/svg+xml",
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"/>',
+        }),
+    );
+    await page
+      .getByRole("img", { name: "Thumbnail of the playing track" })
+      .hover();
+    const card = page.getByRole("dialog", {
+      name: "Thumbnail of the playing track",
+    });
+    await expect(card).toBeVisible();
+    // Measured once it has finished scaling in.
+    await card.evaluate((el) =>
+      Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)),
+    );
+    const box = (await card.boundingBox())!;
+    const viewport = page.viewportSize()!;
+    expect(box.width).toBeCloseTo(640, 0);
+    expect(box.x + box.width / 2).toBeCloseTo(viewport.width / 2, 0);
+    expect(box.y + box.height / 2).toBeCloseTo(viewport.height / 2, 0);
+  },
+);
+
 test("the speakers' clearance doesn't wrap the header where it would fit", async ({
   page,
 }) => {

@@ -1,15 +1,25 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { HoverCard } from "@astryxdesign/core/HoverCard";
 
 const thumbnailUrl = (ytId: string, size: string) =>
   `https://i.ytimg.com/vi/${encodeURIComponent(ytId)}/${size}.jpg`;
 
+// Centers the card in the viewport instead of beside its trigger. The card is a
+// popover, which the browser centers with these, once its anchor position is
+// switched off; HoverCard applies `style` after its own position styles.
+const CENTERED: CSSProperties = {
+  positionArea: "none",
+  positionTryFallbacks: "none",
+  inset: 0,
+  margin: "auto",
+};
 // The largest of YouTube's thumbnails; not every video has one.
 const LARGE_SIZES = ["maxresdefault", "hqdefault"];
 
 // The playing track's thumbnail, in the footer. Hovering it (or tapping it, on touch
-// screens) shows the video's largest thumbnail at its natural size, within the window.
-// Meant to be keyed by the video id, so the fallback starts over for every track.
+// screens) shows the video's largest thumbnail at its natural size, centered in and
+// fitting the window. Meant to be keyed by the video id, so the fallback starts over
+// for every track.
 export const NowPlayingThumbnail = ({ ytId }: { ytId: string }) => {
   const [sizeIndex, setSizeIndex] = useState(0);
   const nextSize = () =>
@@ -17,10 +27,9 @@ export const NowPlayingThumbnail = ({ ytId }: { ytId: string }) => {
 
   return (
     <HoverCard
-      placement="above"
-      alignment="start"
       label="Thumbnail of the playing track"
       className="now-playing-thumbnail-card"
+      style={CENTERED}
       content={
         <img
           className="now-playing-thumbnail-large"
