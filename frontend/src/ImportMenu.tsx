@@ -2,6 +2,7 @@ import { useState } from "react";
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import { DownloadIcon } from "@radix-ui/react-icons";
 import ImportDialog from "./ImportDialog.tsx";
+import ImportJsonDialog from "./ImportJsonDialog.tsx";
 import YouTubePlaylistImportDialog from "./YouTubePlaylistImportDialog.tsx";
 import type { ImportSource } from "./ImportDialog.tsx";
 import type { ICollection, ITrack, RequestReply } from "./Types.tsx";
@@ -17,6 +18,9 @@ type ImportMenuProps = {
   repoCollections: ICollection[];
   requestReply: RequestReply;
   onYouTubeImport: (name: string, tracks: ITrack[]) => void;
+  /** Imports a JSON file of exported tracks into the open collection; see `ImportJsonDialog`. */
+  onJsonImport: (data: unknown, keepUserData: boolean) => Promise<void>;
+  isConnected: boolean;
   isIconOnly?: boolean;
 };
 
@@ -30,11 +34,14 @@ export default function ImportMenu({
   repoCollections,
   requestReply,
   onYouTubeImport,
+  onJsonImport,
+  isConnected,
   isIconOnly = false,
 }: ImportMenuProps) {
   const [collectionOpen, setCollectionOpen] = useState(false);
   const [source, setSource] = useState<ImportSource>("path");
   const [youtubeOpen, setYoutubeOpen] = useState(false);
+  const [jsonOpen, setJsonOpen] = useState(false);
 
   const openCollectionImport = (src: ImportSource) => {
     // Start from a clean source so a path typed in one mode doesn't leak into the other.
@@ -65,6 +72,10 @@ export default function ImportMenu({
             onClick: () => openCollectionImport("path"),
           },
           {
+            label: "JSON file",
+            onClick: () => setJsonOpen(true),
+          },
+          {
             label: "YouTube playlist",
             onClick: () => setYoutubeOpen(true),
           },
@@ -83,6 +94,12 @@ export default function ImportMenu({
         isValidImportFrom={isValidImportFrom}
         source={source}
         repoCollections={repoCollections}
+      />
+      <ImportJsonDialog
+        isOpen={jsonOpen}
+        onOpenChange={setJsonOpen}
+        onImport={onJsonImport}
+        isConnected={isConnected}
       />
       <YouTubePlaylistImportDialog
         showTrigger={false}

@@ -226,7 +226,7 @@ async fn yt_dlp_version(yt_dlp: &str) -> anyhow::Result<String> {
 
 /// YouTube video ids are 11 characters of URL-safe base64. Checking this keeps ids out of
 /// paths and yt-dlp's option parsing (an id may start with `-`).
-fn is_valid_id(id: &str) -> bool {
+pub fn is_valid_id(id: &str) -> bool {
     id.len() == 11
         && id
             .bytes()

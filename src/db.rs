@@ -115,13 +115,15 @@ pub async fn insert_track(
     Ok(())
 }
 
+/// Inserts `tracks`, returning how many were written: with `ignore_existing`, those not already
+/// in the collection.
 pub async fn insert_tracks(
     pool: &SqlitePool,
     tracks: &[Track],
     ignore_existing: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<u64> {
     if tracks.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let on_conflict = if ignore_existing { "IGNORE" } else { "REPLACE" };
     let sql = format!(
@@ -131,8 +133,9 @@ pub async fn insert_tracks(
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     let mut tx = pool.begin().await?;
+    let mut written = 0;
     for track in tracks {
-        sqlx::query(&sql)
+        written += sqlx::query(&sql)
             .bind(&track.yt_id)
             .bind(track.bp_id)
             .bind(&track.sp_id)
@@ -152,10 +155,11 @@ pub async fn insert_tracks(
             .bind(track.play_count)
             .bind(track.last_played_str())
             .execute(&mut *tx)
-            .await?;
+            .await?
+            .rows_affected();
     }
     tx.commit().await?;
-    Ok(())
+    Ok(written)
 }
 
 /// Writes `track`'s metadata (everything but the user data: rating, play count, last played) to

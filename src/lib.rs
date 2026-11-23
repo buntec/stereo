@@ -17,6 +17,7 @@ pub mod server;
 pub mod settings;
 pub mod spotify;
 pub mod tailscale;
+pub mod tracks_file;
 pub mod update_check;
 pub mod utils;
 pub mod waveform;

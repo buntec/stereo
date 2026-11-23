@@ -6,12 +6,13 @@ import { HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 import { Code } from "@astryxdesign/core/Code";
 
-export type ReadyDownload = { url: string; fileName: string };
+export type ReadyDownload = { url: string; fileName: string; title?: string };
 
 // The server forgets a prepared download after two minutes.
 const LIFETIME_MS = 110_000;
 
-/** In the desktop app, offers a prepared collection download as a link to click. The webview
+/** In the desktop app, offers a prepared download (a collection, or tracks exported to JSON) as
+ * a link to click. The webview
  * has no downloads, so the link opens in the browser, which saves the file. A window opened
  * from script once the snapshot is ready, after the menu click, could be blocked as a popup
  * (WebKitGTK's default); one opened by clicking a link can't. */
@@ -38,7 +39,10 @@ function CollectionDownloadDialog({
     >
       <Layout
         header={
-          <DialogHeader title="Download Collection" onOpenChange={onClose} />
+          <DialogHeader
+            title={download?.title ?? "Download Collection"}
+            onOpenChange={onClose}
+          />
         }
         content={
           <LayoutContent>

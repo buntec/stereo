@@ -2334,6 +2334,61 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             let _ = tx.send(MsgServer::CollectionTrack { id, track }).await;
         }
 
+        MsgClient::PrepareTracksDownload {
+            id,
+            name,
+            tracks,
+            include_user_data,
+        } => {
+            let contents = crate::tracks_file::export(&tracks, include_user_data)?;
+            let name: String = name.chars().filter(|c| !matches!(c, '/' | '\\')).collect();
+            let name = match name.trim() {
+                "" => "tracks",
+                name => name,
+            };
+            let token = crate::collection_download::prepare_file(
+                contents,
+                format!("{name}.json"),
+                "application/json",
+            )
+            .await?;
+            let _ = tx.send(MsgServer::CollectionDownload { id, token }).await;
+        }
+
+        MsgClient::ImportTracks {
+            id,
+            collection,
+            data,
+            keep_user_data,
+        } => {
+            let tracks = crate::tracks_file::import(data, keep_user_data)
+                .context("Could not import the tracks")?;
+            let _repo_guard = lock_current_repo(state).await;
+            let Some(pool) = state.pool() else {
+                anyhow::bail!("Cannot import: no collection is open");
+            };
+            // The file was picked for this collection; it mustn't land in another.
+            anyhow::ensure!(
+                is_open_collection(state, &collection),
+                "Cannot import: {} is no longer the open collection",
+                utils::collection_label(&collection)
+            );
+            let imported = db::insert_tracks(pool, &tracks, true).await?;
+            let skipped = tracks.len() as u64 - imported;
+            let _ = tx
+                .send(MsgServer::TracksImported {
+                    id,
+                    imported,
+                    skipped,
+                })
+                .await;
+            if imported > 0 {
+                let _ = tx.send(MsgServer::ReloadTracks {}).await;
+                update_collection_info(state, tx).await;
+                schedule_collection_sync(state, tx).await;
+            }
+        }
+
         MsgClient::PrepareCollectionDownload { id, collection } => {
             let (Some(pool), Some(open)) = (state.pool(), state.collection.as_ref()) else {
                 anyhow::bail!("No collection is open");

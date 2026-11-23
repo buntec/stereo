@@ -83,6 +83,12 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
   validates the file in a temp dir, copies it with `VACUUM INTO` to a temp file in the
   repo and moves that into place without overwriting. WebSocket frames may be as large
   as messages (64 MiB) to leave room for it.
+- **`tracks_file.rs`** is the JSON format for sharing tracks between users: the Export
+  menu's "JSON file" sends the selection or view in `PrepareTracksDownload`, served like
+  a collection download by `collection_download::prepare_file`. `ImportJsonDialog.tsx`
+  parses the file and sends it in `ImportTracks` (as a value, not a string, which escaping
+  would enlarge past the message limit) for the open collection, which skips tracks it
+  already has. Ratings and play history are optional on both sides.
 - **`git.rs`** manages repositories under `~/.local/share/stereo/gitrepos` by default.
   A repo may track a Git remote. `schedule_git_sync` in `server.rs` coalesces edits
   into a sync five minutes after the first change. Startup sync picks up uncommitted

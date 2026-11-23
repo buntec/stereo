@@ -181,7 +181,15 @@ pub enum MsgServer {
         id: i64,
         path: String,
     },
-    /// Reply to `PrepareCollectionDownload`: the token for `/collection-download/{token}`.
+    /// Reply to `ImportTracks`: how many tracks were added, and how many skipped as already in
+    /// the collection.
+    TracksImported {
+        id: i64,
+        imported: u64,
+        skipped: u64,
+    },
+    /// Reply to `PrepareCollectionDownload` and `PrepareTracksDownload`: the token for
+    /// `/collection-download/{token}`.
     CollectionDownload {
         id: i64,
         token: String,
@@ -662,6 +670,23 @@ pub enum MsgClient {
         id: i64,
         collection: String,
     },
+    /// Exports `tracks` to a JSON file named `name` (without the `.json` extension), with their
+    /// ratings and play history if `include_user_data`, for download like a collection
+    /// (`MsgServer::CollectionDownload`, see `tracks_file.rs`).
+    PrepareTracksDownload {
+        id: i64,
+        name: String,
+        tracks: Vec<Track>,
+        include_user_data: bool,
+    },
+    /// Adds the tracks of an exported JSON file (`data`, parsed) to `collection`, which must be
+    /// the open one, skipping those already in it. Answered with `TracksImported`.
+    ImportTracks {
+        id: i64,
+        collection: String,
+        data: serde_json::Value,
+        keep_user_data: bool,
+    },
     CheckImportFrom {
         path: String,
     },
@@ -855,6 +880,8 @@ impl MsgClient {
             | Self::CollectionContainsIds { id, .. }
             | Self::GetCollectionTrack { id, .. }
             | Self::PrepareCollectionDownload { id, .. }
+            | Self::PrepareTracksDownload { id, .. }
+            | Self::ImportTracks { id, .. }
             | Self::ImportCollection { id, .. }
             | Self::GetWaveform { id, .. }
             | Self::CreatePairingCode { id }

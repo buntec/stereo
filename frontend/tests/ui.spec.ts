@@ -2915,7 +2915,8 @@ test("the collection menu imports a collection file as is @webkit", async ({
 
   // A refusal keeps the file and name, saying why.
   send({ type: "error-reply", id: first.id, message: "Not a collection" });
-  await expect(dialog.getByText("Not a collection")).toBeVisible();
+  // Shown by the file input and announced by the dialog's live region.
+  await expect(dialog.getByText("Not a collection").first()).toBeVisible();
   await expect(name).toHaveValue("warmup");
 
   await dialog.getByRole("button", { name: "Import" }).click();
@@ -3042,6 +3043,157 @@ test("the collection widget opens the open collection's stats", async ({
   await expect(
     page.getByRole("dialog").getByText("Example artist", { exact: true }),
   ).toHaveCount(0);
+});
+
+test("the current view exports to a JSON file, optionally with user data", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as { __STEREO_DESKTOP__?: boolean }).__STEREO_DESKTOP__ = true;
+  });
+  const { messages, send } = await openApp(page);
+  const exports = () =>
+    messages.filter((m) => m.type === "prepare-tracks-download");
+
+  await page.getByRole("button", { name: "Export tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).last().click();
+  const dialog = page.getByRole("dialog", { name: "Export to JSON" });
+  await expect(dialog.getByText(/Saves \d+ tracks? as/)).toBeVisible();
+  const name = dialog.getByRole("textbox", { name: "File name" });
+  await expect(name).toHaveValue("collection");
+  await name.fill("for a friend");
+  await dialog
+    .getByRole("checkbox", { name: "Include ratings and play history" })
+    .check();
+  await dialog.getByRole("button", { name: "Export" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await expect.poll(() => exports().length).toBe(1);
+  const request = exports()[0] as {
+    id: number;
+    name: string;
+    tracks: { yt_id: string }[];
+    include_user_data: boolean;
+  };
+  expect(request.name).toBe("for a friend");
+  expect(request.include_user_data).toBe(true);
+  expect(request.tracks.length).toBeGreaterThan(0);
+
+  send({ type: "collection-download", id: request.id, token: "fixture" });
+  const download = page.getByRole("dialog", { name: "Download Tracks" });
+  await expect(download.getByText("for a friend.json")).toBeVisible();
+  await expect(
+    download.getByRole("link", { name: "Download" }),
+  ).toHaveAttribute("href", "/collection-download/fixture");
+});
+
+test("a JSON file of tracks imports into the open collection", async ({
+  page,
+}) => {
+  const { messages, send } = await openApp(page);
+  const imports = () => messages.filter((m) => m.type === "import-tracks");
+  const file = JSON.stringify({
+    format: "stereo-tracks",
+    version: 1,
+    tracks: [],
+  });
+
+  await page.getByRole("button", { name: "Import tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).click();
+  const dialog = page.getByRole("dialog", { name: "Import from JSON" });
+  const importButton = dialog.getByRole("button", { name: "Import" });
+  await expect(importButton).toBeDisabled();
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "tracks.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(file),
+  });
+  await importButton.click();
+  await expect.poll(imports).toEqual([
+    {
+      type: "import-tracks",
+      id: expect.any(Number),
+      collection: "/audit/collection.db",
+      // Parsed, so that it isn't escaped into a string.
+      data: JSON.parse(file),
+      keep_user_data: false,
+    },
+  ]);
+
+  // A refusal keeps the file and choices, saying why.
+  const first = imports()[0] as { id: number };
+  const keep = dialog.getByRole("checkbox", {
+    name: "Keep ratings and play history",
+  });
+  send({ type: "error-reply", id: first.id, message: "Not a tracks file" });
+  await expect(dialog.getByText("Not a tracks file").first()).toBeVisible();
+  await keep.check();
+  await importButton.click();
+  await expect.poll(() => imports().length).toBe(2);
+  const second = imports()[1] as { id: number; keep_user_data: boolean };
+  expect(second.keep_user_data).toBe(true);
+  send({ type: "tracks-imported", id: second.id, imported: 3, skipped: 1 });
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications" })
+      .getByText("Imported 3 tracks, skipped 1 track already in collection"),
+  ).toBeVisible();
+
+  // Each import opts into someone else's ratings afresh.
+  await page.getByRole("button", { name: "Import tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).click();
+  await expect(keep).not.toBeChecked();
+  await keep.check();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Import tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).click();
+  await expect(keep).not.toBeChecked();
+
+  // A file that isn't JSON is refused before it is sent.
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "tracks.json",
+    mimeType: "application/json",
+    buffer: Buffer.from("not json"),
+  });
+  await importButton.click();
+  await expect(dialog.getByText(/isn't a JSON file/).first()).toBeVisible();
+  expect(imports().length).toBe(2);
+});
+
+test("exporting an empty view to JSON says there's nothing to export", async ({
+  page,
+}) => {
+  // A view filtered down to nothing.
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      "stereo_app_grid_state_v2",
+      JSON.stringify({
+        filter: {
+          filterModel: {
+            title: { filterType: "text", type: "contains", filter: "none" },
+          },
+        },
+      }),
+    ),
+  );
+  const { messages } = await openApp(page);
+  await expect(
+    page.getByRole("heading", { name: "No tracks match these filters" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Export tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).last().click();
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications" })
+      .getByText("No tracks in this view to export"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Export to JSON" }),
+  ).toHaveCount(0);
+  expect(messages.filter((m) => m.type === "prepare-tracks-download")).toEqual(
+    [],
+  );
 });
 
 const updateRelease = {
