@@ -19,7 +19,7 @@ type ImportMenuProps = {
   requestReply: RequestReply;
   onYouTubeImport: (name: string, tracks: ITrack[]) => void;
   /** Imports a JSON file of exported tracks into the open collection; see `ImportJsonDialog`. */
-  onJsonImport: (data: string, keepUserData: boolean) => Promise<void>;
+  onJsonImport: (data: unknown, keepUserData: boolean) => Promise<void>;
   isConnected: boolean;
   isIconOnly?: boolean;
 };

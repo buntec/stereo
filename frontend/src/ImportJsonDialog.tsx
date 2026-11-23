@@ -8,16 +8,17 @@ import { FileInput } from "@astryxdesign/core/FileInput";
 import { HStack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 
-// The file's text travels in one WebSocket message, which the backend takes up to 64 MiB
-// (`MAX_MESSAGE_SIZE` in server.rs).
-const MAX_SIZE = 60 * 1024 * 1024;
+// The parsed file travels in one WebSocket message, which the backend takes up to 64 MiB
+// (`MAX_MESSAGE_SIZE` in server.rs). Sent compact, it is usually smaller than the
+// pretty-printed file, so App.tsx checks the message itself.
+const MAX_SIZE = 256 * 1024 * 1024;
 
 type ImportJsonDialogProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Imports the file's text. Resolves once the backend has added the tracks; the dialog keeps
-   * the file if it rejects, showing why. */
-  onImport: (data: string, keepUserData: boolean) => Promise<void>;
+  /** Imports the parsed file. Resolves once the backend has added the tracks; the dialog keeps
+   * the file and choices if it rejects, showing why. */
+  onImport: (data: unknown, keepUserData: boolean) => Promise<void>;
   isConnected: boolean;
 };
 
@@ -41,6 +42,8 @@ function ImportJsonDialog({
     attempt.current++;
     onOpenChange(false);
     setFile(null);
+    // Someone else's ratings are opted into for each import.
+    setKeepUserData(false);
     setPending(null);
     setError(undefined);
   };
@@ -57,12 +60,19 @@ function ImportJsonDialog({
     const current = ++attempt.current;
     setPending("reading");
     setError(undefined);
-    let data: string;
+    let data: unknown;
     try {
-      data = await file.text();
+      const text = await file.text();
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error("it isn't a JSON file");
+      }
     } catch (e) {
       if (attempt.current === current) {
-        setError(`Could not read ${file.name}: ${String(e)}`);
+        setError(
+          `Could not read ${file.name}: ${e instanceof Error ? e.message : String(e)}`,
+        );
         setPending(null);
       }
       return;

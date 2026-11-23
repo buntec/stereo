@@ -114,6 +114,7 @@ import CollectionDownloadDialog, {
 import ImportMenu from "./ImportMenu.tsx";
 import ExportDropDown from "./ExportDropDown.tsx";
 import ExportJsonDialog, { type JsonExport } from "./ExportJsonDialog.tsx";
+import { isTooLarge } from "./WebSocket.tsx";
 import {
   YouTubePlaylistDialog,
   YouTubePlaylistProgressDialog,
@@ -2094,8 +2095,15 @@ function App() {
   }, [getSelectedTracks, openCollectionPath]);
 
   const exportAllToJson = useCallback(() => {
+    const nothingToExport = () =>
+      dispatch({
+        type: "notification",
+        message: "No tracks in this view to export",
+        kind: "info",
+      });
+    // An empty collection shows no grid.
     const api = gridRef.current?.api;
-    if (!api) return;
+    if (!api) return nothingToExport();
     requestReply(
       {
         type: "get-rows",
@@ -2106,7 +2114,9 @@ function App() {
         sortModel: api.getState().sort?.sortModel,
       },
       (r) => {
-        if ("rows" in r && r.rows.length > 0)
+        if (!("rows" in r)) return;
+        if (r.rows.length === 0) nothingToExport();
+        else
           setJsonExport({
             tracks: r.rows as ITrack[],
             name: collectionLabel(openCollectionPath ?? "tracks"),
@@ -2116,45 +2126,61 @@ function App() {
   }, [requestReply, openCollectionPath]);
 
   const downloadJson = useCallback(
-    (name: string, tracks: ITrack[], includeUserData: boolean) =>
+    (name: string, tracks: ITrack[], includeUserData: boolean) => {
+      const request = {
+        type: "prepare-tracks-download",
+        name,
+        tracks,
+        include_user_data: includeUserData,
+      } as const;
+      if (isTooLarge(request)) {
+        dispatch({
+          type: "notification",
+          message: `${tracks.length} tracks are too many to export at once, export fewer`,
+          kind: "error",
+        });
+        return;
+      }
       // An error reply comes with a notification saying why.
-      requestReply(
-        {
-          type: "prepare-tracks-download",
-          name,
-          tracks,
-          include_user_data: includeUserData,
-        },
-        (msg) => {
-          if (msg.type !== "collection-download" || !("token" in msg)) return;
-          const url = `/collection-download/${encodeURIComponent(msg.token)}`;
-          if (inDesktopApp)
-            setReadyDownload({
-              url,
-              fileName: `${name}.json`,
-              title: "Download Tracks",
-            });
-          else downloadUrl(url);
-        },
-      ),
+      requestReply(request, (msg) => {
+        if (msg.type !== "collection-download" || !("token" in msg)) return;
+        const url = `/collection-download/${encodeURIComponent(msg.token)}`;
+        if (inDesktopApp)
+          setReadyDownload({
+            url,
+            fileName: `${name}.json`,
+            title: "Download Tracks",
+          });
+        else downloadUrl(url);
+      });
+    },
     [requestReply],
   );
 
   const importJson = useCallback(
-    (data: string, keepUserData: boolean) =>
+    (data: unknown, keepUserData: boolean) =>
       new Promise<void>((resolve, reject) => {
         const collection = openCollectionPath;
         if (!collection) {
           reject(new Error("Open a collection to import into"));
           return;
         }
+        const request = {
+          type: "import-tracks",
+          collection,
+          data,
+          keep_user_data: keepUserData,
+        } as const;
+        if (isTooLarge(request)) {
+          reject(
+            new Error(
+              "The file has too many tracks to import at once. Export fewer tracks to it.",
+            ),
+          );
+          return;
+        }
         requestReply(
-          {
-            type: "import-tracks",
-            collection,
-            data,
-            keep_user_data: keepUserData,
-          },
+          request,
           (msg) => {
             if (msg.type === "tracks-imported" && "imported" in msg) {
               const count = (n: number) =>
@@ -2171,6 +2197,12 @@ function App() {
               resolve();
             } else if (msg.type === "error-reply" && "message" in msg)
               reject(new Error(msg.message));
+            else if (msg.type === "timeout")
+              reject(
+                new Error(
+                  "Stereo didn't answer. Check the collection before importing again.",
+                ),
+              );
             else
               // The backend may have imported them before the connection went.
               reject(
@@ -2179,6 +2211,8 @@ function App() {
                 ),
               );
           },
+          // Generous: adding many tracks to a large collection takes a while.
+          120_000,
         );
       }),
     [requestReply, openCollectionPath],

@@ -4,6 +4,14 @@ import logger from "./logger.tsx";
 
 type Callback<T> = (msg: T) => void;
 
+/** The largest message the backend accepts (`MAX_MESSAGE_SIZE` in server.rs), less room for
+ * the request id that `requestReply` adds. */
+export const MAX_MESSAGE_BYTES = (64 << 20) - 1024;
+
+/** Whether `msg` is too large for the backend, which drops the connection over one that is. */
+export const isTooLarge = (msg: unknown) =>
+  new Blob([JSON.stringify(msg)]).size > MAX_MESSAGE_BYTES;
+
 interface BaseMessage {
   [key: string]: unknown;
 }

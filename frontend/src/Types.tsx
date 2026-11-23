@@ -165,11 +165,11 @@ export type ClientMsg =
       tracks: ITrack[];
       include_user_data: boolean;
     }
-  // `data` is the text of a JSON file of exported tracks; answered with "tracks-imported".
+  // `data` is a JSON file of exported tracks, parsed; answered with "tracks-imported".
   | {
       type: "import-tracks";
       collection: string;
-      data: string;
+      data: unknown;
       keep_user_data: boolean;
     }
   | { type: "download-audio"; yt_id: string }

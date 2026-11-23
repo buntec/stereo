@@ -3114,19 +3114,20 @@ test("a JSON file of tracks imports into the open collection", async ({
       type: "import-tracks",
       id: expect.any(Number),
       collection: "/audit/collection.db",
-      data: file,
+      // Parsed, so that it isn't escaped into a string.
+      data: JSON.parse(file),
       keep_user_data: false,
     },
   ]);
 
-  // A refusal keeps the file, saying why.
+  // A refusal keeps the file and choices, saying why.
   const first = imports()[0] as { id: number };
+  const keep = dialog.getByRole("checkbox", {
+    name: "Keep ratings and play history",
+  });
   send({ type: "error-reply", id: first.id, message: "Not a tracks file" });
   await expect(dialog.getByText("Not a tracks file").first()).toBeVisible();
-
-  await dialog
-    .getByRole("checkbox", { name: "Keep ratings and play history" })
-    .check();
+  await keep.check();
   await importButton.click();
   await expect.poll(() => imports().length).toBe(2);
   const second = imports()[1] as { id: number; keep_user_data: boolean };
@@ -3138,4 +3139,59 @@ test("a JSON file of tracks imports into the open collection", async ({
       .getByRole("region", { name: "Notifications" })
       .getByText("Imported 3 tracks, skipped 1 track already in collection"),
   ).toBeVisible();
+
+  // Each import opts into someone else's ratings afresh.
+  await page.getByRole("button", { name: "Import tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).click();
+  await expect(keep).not.toBeChecked();
+  await keep.check();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Import tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).click();
+  await expect(keep).not.toBeChecked();
+
+  // A file that isn't JSON is refused before it is sent.
+  await dialog.locator('input[type="file"]').setInputFiles({
+    name: "tracks.json",
+    mimeType: "application/json",
+    buffer: Buffer.from("not json"),
+  });
+  await importButton.click();
+  await expect(dialog.getByText(/isn't a JSON file/).first()).toBeVisible();
+  expect(imports().length).toBe(2);
+});
+
+test("exporting an empty view to JSON says there's nothing to export", async ({
+  page,
+}) => {
+  // A view filtered down to nothing.
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      "stereo_app_grid_state_v2",
+      JSON.stringify({
+        filter: {
+          filterModel: {
+            title: { filterType: "text", type: "contains", filter: "none" },
+          },
+        },
+      }),
+    ),
+  );
+  const { messages } = await openApp(page);
+  await expect(
+    page.getByRole("heading", { name: "No tracks match these filters" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Export tracks" }).click();
+  await page.getByRole("menuitem", { name: "JSON file" }).last().click();
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications" })
+      .getByText("No tracks in this view to export"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Export to JSON" }),
+  ).toHaveCount(0);
+  expect(messages.filter((m) => m.type === "prepare-tracks-download")).toEqual(
+    [],
+  );
 });

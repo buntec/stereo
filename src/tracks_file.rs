@@ -2,7 +2,6 @@
 //! collection of their own. The user data (rating, play count, last played) is optional both
 //! ways: left out of the file on export, and ignored on import.
 
-use anyhow::Context;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
@@ -42,9 +41,9 @@ struct Header {
     version: Option<u64>,
 }
 
-/// The tracks in an exported file, without their user data unless `keep_user_data`.
-pub fn import(data: &str, keep_user_data: bool) -> anyhow::Result<Vec<Track>> {
-    let value: Value = serde_json::from_str(data).context("not a JSON file")?;
+/// The tracks in an exported file, parsed as JSON, without their user data unless
+/// `keep_user_data`. Fails without any tracks if one couldn't be played.
+pub fn import(value: Value, keep_user_data: bool) -> anyhow::Result<Vec<Track>> {
     let header = Header::deserialize(&value).unwrap_or(Header {
         format: None,
         version: None,
@@ -62,9 +61,19 @@ pub fn import(data: &str, keep_user_data: bool) -> anyhow::Result<Vec<Track>> {
     struct File {
         tracks: Vec<Track>,
     }
-    let File { mut tracks } = File::deserialize(value).context("invalid track list")?;
-    if let Some(i) = tracks.iter().position(|t| t.yt_id.trim().is_empty()) {
-        anyhow::bail!("track {} has no YouTube id", i + 1);
+    let File { mut tracks } =
+        File::deserialize(value).map_err(|e| anyhow::anyhow!("invalid track list: {e}"))?;
+    if let Some((i, track)) = tracks
+        .iter()
+        .enumerate()
+        .find(|(_, t)| !crate::audio::is_valid_id(&t.yt_id))
+    {
+        anyhow::bail!(
+            "track {} ({}) has an invalid YouTube id: {:?}",
+            i + 1,
+            track.display_name(),
+            track.yt_id
+        );
     }
     if !keep_user_data {
         for track in &mut tracks {
@@ -83,7 +92,7 @@ mod tests {
 
     fn track() -> Track {
         Track {
-            yt_id: "abc".into(),
+            yt_id: "dQw4w9WgXcQ".into(),
             title: "Song".into(),
             artists: vec!["Artist".into()],
             bpm: Some(124),
@@ -95,12 +104,16 @@ mod tests {
         }
     }
 
+    fn parse(text: &str) -> Value {
+        serde_json::from_str(text).unwrap()
+    }
+
     #[test]
     fn round_trips_with_user_data() {
         let data = export(&[track()], true).unwrap();
         let text = String::from_utf8(data).unwrap();
         assert!(!text.contains("null"), "empty fields are left out");
-        assert_eq!(import(&text, true).unwrap(), vec![track()]);
+        assert_eq!(import(parse(&text), true).unwrap(), vec![track()]);
     }
 
     #[test]
@@ -115,26 +128,32 @@ mod tests {
         for key in USER_DATA {
             assert!(!text.contains(key), "{key} left out");
         }
-        assert_eq!(import(&text, true).unwrap(), vec![without.clone()]);
+        assert_eq!(import(parse(&text), true).unwrap(), vec![without.clone()]);
         let text = String::from_utf8(export(&[track()], true).unwrap()).unwrap();
-        assert_eq!(import(&text, false).unwrap(), vec![without]);
+        assert_eq!(import(parse(&text), false).unwrap(), vec![without]);
     }
 
     #[test]
     fn rejects_other_files() {
-        assert!(import("not json", true).is_err());
-        assert!(import(r#"[{"yt_id": "a"}]"#, true).is_err());
-        assert!(import(
-            r#"{"format": "stereo-tracks", "version": 2, "tracks": []}"#,
-            true
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("newer version"));
-        assert!(import(
-            r#"{"format": "stereo-tracks", "version": 1, "tracks": [{"yt_id": "", "title": "x", "artists": []}]}"#,
-            true
-        )
-        .is_err());
+        assert!(import(parse(r#"[{"yt_id": "dQw4w9WgXcQ"}]"#), true).is_err());
+        assert!(import(parse(r#"{"version": 1, "tracks": []}"#), true).is_err());
+        let newer = import(
+            parse(r#"{"format": "stereo-tracks", "version": 2, "tracks": []}"#),
+            true,
+        );
+        assert!(newer.unwrap_err().to_string().contains("newer version"));
+    }
+
+    #[test]
+    fn rejects_tracks_that_cannot_play() {
+        for id in ["", "abc", "../../etc/p", "dQw4w9 gXcQ"] {
+            let file = json!({
+                "format": "stereo-tracks",
+                "version": 1,
+                "tracks": [track(), { "yt_id": id, "title": "x", "artists": [] }],
+            });
+            let error = import(file, true).unwrap_err().to_string();
+            assert!(error.contains("track 2"), "{id:?}: {error}");
+        }
     }
 }

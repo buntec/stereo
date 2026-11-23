@@ -675,12 +675,12 @@ pub enum MsgClient {
         tracks: Vec<Track>,
         include_user_data: bool,
     },
-    /// Adds the tracks of an exported JSON file (`data`, its text) to `collection`, which must be
+    /// Adds the tracks of an exported JSON file (`data`, parsed) to `collection`, which must be
     /// the open one, skipping those already in it. Answered with `TracksImported`.
     ImportTracks {
         id: i64,
         collection: String,
-        data: String,
+        data: serde_json::Value,
         keep_user_data: bool,
     },
     CheckImportFrom {

@@ -2333,7 +2333,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             data,
             keep_user_data,
         } => {
-            let tracks = crate::tracks_file::import(&data, keep_user_data)
+            let tracks = crate::tracks_file::import(data, keep_user_data)
                 .context("Could not import the tracks")?;
             let _repo_guard = lock_current_repo(state).await;
             let Some(pool) = state.pool() else {
