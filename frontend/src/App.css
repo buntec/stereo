@@ -482,7 +482,7 @@
   aspect-ratio: 16 / 9;
   object-fit: cover;
   max-width: calc(100vw - var(--spacing-8));
-  max-height: calc(100dvh - var(--spacing-12) * 4);
+  max-height: calc(100dvh - var(--spacing-8));
   width: auto;
   height: auto;
 }
