@@ -60,6 +60,10 @@ pub enum MsgServer {
     Tailscale {
         status: crate::tailscale::TailscaleStatus,
     },
+    /// Whether a newer release is out, sent on connect once known and after each daily check.
+    UpdateCheck {
+        status: crate::update_check::UpdateStatus,
+    },
     /// Reply to `CreatePairingCode`: a single-use code that signs a browser on the tailnet in,
     /// valid for `expires_in` seconds.
     PairingCode {

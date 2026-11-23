@@ -141,3 +141,12 @@ export function hasCollectionStats(stats?: ICollectionStats): boolean {
       stats.top_labels_four_plus.length > 0)
   );
 }
+
+export function timeAgo(ms: number): string {
+  const minutes = Math.round((Date.now() - ms) / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return new Date(ms).toLocaleDateString();
+}

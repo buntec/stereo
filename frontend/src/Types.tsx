@@ -145,6 +145,20 @@ export type TailscaleStatus =
   /** The last attempt failed; the backend keeps retrying. */
   | { state: "error"; message: string };
 
+/** The newest published release on GitHub. */
+export type Release = {
+  version: string;
+  url: string;
+  published_at?: string | null;
+};
+
+/** How the running version compares with the latest release, checked daily. */
+export type UpdateStatus =
+  | { state: "up-to-date"; latest: Release; checked_at: string }
+  | { state: "available"; latest: Release; checked_at: string }
+  /** No check has succeeded yet; the backend retries hourly. */
+  | { state: "error"; message: string; checked_at: string };
+
 export type ClientMsg =
   | { type: "run-health-check" }
   | { type: "set-collection"; path: string }
@@ -344,6 +358,7 @@ export type ServerMsg =
       audio_key?: string | null;
     }
   | { type: "tailscale"; status: TailscaleStatus }
+  | { type: "update-check"; status: UpdateStatus }
   | { type: "pairing-code"; id: number; code: string; expires_in: number }
   | { type: "auth-token"; token: string }
   | {
