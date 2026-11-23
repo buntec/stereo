@@ -38,6 +38,8 @@ serde_json = "1"
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
+# The hostname in the author of Stereo's commits (`git::author`).
+whoami = "1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

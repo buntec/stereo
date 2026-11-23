@@ -144,6 +144,60 @@ async fn git_ok(repo: &Path, args: &[&str]) -> bool {
     run_git(repo, args, GIT_TIMEOUT).await.is_ok()
 }
 
+/// Where a clone keeps the id in its author, in the clone's own config, which isn't synced.
+const AUTHOR_ID_KEY: &str = "stereo.authorId";
+
+/// Who Stereo commits as in `repo`: "Stereo on <hostname>", with an id of this clone in the
+/// email. The hostname tells in the history which machine made a commit; the id keeps two
+/// clones' commits apart even where hostnames repeat (or the dev and release data dirs share a
+/// machine), since commits of identical files on the same parent in the same second would
+/// otherwise be the very same commit, and the plays each side recorded would merge into one.
+async fn author(repo: &Path) -> Result<(String, String), GitFailure> {
+    let id = match run_git(repo, &["config", "--get", AUTHOR_ID_KEY], GIT_TIMEOUT).await {
+        Ok(out) => output_text(out),
+        Err(_) => {
+            let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+            run_git(
+                repo,
+                &["config", "--local", AUTHOR_ID_KEY, &id],
+                GIT_TIMEOUT,
+            )
+            .await?;
+            id
+        }
+    };
+    let host: String = whoami::fallible::hostname()
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !matches!(c, '<' | '>' | '\n' | '\r'))
+        .collect();
+    let name = match host.trim() {
+        "" => "Stereo".to_string(),
+        host => format!("Stereo on {host}"),
+    };
+    Ok((name, format!("stereo-{id}@localhost")))
+}
+
+/// Runs a git command that commits (`commit`, `merge`), as Stereo (`author`) and without the
+/// user's signing or hooks, which could prompt or fail a background sync.
+async fn run_git_committing(repo: &Path, args: &[&str]) -> Result<Output, GitFailure> {
+    let (name, email) = author(repo).await?;
+    let name = format!("user.name={name}");
+    let email = format!("user.email={email}");
+    let mut all = vec![
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        &name,
+        "-c",
+        &email,
+    ];
+    all.extend_from_slice(args);
+    run_git(repo, &all, GIT_TIMEOUT).await
+}
+
 fn output_text(out: Output) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
@@ -434,24 +488,7 @@ async fn commit_dirty(repo: &Path, dirty: &mut BTreeSet<String>) -> anyhow::Resu
     } else {
         format!("update {} collections", names.len())
     };
-    run_git(
-        repo,
-        &[
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "user.name=Stereo",
-            "-c",
-            "user.email=stereo@localhost",
-            "commit",
-            "-m",
-            &message,
-        ],
-        GIT_TIMEOUT,
-    )
-    .await?;
+    run_git_committing(repo, &["commit", "-m", &message]).await?;
     mark_needs_sync(repo).await?;
     dirty.clear();
     write_dirty(repo, dirty).await?;
@@ -892,17 +929,9 @@ async fn merge_diverged(
                     ));
                 }
                 Some(GitConflictStrategy::KeepLocal) => {
-                    run_git(
+                    run_git_committing(
                         repo,
                         &[
-                            "-c",
-                            "commit.gpgsign=false",
-                            "-c",
-                            "core.hooksPath=/dev/null",
-                            "-c",
-                            "user.name=Stereo",
-                            "-c",
-                            "user.email=stereo@localhost",
                             "merge",
                             "--allow-unrelated-histories",
                             "-s",
@@ -910,7 +939,6 @@ async fn merge_diverged(
                             "--no-edit",
                             remote_ref,
                         ],
-                        GIT_TIMEOUT,
                     )
                     .await?;
                     return Ok(SyncReport::new(
@@ -1068,23 +1096,7 @@ async fn merge_diverged(
             }
         }
     }
-    run_git(
-        repo,
-        &[
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "user.name=Stereo",
-            "-c",
-            "user.email=stereo@localhost",
-            "commit",
-            "--no-edit",
-        ],
-        GIT_TIMEOUT,
-    )
-    .await?;
+    run_git_committing(repo, &["commit", "--no-edit"]).await?;
     let _ = tokio::fs::remove_file(&merge_marker).await;
     let all_paths: BTreeSet<String> = local_paths.union(&remote_paths).cloned().collect();
     validate_changed_databases(repo, &all_paths).await?;
@@ -1755,9 +1767,8 @@ mod tests {
         let report = sync_repository(first, None, false, None).await;
         assert_eq!(report.state, GitSyncState::Synced, "{}", report.message);
 
-        // Stereo's commits name the same author and message everywhere, so identical files
-        // committed in the same second would be the very same commit, with nothing to merge.
-        tokio::time::sleep(Duration::from_millis(1100)).await;
+        // Committed in the same second as the first clone's: only the author tells the commits
+        // apart, which would otherwise be the very same commit, with nothing to merge.
         play(&second.join("music.db")).await;
         let report = sync_repository(second.clone(), None, false, None).await;
         assert_eq!(report.state, GitSyncState::ConflictRequiresAttention);
@@ -1770,6 +1781,23 @@ mod tests {
         let has_two = db::get_track(&pool, "two").await.unwrap().is_some();
         pool.close().await;
         assert_eq!(has_two, other_change_upstream);
+    }
+
+    #[tokio::test]
+    async fn clones_commit_as_different_authors() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_remote, first, second) = two_clones(temp.path()).await;
+        let (first_name, first_email) = author(&first).await.unwrap();
+        let (second_name, second_email) = author(&second).await.unwrap();
+        assert!(first_name.starts_with("Stereo"), "{first_name}");
+        assert_eq!(first_name, second_name);
+        assert_ne!(first_email, second_email);
+        // Kept, not drawn anew for each commit.
+        assert_eq!(author(&first).await.unwrap().1, first_email);
+        let log = run_git(&first, &["log", "-1", "--format=%an <%ae>"], GIT_TIMEOUT)
+            .await
+            .unwrap();
+        assert_eq!(output_text(log), format!("{first_name} <{first_email}>"));
     }
 
     #[tokio::test]
