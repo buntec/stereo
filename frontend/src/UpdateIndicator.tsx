@@ -1,6 +1,6 @@
 import { useReducer } from "react";
 import { useHoverCard } from "@astryxdesign/core/HoverCard";
-import { IconButton } from "@astryxdesign/core/IconButton";
+import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
 import { Link } from "@astryxdesign/core/Link";
 import { Text } from "@astryxdesign/core/Text";
@@ -20,8 +20,8 @@ const releaseDate = (iso?: string | null) =>
 
 const ago = (iso: string) => timeAgo(Date.parse(iso));
 
-/** An icon beside the version number: whether it's the latest release. Hovering,
- * focusing, tapping or pressing it shows the details and a link to the release
+/** The version number as a button, with an icon at its end for whether it's the
+ * latest release. Hovering, focusing, tapping or pressing it shows the details and a link to the release
  * page, which the desktop app opens in the browser. A HoverCard rather than a
  * Tooltip, since the card holds a link and a tap on touch screens must open it.
  * The hook rather than the HoverCard component, for its `show()`: pressing the
@@ -39,7 +39,7 @@ function UpdateIndicator({
   const [, refresh] = useReducer((n: number) => n + 1, 0);
   let label: string;
   let lines: string[];
-  let icon;
+  let icon: React.ReactElement<React.ComponentProps<typeof Icon>>;
   let url = RELEASES_URL;
   let linkText = "All releases";
   const footer: string[] = [];
@@ -104,17 +104,22 @@ function UpdateIndicator({
   });
   return (
     <>
-      <IconButton
+      <Button
         ref={triggerRef}
-        label={label}
-        icon={icon}
+        // The visible text leads the accessible name.
+        label={`v${version}, ${label}`}
+        endContent={icon}
         variant="ghost"
         size="sm"
         aria-haspopup="dialog"
         aria-expanded={isOpen}
         aria-controls={isOpen ? cardId : undefined}
         onClick={show}
-      />
+      >
+        <Text type="supporting" color="secondary">
+          v{version}
+        </Text>
+      </Button>
       {renderHoverCard(
         <VStack gap={1}>
           <Text type="supporting" color="primary" weight="semibold">
