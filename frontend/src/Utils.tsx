@@ -70,6 +70,15 @@ const readStored = (key: string): unknown => {
   return item && item !== "undefined" ? JSON.parse(item) : undefined;
 };
 
+/** The value stored at `key`, parsed; undefined if there's none or it doesn't parse. */
+const readStoredOrUndefined = (key: string): unknown => {
+  try {
+    return readStored(key);
+  } catch {
+    return undefined;
+  }
+};
+
 /**
  * State kept in localStorage at `key`, `initialValue` until something is
  * stored there; `migrate` brings a stored value up to date as it's read.
@@ -110,7 +119,12 @@ export function useLocalStorage<T>(
         return;
       }
       let value: unknown = storedValue;
-      const latest = readStored(key);
+      // Only objects merge with what's stored; anything else, or a stored
+      // value that doesn't parse, is replaced outright.
+      const latest =
+        isRecord(previous) && isRecord(storedValue)
+          ? readStoredOrUndefined(key)
+          : undefined;
       if (isRecord(previous) && isRecord(storedValue) && isRecord(latest)) {
         const merged: Record<string, unknown> = { ...latest };
         for (const field of new Set([

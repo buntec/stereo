@@ -2886,9 +2886,10 @@ test("search sources are alphabetical and reset to the defaults", async ({
     ["Traxsource", true],
     ["Volumo", true],
   ] as const) {
-    await expect(
-      page.getByRole("menuitemcheckbox", { name }),
-    ).toHaveAttribute("aria-checked", `${checked}`);
+    await expect(page.getByRole("menuitemcheckbox", { name })).toHaveAttribute(
+      "aria-checked",
+      `${checked}`,
+    );
   }
 });
 
@@ -2912,9 +2913,10 @@ test("search options persist across reloads", async ({ page }) => {
     ["Traxsource", true],
     ["Volumo", false],
   ] as const) {
-    await expect(
-      page.getByRole("menuitemcheckbox", { name }),
-    ).toHaveAttribute("aria-checked", `${checked}`);
+    await expect(page.getByRole("menuitemcheckbox", { name })).toHaveAttribute(
+      "aria-checked",
+      `${checked}`,
+    );
   }
 });
 
@@ -2933,6 +2935,33 @@ test("invalid stored search options fall back to the defaults", async ({
   await expect(
     page.getByRole("menuitem", { name: "Reset to defaults" }),
   ).toHaveAttribute("aria-disabled", "true");
+});
+
+test("malformed stored search options are replaced on the next change", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("seeded")) return;
+    sessionStorage.setItem("seeded", "1");
+    localStorage.setItem("stereo_search_limit", "malformed");
+    localStorage.setItem("stereo_search_sources", "[");
+  });
+  await openApp(page);
+  const options = page.getByRole("button", { name: "Search options" });
+  await options.click();
+  const limit = page.getByRole("menuitemradio", { name: "25", exact: true });
+  const spotify = page.getByRole("menuitemcheckbox", { name: "Spotify" });
+  await expect(
+    page.getByRole("menuitem", { name: "Reset to defaults" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await limit.click();
+  await spotify.click();
+  await page.keyboard.press("Escape");
+
+  await page.reload();
+  await options.click();
+  await expect(limit).toHaveAttribute("aria-checked", "true");
+  await expect(spotify).toHaveAttribute("aria-checked", "true");
 });
 
 test("label searches explain that Spotify can't search by label", async ({
