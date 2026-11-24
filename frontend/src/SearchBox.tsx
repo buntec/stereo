@@ -2,6 +2,7 @@ import { Selector } from "@astryxdesign/core/Selector";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
 } from "@astryxdesign/core/DropdownMenu";
@@ -17,8 +18,11 @@ import {
 
 import { MenuHeading } from "./Menu.tsx";
 import {
+  DEFAULT_SEARCH_SOURCES,
   isChartSearchKind,
   isQuerylessSearchKind,
+  SEARCH_LIMIT_OPTIONS,
+  SEARCH_SOURCES,
   searchKindSupportsSource,
   usableSearchSources,
   type SearchBoxKind,
@@ -58,16 +62,20 @@ const GENRE_OPTIONS = BEATPORT_GENRES.map((g) => ({
   label: g.name,
 }));
 
-const LIMIT_OPTIONS = [10, 25, 50, 100, 500, 1000];
+// Alphabetical: the backend queries the sources in its own order whatever the selection's.
+const SOURCE_LABELS: Partial<Record<TrackSource, string>> = {
+  "apple-music": "Apple Music",
+  beatport: "Beatport",
+  soundcloud: "SoundCloud",
+  spotify: "Spotify",
+  traxsource: "Traxsource",
+  volumo: "Volumo",
+};
 
-const ALL_SEARCH_SOURCES: { value: TrackSource; label: string }[] = [
-  { value: "beatport", label: "Beatport" },
-  { value: "soundcloud", label: "SoundCloud" },
-  { value: "volumo", label: "Volumo" },
-  { value: "traxsource", label: "Traxsource" },
-  { value: "spotify", label: "Spotify" },
-  { value: "apple-music", label: "Apple Music" },
-];
+const ALL_SEARCH_SOURCES = SEARCH_SOURCES.map((value) => ({
+  value,
+  label: SOURCE_LABELS[value] ?? value,
+}));
 
 const DAY_OPTIONS = [1, 7, 14, 30, 60, 90, 180, 365];
 
@@ -117,6 +125,10 @@ function SearchBox({
         : searchSources.filter((s) => s !== source),
     );
   };
+
+  const hasDefaultSources =
+    searchSources.length === DEFAULT_SEARCH_SOURCES.length &&
+    DEFAULT_SEARCH_SOURCES.every((s) => searchSources.includes(s));
 
   const sourceCount = usableSearchSources(searchKind, searchSources).length;
   const noSourceMessage =
@@ -216,7 +228,7 @@ function SearchBox({
           onChange={(v) => setSearchLimit(parseInt(v))}
           hasCloseOnSelect={false}
         >
-          {LIMIT_OPTIONS.map((n) => (
+          {SEARCH_LIMIT_OPTIONS.map((n) => (
             <DropdownMenuRadioItem key={n} value={`${n}`} label={`${n}`} />
           ))}
         </DropdownMenuRadioGroup>
@@ -246,6 +258,13 @@ function SearchBox({
                 />
               );
             })}
+            <Divider />
+            <DropdownMenuItem
+              label="Reset to defaults"
+              isDisabled={hasDefaultSources}
+              hasCloseOnSelect={false}
+              onClick={() => setSearchSources([...DEFAULT_SEARCH_SOURCES])}
+            />
           </>
         )}
       </DropdownMenu>

@@ -2856,6 +2856,85 @@ test("changing a result's video leaves another result playing the same video alo
   expect(audioRequests).not.toContain("GET /audio/newVideo001?key=test-key");
 });
 
+test("search sources are alphabetical and reset to the defaults", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "Search options" }).click();
+  const sources = page.getByRole("menuitemcheckbox");
+  await expect(sources).toHaveText([
+    "Apple Music",
+    "Beatport",
+    "SoundCloud",
+    "Spotify",
+    "Traxsource",
+    "Volumo",
+  ]);
+  const reset = page.getByRole("menuitem", { name: "Reset to defaults" });
+  await expect(reset).toHaveAttribute("aria-disabled", "true");
+
+  await page.getByRole("menuitemcheckbox", { name: "Beatport" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Spotify" }).click();
+  await expect(reset).not.toHaveAttribute("aria-disabled", "true");
+  await reset.click();
+  await expect(reset).toHaveAttribute("aria-disabled", "true");
+  for (const [name, checked] of [
+    ["Apple Music", false],
+    ["Beatport", true],
+    ["SoundCloud", false],
+    ["Spotify", false],
+    ["Traxsource", true],
+    ["Volumo", true],
+  ] as const) {
+    await expect(
+      page.getByRole("menuitemcheckbox", { name }),
+    ).toHaveAttribute("aria-checked", `${checked}`);
+  }
+});
+
+test("search options persist across reloads", async ({ page }) => {
+  await openApp(page);
+  const options = page.getByRole("button", { name: "Search options" });
+  await options.click();
+  await page.getByRole("menuitemradio", { name: "25", exact: true }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Volumo" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Spotify" }).click();
+  await page.keyboard.press("Escape");
+
+  await page.reload();
+  await options.click();
+  await expect(
+    page.getByRole("menuitemradio", { name: "25", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
+  for (const [name, checked] of [
+    ["Beatport", true],
+    ["Spotify", true],
+    ["Traxsource", true],
+    ["Volumo", false],
+  ] as const) {
+    await expect(
+      page.getByRole("menuitemcheckbox", { name }),
+    ).toHaveAttribute("aria-checked", `${checked}`);
+  }
+});
+
+test("invalid stored search options fall back to the defaults", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("stereo_search_limit", "7");
+    localStorage.setItem("stereo_search_sources", '["napster","shazam"]');
+  });
+  await openApp(page);
+  await page.getByRole("button", { name: "Search options" }).click();
+  await expect(
+    page.getByRole("menuitemradio", { name: "100", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
+  await expect(
+    page.getByRole("menuitem", { name: "Reset to defaults" }),
+  ).toHaveAttribute("aria-disabled", "true");
+});
+
 test("label searches explain that Spotify can't search by label", async ({
   page,
 }) => {
