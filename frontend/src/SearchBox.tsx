@@ -26,6 +26,7 @@ import {
   searchKindSupportsSource,
   usableSearchSources,
   type SearchBoxKind,
+  type SearchSource,
   type TrackSource,
 } from "./Types.tsx";
 import { BEATPORT_GENRES } from "./BeatportGenres.tsx";
@@ -62,8 +63,7 @@ const GENRE_OPTIONS = BEATPORT_GENRES.map((g) => ({
   label: g.name,
 }));
 
-// Alphabetical: the backend queries the sources in its own order whatever the selection's.
-const SOURCE_LABELS: Partial<Record<TrackSource, string>> = {
+const SOURCE_LABELS: Record<SearchSource, string> = {
   "apple-music": "Apple Music",
   beatport: "Beatport",
   soundcloud: "SoundCloud",
@@ -74,7 +74,7 @@ const SOURCE_LABELS: Partial<Record<TrackSource, string>> = {
 
 const ALL_SEARCH_SOURCES = SEARCH_SOURCES.map((value) => ({
   value,
-  label: SOURCE_LABELS[value] ?? value,
+  label: SOURCE_LABELS[value],
 }));
 
 const DAY_OPTIONS = [1, 7, 14, 30, 60, 90, 180, 365];

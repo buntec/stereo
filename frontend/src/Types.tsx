@@ -132,8 +132,14 @@ export const searchKindSupportsSource = (
     (source === "spotify" || source === "apple-music")
   );
 
-/** The sources a search can use, alphabetically as the search options list them. */
-export const SEARCH_SOURCES: readonly TrackSource[] = [
+/** The sources a search can query: every track source but Shazam, which finds similar songs. */
+export type SearchSource = Exclude<TrackSource, "shazam">;
+
+/**
+ * The search sources, alphabetically as the search options list them: the backend
+ * queries them in its own order whatever the selection's.
+ */
+export const SEARCH_SOURCES: readonly SearchSource[] = [
   "apple-music",
   "beatport",
   "soundcloud",
@@ -151,7 +157,7 @@ export const DEFAULT_SEARCH_SOURCES: readonly TrackSource[] = [
 
 /**
  * Stored search sources, without unknown or repeated ones: the defaults if the value
- * isn't a list or names only sources there are no longer. An empty list was chosen.
+ * isn't a list or names only sources that no longer exist. An empty list was chosen.
  */
 export const migrateSearchSources = (stored: unknown): TrackSource[] => {
   if (!Array.isArray(stored)) return [...DEFAULT_SEARCH_SOURCES];
