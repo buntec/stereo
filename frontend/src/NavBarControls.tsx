@@ -192,16 +192,14 @@ function NavBarControls({
     open(true);
   };
 
-  const versionText = (
-    <HStack vAlign="center" gap={0.5}>
+  const versionText =
+    version && update ? (
+      <UpdateIndicator version={version} status={update} />
+    ) : (
       <Text type="supporting" color="secondary">
         v{version}
       </Text>
-      {version && update && (
-        <UpdateIndicator version={version} status={update} />
-      )}
-    </HStack>
-  );
+    );
   const appearanceControl = (
     <SegmentedControl
       label="Appearance"
