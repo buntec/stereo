@@ -79,6 +79,10 @@ import {
   DEFAULT_DISCO_BALL,
   isChartSearchKind,
   usableSearchSources,
+  DEFAULT_SEARCH_LIMIT,
+  DEFAULT_SEARCH_SOURCES,
+  migrateSearchLimit,
+  migrateSearchSources,
   isQuerylessSearchKind,
   playlistSyncKey,
 } from "./Types.tsx";
@@ -307,9 +311,7 @@ type State = {
   search_result_next_id: number;
   search_error_message?: string;
   search_box_input?: string;
-  search_limit: number;
   search_kind: SearchBoxKind;
-  search_sources: TrackSource[];
   new_releases_days: number;
 
   track_info?: ITrack;
@@ -721,14 +723,8 @@ const reducer = (state: State, action: Action): State => {
         search_is_chart: !!action.is_chart,
       };
 
-    case "set-search-limit":
-      return { ...state, search_limit: action.limit };
-
     case "set-search-kind":
       return { ...state, search_kind: action.kind };
-
-    case "set-search-sources":
-      return { ...state, search_sources: action.sources };
 
     case "set-new-releases-days":
       return { ...state, new_releases_days: action.days };
@@ -1129,10 +1125,8 @@ function App() {
     should_purge_grid: false,
     search_busy: false,
     search_is_chart: false,
-    search_limit: 100,
     search_result_next_id: 0,
     search_kind: "fuzzy",
-    search_sources: ["beatport", "volumo", "traxsource"],
     new_releases_days: 7,
     notification_queue: [],
     notification_next_id: 1,
@@ -1181,6 +1175,17 @@ function App() {
   const [beatportGenreId, setBeatportGenreId] = useLocalStorage<number>(
     "stereo_beatport_top100_genre",
     DEFAULT_BEATPORT_GENRE_ID,
+  );
+
+  const [searchLimit, setSearchLimit] = useLocalStorage<number>(
+    "stereo_search_limit",
+    DEFAULT_SEARCH_LIMIT,
+    migrateSearchLimit,
+  );
+  const [searchSources, setSearchSources] = useLocalStorage<TrackSource[]>(
+    "stereo_search_sources",
+    () => [...DEFAULT_SEARCH_SOURCES],
+    migrateSearchSources,
   );
 
   const [initialGridState] = useState(loadGridState);
@@ -1688,8 +1693,8 @@ function App() {
         type: "search-new-releases",
         query_id,
         days: state.new_releases_days,
-        limit: state.search_limit,
-        sources: state.search_sources,
+        limit: searchLimit,
+        sources: searchSources,
         artists,
         labels,
       });
@@ -1699,15 +1704,15 @@ function App() {
       setNewReleasesOverrides,
       settings.collectionPath,
       state.new_releases_days,
-      state.search_limit,
-      state.search_sources,
+      searchLimit,
+      searchSources,
     ],
   );
 
   const handleSearch = useCallback(() => {
     if (
       !isChartSearchKind(state.search_kind) &&
-      !usableSearchSources(state.search_kind, state.search_sources).length
+      !usableSearchSources(state.search_kind, searchSources).length
     )
       return;
     if (state.search_kind === "new-releases") {
@@ -1723,7 +1728,7 @@ function App() {
         type: "search-beatport-top100",
         query_id,
         genre_id: beatportGenreId,
-        limit: state.search_limit,
+        limit: searchLimit,
       });
       return;
     }
@@ -1735,7 +1740,7 @@ function App() {
       sendMsg({
         type: "search-traxsource-top100",
         query_id,
-        limit: state.search_limit,
+        limit: searchLimit,
       });
       return;
     }
@@ -1750,8 +1755,8 @@ function App() {
         query,
         query_id,
         kind: state.search_kind,
-        limit: state.search_limit,
-        sources: state.search_sources,
+        limit: searchLimit,
+        sources: searchSources,
       });
     }
   }, [
@@ -1759,8 +1764,8 @@ function App() {
     beatportGenreId,
     state.search_box_input,
     state.search_kind,
-    state.search_limit,
-    state.search_sources,
+    searchLimit,
+    searchSources,
   ]);
 
   const handleExitSearch = useCallback(() => {
@@ -2795,7 +2800,7 @@ function App() {
 
   const handleArtistClick = useCallback(
     (name: string) => {
-      if (!state.search_sources.length) {
+      if (!searchSources.length) {
         dispatch({
           type: "notification",
           message: NO_SEARCH_SOURCES_MESSAGE,
@@ -2813,19 +2818,19 @@ function App() {
         query: name,
         query_id,
         kind: "by-artist",
-        limit: state.search_limit,
-        sources: state.search_sources,
+        limit: searchLimit,
+        sources: searchSources,
       });
     },
-    [dispatch, sendMsg, state.search_limit, state.search_sources],
+    [dispatch, sendMsg, searchLimit, searchSources],
   );
 
   const handleLabelClick = useCallback(
     (name: string) => {
-      if (!usableSearchSources("by-label", state.search_sources).length) {
+      if (!usableSearchSources("by-label", searchSources).length) {
         dispatch({
           type: "notification",
-          message: state.search_sources.length
+          message: searchSources.length
             ? NO_LABEL_SOURCES_MESSAGE
             : NO_SEARCH_SOURCES_MESSAGE,
           kind: "warning",
@@ -2842,11 +2847,11 @@ function App() {
         query: name,
         query_id,
         kind: "by-label",
-        limit: state.search_limit,
-        sources: state.search_sources,
+        limit: searchLimit,
+        sources: searchSources,
       });
     },
-    [dispatch, sendMsg, state.search_limit, state.search_sources],
+    [dispatch, sendMsg, searchLimit, searchSources],
   );
 
   const handleShazamSimilar = useCallback(
@@ -2861,10 +2866,10 @@ function App() {
         type: "search-shazam-similar",
         query_id,
         track,
-        limit: state.search_limit,
+        limit: searchLimit,
       });
     },
-    [dispatch, sendMsg, state.search_limit],
+    [dispatch, sendMsg, searchLimit],
   );
 
   useKeyboardActions({
@@ -3244,18 +3249,14 @@ function App() {
                     dispatch({ type: "search-box-input", input: value })
                   }
                   onSearch={handleSearch}
-                  searchLimit={state.search_limit}
-                  setSearchLimit={(limit: number) =>
-                    dispatch({ type: "set-search-limit", limit })
-                  }
+                  searchLimit={searchLimit}
+                  setSearchLimit={setSearchLimit}
                   searchKind={state.search_kind}
                   setSearchKind={(kind: SearchBoxKind) =>
                     dispatch({ type: "set-search-kind", kind })
                   }
-                  searchSources={state.search_sources}
-                  setSearchSources={(sources: TrackSource[]) =>
-                    dispatch({ type: "set-search-sources", sources })
-                  }
+                  searchSources={searchSources}
+                  setSearchSources={setSearchSources}
                   newReleasesDays={state.new_releases_days}
                   setNewReleasesDays={(days: number) =>
                     dispatch({ type: "set-new-releases-days", days })

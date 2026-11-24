@@ -132,6 +132,53 @@ export const searchKindSupportsSource = (
     (source === "spotify" || source === "apple-music")
   );
 
+/** The sources a search can query: every track source but Shazam, which finds similar songs. */
+export type SearchSource = Exclude<TrackSource, "shazam">;
+
+/**
+ * The search sources, alphabetically as the search options list them: the backend
+ * queries them in its own order whatever the selection's.
+ */
+export const SEARCH_SOURCES: readonly SearchSource[] = [
+  "apple-music",
+  "beatport",
+  "soundcloud",
+  "spotify",
+  "traxsource",
+  "volumo",
+];
+
+/** The search sources selected by default and by the search options' reset. */
+export const DEFAULT_SEARCH_SOURCES: readonly TrackSource[] = [
+  "beatport",
+  "volumo",
+  "traxsource",
+];
+
+/**
+ * Stored search sources, without unknown or repeated ones: the defaults if the value
+ * isn't a list or names only sources that no longer exist. An empty list was chosen.
+ */
+export const migrateSearchSources = (stored: unknown): TrackSource[] => {
+  if (!Array.isArray(stored)) return [...DEFAULT_SEARCH_SOURCES];
+  const sources = SEARCH_SOURCES.filter((source) => stored.includes(source));
+  return sources.length || !stored.length
+    ? sources
+    : [...DEFAULT_SEARCH_SOURCES];
+};
+
+export const SEARCH_LIMIT_OPTIONS: readonly number[] = [
+  10, 25, 50, 100, 500, 1000,
+];
+
+export const DEFAULT_SEARCH_LIMIT = 100;
+
+/** A stored result limit, the default unless it's one of the options. */
+export const migrateSearchLimit = (stored: unknown): number =>
+  typeof stored === "number" && SEARCH_LIMIT_OPTIONS.includes(stored)
+    ? stored
+    : DEFAULT_SEARCH_LIMIT;
+
 /** The selected sources a search kind can use. */
 export const usableSearchSources = (
   kind: SearchBoxKind,
@@ -676,9 +723,7 @@ export type Action =
   | { type: "set-search-failure" }
   // `is_chart` marks a chart search, whose results are shown in chart order.
   | { type: "set-search-busy"; query_id: number; is_chart?: boolean }
-  | { type: "set-search-limit"; limit: number }
   | { type: "set-search-kind"; kind: SearchBoxKind }
-  | { type: "set-search-sources"; sources: TrackSource[] }
   | { type: "set-new-releases-days"; days: number }
   | { type: "rows" }
   | { type: "toggle-shuffle" }
