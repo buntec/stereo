@@ -235,6 +235,8 @@ export type ClientMsg =
   // Answered with "similar-tracks", one list per track, in order.
   | {
       type: "find-similar-tracks";
+      // Answered with no similar tracks unless it's the open collection.
+      collection: string;
       tracks: Pick<
         ITrack,
         "yt_id" | "title" | "mix_name" | "artists" | "bp_id" | "sp_id"

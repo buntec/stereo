@@ -3011,6 +3011,7 @@ function App() {
       dispatch={dispatch}
       tracks={state.search_results}
       lastCollectionUpdate={state.collection_last_update}
+      collection={openCollectionPath}
       onArtistClick={handleArtistClick}
       onLabelClick={handleLabelClick}
       addTrack={addSearchResultTrack}

@@ -3,11 +3,13 @@
 //!
 //! The artists must share a name and the titles, without mix names and featured artists, must be
 //! nearly equal. A shared Beatport or Spotify id allows for more difference in the titles, but
-//! not for none in common: collections have tracks of one release that share an id. Different mixes of a title only match when neither is a remix: an extended mix
-//! or radio edit is the same track to a curator, someone's remix isn't.
+//! not for none in common: collections have tracks of one release that share an id. Different
+//! mixes of a title only match when neither is a remix: an extended mix or radio edit is the
+//! same track to a curator, someone's remix isn't. That holds for a shared id too.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -54,12 +56,13 @@ const PLAIN_MIXES: &[&str] = &[
     "album version",
 ];
 
-static FEAT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)\s*(?:[(\[]\s*(?:feat|ft|featuring)\b[^)\]]*[)\]]|\b(?:feat|ft|featuring)\b\.?\s.*$)",
-    )
-    .unwrap()
-});
+// "(feat. …)" or "[ft. …]".
+static BRACKETED_FEAT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\s*[(\[]\s*(?:feat|ft|featuring)\b[^)\]]*[)\]]").unwrap());
+// The start of an unbracketed "feat. …", which runs up to a bracket or " - " (see
+// `strip_inline_feat`).
+static INLINE_FEAT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\s*\b(?:feat|ft|featuring)\b\.?\s").unwrap());
 // A trailing "(…)"/"[…]" group, or " - … Mix" and the like, holding the mix name.
 static MIX_SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -82,10 +85,33 @@ fn words(s: &str) -> String {
         .join(" ")
 }
 
+/// Removes "feat. …" credits, keeping what follows them in brackets or after " - ", which is
+/// the mix in "Track feat. Singer (Other Remix)".
+fn strip_inline_feat(title: &str) -> String {
+    let mut out = String::new();
+    let mut rest = title;
+    while let Some(m) = INLINE_FEAT_RE.find(rest) {
+        out.push_str(&rest[..m.start()]);
+        let after = &rest[m.end()..];
+        let end = [after.find('('), after.find('['), after.find(" - ")]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(after.len());
+        rest = &after[end..];
+        if !rest.is_empty() {
+            out.push(' ');
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The title without featured artists or mix, and the mix: `mix_name` if there is one, else
 /// what the title carries.
 fn split_title(title: &str, mix_name: Option<&str>) -> (String, String) {
-    let mut base = FEAT_RE.replace_all(title, "").trim().to_string();
+    let bracketed = BRACKETED_FEAT_RE.replace_all(title, "");
+    let mut base = strip_inline_feat(&bracketed).trim().to_string();
     let mut mix = mix_name.map(str::trim).unwrap_or_default().to_string();
     // Sources that also give the mix separately may still repeat it in the title.
     while let Some(caps) = MIX_SUFFIX_RE.captures(&base) {
@@ -130,9 +156,29 @@ struct Candidate<'a> {
     mix: String,
 }
 
+/// Stops a running `find_similar` when dropped, as when the task awaiting it is aborted.
+#[derive(Default)]
+pub struct Cancel(Arc<AtomicBool>);
+
+impl Cancel {
+    pub fn flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.0)
+    }
+}
+
+impl Drop for Cancel {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 /// For each of `queries`, the tracks in `collection` that seem to be the same recording, other
-/// than the one with its own YouTube id.
-pub fn find_similar(collection: &[Track], queries: &[TrackIdentity]) -> Vec<Vec<Track>> {
+/// than the one with its own YouTube id. `None` if `cancelled` was set before it finished.
+pub fn find_similar(
+    collection: &[Track],
+    queries: &[TrackIdentity],
+    cancelled: &AtomicBool,
+) -> Option<Vec<Vec<Track>>> {
     let candidates: Vec<Candidate> = collection
         .iter()
         .map(|track| {
@@ -158,6 +204,9 @@ pub fn find_similar(collection: &[Track], queries: &[TrackIdentity]) -> Vec<Vec<
     queries
         .iter()
         .map(|q| {
+            if cancelled.load(Ordering::Relaxed) {
+                return None;
+            }
             let (title, mix) = split_title(&q.title, q.mix_name.as_deref());
             let mut found: Vec<usize> = Vec::new();
             let mut add = |i: usize| {
@@ -173,8 +222,9 @@ pub fn find_similar(collection: &[Track], queries: &[TrackIdentity]) -> Vec<Vec<
                 .chain(sp.and_then(|sp| by_sp.get(sp)))
                 .flatten();
             for &i in by_id {
-                if strsim::normalized_levenshtein(&title, &candidates[i].title)
-                    >= ID_TITLE_SIMILARITY
+                let c = &candidates[i];
+                if strsim::normalized_levenshtein(&title, &c.title) >= ID_TITLE_SIMILARITY
+                    && mixes_compatible(&mix, &c.mix)
                 {
                     add(i);
                 }
@@ -195,11 +245,13 @@ pub fn find_similar(collection: &[Track], queries: &[TrackIdentity]) -> Vec<Vec<
                     }
                 }
             }
-            found
-                .into_iter()
-                .take(MAX_SIMILAR)
-                .map(|i| candidates[i].track.clone())
-                .collect()
+            Some(
+                found
+                    .into_iter()
+                    .take(MAX_SIMILAR)
+                    .map(|i| candidates[i].track.clone())
+                    .collect(),
+            )
         })
         .collect()
 }
@@ -229,7 +281,8 @@ mod tests {
     }
 
     fn ids(collection: &[Track], q: TrackIdentity) -> Vec<String> {
-        find_similar(collection, &[q])
+        find_similar(collection, &[q], &AtomicBool::new(false))
+            .unwrap()
             .remove(0)
             .into_iter()
             .map(|t| t.yt_id)
@@ -293,6 +346,42 @@ mod tests {
     fn ignores_featured_artists_in_the_title() {
         let c = [track("a", &["Artist"], "Track (feat. Singer)", None)];
         assert_eq!(ids(&c, query(&["Artist"], "Track ft. Singer", None)), ["a"]);
+    }
+
+    #[test]
+    fn keeps_the_mix_on_either_side_of_a_featured_credit() {
+        let c = [
+            track("a", &["Artist"], "Track", Some("Original Mix")),
+            track("b", &["Artist"], "Track (Other Remix)", None),
+        ];
+        for title in [
+            "Track feat. Singer (Other Remix)",
+            "Track (Other Remix) feat. Singer",
+            "Track feat. Singer - Other Remix",
+            "Track (feat. Singer) [Other Remix]",
+        ] {
+            assert_eq!(ids(&c, query(&["Artist"], title, None)), ["b"], "{title}");
+        }
+    }
+
+    #[test]
+    fn a_shared_catalog_id_keeps_remixes_apart() {
+        let mut original = track("a", &["Artist"], "Track", Some("Original Mix"));
+        original.bp_id = Some(42);
+        let mut remix = track("b", &["Artist"], "Track", Some("Other Remix"));
+        remix.bp_id = Some(42);
+        let mut q = query(&["Artist"], "Track (Other Remix)", None);
+        q.bp_id = Some(42);
+        assert_eq!(ids(&[original, remix], q), ["b"]);
+    }
+
+    #[test]
+    fn stops_once_cancelled() {
+        let c = [track("a", &["Artist"], "Track", None)];
+        let cancel = Cancel::default();
+        let flag = cancel.flag();
+        drop(cancel);
+        assert!(find_similar(&c, &[query(&["Artist"], "Track", None)], &flag).is_none());
     }
 
     #[test]

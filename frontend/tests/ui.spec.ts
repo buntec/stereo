@@ -284,9 +284,13 @@ async function openApp(
           send({
             type: "similar-tracks",
             id: message.id,
-            similar: message.tracks.map(
-              (t: { yt_id: string }) => options.similarTracks?.[t.yt_id] ?? [],
-            ),
+            similar:
+              message.collection === collection.path
+                ? message.tracks.map(
+                    (t: { yt_id: string }) =>
+                      options.similarTracks?.[t.yt_id] ?? [],
+                  )
+                : [],
           });
           break;
         case "collection-contains-ids":
@@ -2769,55 +2773,116 @@ async function changeResultVideo(page: Page, title: string, yt_id: string) {
   await expect(dialog).toHaveCount(0);
 }
 
+const similarToResultB = {
+  bVideo00002: [
+    {
+      yt_id: "otherVideo1",
+      title: "Result B",
+      mix_name: "Extended Mix",
+      artists: ["Artist B"],
+      bpm: 124,
+      key: "8A",
+      // Out of the five-star scale, which mustn't break the grid.
+      rating: -1,
+    },
+  ],
+};
+const similarLabel = "A similar track is in the collection";
+
 test("a search result warns of similar tracks in the collection", async ({
   page,
 }) => {
-  const { messages } = await openApp(page, {
+  const { messages, collection } = await openApp(page, {
     searchResults,
-    similarTracks: {
-      bVideo00002: [
-        {
-          yt_id: "otherVideo1",
-          title: "Result B",
-          mix_name: "Extended Mix",
-          artists: ["Artist B"],
-          bpm: 124,
-          key: "8A",
-        },
-      ],
-    },
+    similarTracks: similarToResultB,
   });
   await showSearchResults(page);
   await expect
-    .poll(
-      () => messages.find((m) => m.type === "find-similar-tracks")?.tracks,
-    )
-    .toContainEqual(
-    expect.objectContaining({
-      yt_id: "bVideo00002",
-      title: "Result B",
-      artists: ["Artist B"],
-      bp_id: 2,
-    }),
-  );
-  const label = "A similar track is in the collection";
-  const warnings = page.getByRole("button", { name: label, exact: true });
+    .poll(() => messages.find((m) => m.type === "find-similar-tracks"))
+    .toMatchObject({
+      collection: collection.path,
+      tracks: expect.arrayContaining([
+        expect.objectContaining({
+          yt_id: "bVideo00002",
+          title: "Result B",
+          artists: ["Artist B"],
+          bp_id: 2,
+        }),
+      ]),
+    });
+  const warnings = page.getByRole("button", {
+    name: similarLabel,
+    exact: true,
+  });
   await expect(warnings).toHaveCount(1);
+  const row = page.locator(".ag-row", { has: warnings });
   await expect(
-    page
-      .locator(".ag-row", { has: warnings })
-      .getByRole("button", { name: "Play Result B", exact: true }),
+    row.getByRole("button", { name: "Play Result B", exact: true }),
   ).toBeVisible();
   await warnings.hover();
-  const card = page.getByRole("dialog", { name: label });
+  const card = page.getByRole("dialog", { name: similarLabel });
   await expect(card).toContainText("Artist B – Result B");
   await expect(card).toContainText("Extended Mix · 124 BPM · 8A");
   // Adding stays possible.
   await expect(
-    page
-      .locator(".ag-row", { has: warnings })
-      .getByRole("button", { name: "Add to collection", exact: true }),
+    row.getByRole("button", { name: "Add to collection", exact: true }),
   ).toBeVisible();
+});
+
+test("Tab reaches a search result's similar-tracks warning", async ({
+  page,
+}) => {
+  await openApp(page, { searchResults, similarTracks: similarToResultB });
+  await showSearchResults(page);
+  const warning = page.getByRole("button", {
+    name: similarLabel,
+    exact: true,
+  });
+  await expect(warning).toBeVisible();
+  const row = page.locator(".ag-row", { has: warning });
+  await row.locator('.ag-cell[col-id="title"]').click();
+  // Back to the controls cell, then through its buttons.
+  await page.keyboard.press("Shift+Tab");
+  for (let i = 0; i < 8; i++) {
+    if (await warning.evaluate((el) => el === document.activeElement)) break;
+    await page.keyboard.press("Tab");
+  }
+  await expect(warning).toBeFocused();
+  await expect(page.getByRole("dialog", { name: similarLabel })).toContainText(
+    "Artist B – Result B",
+  );
+  // On from the last button to the next cell.
+  await page.keyboard.press("Tab");
+  await expect(row.locator('.ag-cell[col-id="title"]')).toBeFocused();
+});
+
+test("similar-tracks warnings go with the collection they were found in", async ({
+  page,
+}) => {
+  const app = await openApp(page, {
+    searchResults,
+    similarTracks: similarToResultB,
+  });
+  await showSearchResults(page);
+  const warning = page.getByRole("button", {
+    name: similarLabel,
+    exact: true,
+  });
+  await expect(warning).toBeVisible();
+  app.send({
+    type: "collection-info",
+    error_message: "Could not open this collection",
+  });
+  await expect(warning).toHaveCount(0);
+  app.send({ type: "collection-info", collection: app.collection });
+  await expect(warning).toBeVisible();
+  // Another collection's lookup finds nothing (the mock's, like the backend's, for a
+  // collection that isn't open), and the warning doesn't stay meanwhile.
+  app.send({
+    type: "collection-info",
+    collection: { path: "/audit/second.db", size: 1 },
+  });
+  await expect(warning).toHaveCount(0);
 });
 
 test("changing a search result's video leaves results sharing its old video alone", async ({
@@ -3749,7 +3814,9 @@ test("a manual update check outlasts a stalled GitHub request", async ({
   await checkNow.click();
   await expect.poll(() => requests().length).toBe(2);
   await page.clock.runFor(46_000);
-  await expect(card).toContainText("Couldn't check: The backend didn't answer.");
+  await expect(card).toContainText(
+    "Couldn't check: The backend didn't answer.",
+  );
   send({ type: "update-check", status: status(failedAt) });
   await expect(card).not.toContainText("Couldn't check");
 });

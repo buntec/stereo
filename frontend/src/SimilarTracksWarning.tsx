@@ -4,13 +4,19 @@ import { Icon } from "@astryxdesign/core/Icon";
 import { List, ListItem } from "@astryxdesign/core/List";
 import type { ITrack } from "./Types.tsx";
 
+// Ratings outside the five-star scale (from an import, say) shouldn't break the grid.
+const stars = (rating?: number) => {
+  const n = Math.min(5, Math.max(0, Math.round(Number(rating) || 0)));
+  return n > 0 ? "★".repeat(n) : undefined;
+};
+
 const describe = (track: ITrack) =>
   [
     track.mix_name,
     track.bpm ? `${track.bpm} BPM` : undefined,
     track.key,
     track.label,
-    track.rating ? "★".repeat(track.rating) : undefined,
+    stars(track.rating),
   ]
     .filter(Boolean)
     .join(" · ");

@@ -217,6 +217,7 @@ struct SessionState {
     repo_sync_task: Option<tokio::task::JoinHandle<()>>,
     search_task: Option<tokio::task::JoinHandle<()>>,
     health_check_task: Option<tokio::task::JoinHandle<()>>,
+    similar_tracks_task: Option<tokio::task::JoinHandle<()>>,
     youtube_playlist_task: Option<tokio::task::JoinHandle<()>>,
     fixup_task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -618,6 +619,7 @@ async fn handle_socket(mut socket: WebSocket, settings: Arc<Settings>, paired: O
     for task in [
         state.search_task.take(),
         state.health_check_task.take(),
+        state.similar_tracks_task.take(),
         state.youtube_playlist_task.take(),
         state.fixup_task.take(),
     ]
@@ -2333,17 +2335,54 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 .await;
         }
 
-        MsgClient::FindSimilarTracks { id, tracks } => {
-            let Some(pool) = state.pool() else {
-                reply_error(tx, id, "No collection open").await;
-                return Ok(());
+        MsgClient::FindSimilarTracks {
+            id,
+            tracks,
+            collection,
+        } => {
+            // A new lookup supersedes the last: the client sends one as results stream in and
+            // only wants the latest.
+            if let Some(task) = state.similar_tracks_task.take() {
+                task.abort();
+            }
+            let pool = match state.pool() {
+                Some(pool) if is_open_collection(state, &collection) => pool.clone(),
+                // Another collection's tracks would be the wrong ones to warn of.
+                _ => {
+                    let _ = tx
+                        .send(MsgServer::SimilarTracks {
+                            id,
+                            similar: vec![],
+                        })
+                        .await;
+                    return Ok(());
+                }
             };
-            let collection = db::get_all_tracks(pool).await?;
-            let similar = tokio::task::spawn_blocking(move || {
-                crate::similar::find_similar(&collection, &tracks)
-            })
-            .await?;
-            let _ = tx.send(MsgServer::SimilarTracks { id, similar }).await;
+            let tx = tx.clone();
+            // Off the session loop, which would otherwise hold up every other message while
+            // the whole collection is read and compared.
+            state.similar_tracks_task = Some(tokio::spawn(async move {
+                let similar = async {
+                    let collection = db::get_all_tracks(&pool).await?;
+                    let cancel = crate::similar::Cancel::default();
+                    let flag = cancel.flag();
+                    // Aborting this task drops `cancel`, which stops the blocking matcher.
+                    let similar = tokio::task::spawn_blocking(move || {
+                        crate::similar::find_similar(&collection, &tracks, &flag)
+                    })
+                    .await?;
+                    drop(cancel);
+                    anyhow::Ok(similar)
+                }
+                .await;
+                match similar {
+                    Ok(Some(similar)) => {
+                        let _ = tx.send(MsgServer::SimilarTracks { id, similar }).await;
+                    }
+                    Ok(None) => {}
+                    Err(e) => reply_error(&tx, id, &format!("{e:#}")).await,
+                }
+            }));
         }
 
         MsgClient::GetCollectionTrack {

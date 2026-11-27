@@ -41,6 +41,7 @@ import {
   type SelectionColumnDef,
   type SelectionChangedEvent,
   type CellKeyDownEvent,
+  type SuppressKeyboardEventParams,
   type FullWidthCellKeyDownEvent,
   themeQuartz,
   colorSchemeDark,
@@ -111,6 +112,34 @@ const compactWidth = (width: number): ColDef => ({
 const flexWidth = (flex: number): ColDef => ({
   initialFlex: flex,
   minWidth: 120,
+});
+
+// The grid moves Tab from cell to cell, skipping the buttons within one. In the controls
+// column, Tab and Shift+Tab step through the cell's buttons first, from the cell itself to the
+// first, and leave the cell after the last (or before the first), as AG Grid suggests for
+// custom cell components.
+function tabWithinCell({ event }: SuppressKeyboardEventParams): boolean {
+  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey)
+    return false;
+  const target = event.target as HTMLElement;
+  const cell = target.closest(".ag-cell");
+  if (!cell) return false;
+  const buttons = Array.from(
+    cell.querySelectorAll<HTMLElement>("button, a[href]"),
+  ).filter((el) => el.tabIndex >= 0 && el.getClientRects().length > 0);
+  const at = buttons.indexOf(target);
+  const next = event.shiftKey ? (at < 0 ? -1 : at - 1) : at + 1;
+  if (next < 0 || next >= buttons.length) return false;
+  if (event.type === "keydown") {
+    event.preventDefault();
+    buttons[next].focus();
+  }
+  return true;
+}
+
+const controlsColumn = (width: number): ColDef => ({
+  ...fixedWidth(width),
+  suppressKeyboardEvent: tabWithinCell,
 });
 
 // Width of the controls column (thumbnail play button and two icon buttons), which is
@@ -540,6 +569,8 @@ interface SearchResultsGridProps {
   dispatch: Dispatch<Action>;
   tracks?: ITrack[];
   lastCollectionUpdate?: number;
+  // The open collection's path, whose tracks the results are compared with.
+  collection?: string;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
   addTrack: (track: ITrack) => void;
@@ -576,6 +607,7 @@ export const SearchResultsGrid = ({
   dispatch,
   tracks,
   lastCollectionUpdate,
+  collection,
   onArtistClick,
   onLabelClick,
   addTrack,
@@ -604,7 +636,7 @@ export const SearchResultsGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: SearchPlayControlRenderer,
-      ...fixedWidth(SEARCH_CONTROLS_WIDTH),
+      ...controlsColumn(SEARCH_CONTROLS_WIDTH),
     },
     {
       field: "title",
@@ -768,10 +800,32 @@ export const SearchResultsGrid = ({
           });
         },
       );
-      const queried = tracks ?? [];
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [resultIds, lastCollectionUpdate, requestReply, gridRef]);
+
+  // Kept apart from the lookup above so that its warnings belong to `collection`: they're
+  // cleared as soon as another collection (or none) is open, rather than when a reply comes.
+  const similarCollection = useRef(collection);
+  useEffect(() => {
+    const refresh = () =>
+      gridRef.current?.api?.refreshCells({ columns: ["yt_id"], force: true });
+    if (similarCollection.current !== collection) {
+      similarCollection.current = collection;
+      similar.current = new Map();
+      refresh();
+    }
+    if (!collection || !tracks?.length) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const queried = tracks;
       requestReply(
         {
           type: "find-similar-tracks",
+          collection,
           tracks: queried.map(
             ({ yt_id, title, mix_name, artists, bp_id, sp_id }) => ({
               yt_id,
@@ -792,10 +846,7 @@ export const SearchResultsGrid = ({
               found.set(t.result_id, tracks);
           });
           similar.current = found;
-          gridRef.current?.api?.refreshCells({
-            columns: ["yt_id"],
-            force: true,
-          });
+          refresh();
         },
       );
     }, 250);
@@ -803,7 +854,7 @@ export const SearchResultsGrid = ({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [tracks, resultIds, lastCollectionUpdate, requestReply, gridRef]);
+  }, [tracks, collection, lastCollectionUpdate, requestReply, gridRef]);
 
   const [changingVideo, setChangingVideo] = useState<ITrack | null>(null);
   const changeVideo = useCallback(
@@ -1053,7 +1104,7 @@ export const TracksGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: PlayControlRenderer,
-      ...fixedWidth(CONTROLS_WIDTH),
+      ...controlsColumn(CONTROLS_WIDTH),
     },
     {
       field: "title",

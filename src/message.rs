@@ -673,6 +673,8 @@ pub enum MsgClient {
     FindSimilarTracks {
         id: i64,
         tracks: Vec<crate::similar::TrackIdentity>,
+        /// Answered with no similar tracks unless this is the open collection.
+        collection: String,
     },
     /// The track with `yt_id` as stored in `collection`, if that is the open collection.
     GetCollectionTrack {
