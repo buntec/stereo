@@ -2195,20 +2195,7 @@ pub(crate) const MIX_KEYWORDS: &[&str] = &[
 /// also recognized.
 fn extract_mix_tag(title: &str) -> Option<String> {
     let lower = title.to_lowercase();
-    let mut result = None;
-    for (open, close) in [('(', ')'), ('[', ']')] {
-        let mut rest = lower.as_str();
-        while let Some(start) = rest.find(open) {
-            let Some(end) = rest[start..].find(close) else {
-                break;
-            };
-            let inner = rest[start + 1..start + end].trim();
-            if MIX_KEYWORDS.iter().any(|k| inner.contains(k)) {
-                result = Some(inner.to_string());
-            }
-            rest = &rest[start + end + 1..];
-        }
-    }
+    let mut result = bracketed_mix_tag(&lower);
     if result.is_none() {
         // A sizeable number of label uploads use an unbracketed suffix, e.g.
         // "Artist - Track - Extended Mix". Only inspect complete separator-delimited
@@ -2224,6 +2211,25 @@ fn extract_mix_tag(title: &str) -> Option<String> {
                 result = Some(segment.to_string());
                 break;
             }
+        }
+    }
+    result
+}
+
+/// The last bracketed group of a lowercase title that names a mix, as in "track (someone remix)".
+fn bracketed_mix_tag(lower: &str) -> Option<String> {
+    let mut result = None;
+    for (open, close) in [('(', ')'), ('[', ']')] {
+        let mut rest = lower;
+        while let Some(start) = rest.find(open) {
+            let Some(end) = rest[start..].find(close) else {
+                break;
+            };
+            let inner = rest[start + 1..start + end].trim();
+            if MIX_KEYWORDS.iter().any(|k| inner.contains(k)) {
+                result = Some(inner.to_string());
+            }
+            rest = &rest[start + end + 1..];
         }
     }
     result
@@ -2291,6 +2297,18 @@ impl RawTrack {
             RawTrack::Sp(t) => extract_mix_tag(&t.track_name),
             RawTrack::Am(t) => t.mix_name.clone().filter(|m| !is_original_mix(m)),
             RawTrack::Sz(t) => extract_mix_tag(&t.title),
+        }
+    }
+
+    /// The expected mix when it is set apart from the track's name: a field of its own or a
+    /// bracketed tag. An unbracketed one, as in SoundCloud's "Good Time Extended Mix", may run
+    /// into the name, whose words would then pass for a remixer's.
+    fn isolated_mix(&self) -> Option<String> {
+        match self {
+            RawTrack::Sc(t) => bracketed_mix_tag(&t.track_name.to_lowercase()),
+            RawTrack::Sp(t) => bracketed_mix_tag(&t.track_name.to_lowercase()),
+            RawTrack::Sz(t) => bracketed_mix_tag(&t.title.to_lowercase()),
+            _ => self.expected_mix(),
         }
     }
 
@@ -2500,9 +2518,9 @@ fn match_score(raw: &RawTrack, candidate: &YTVideo) -> MatchScore {
     let strong_version_match = expected_mix.is_some() && version == VersionMatch::Match;
     // A generic version such as "Extended Mix" says nothing about who made the upload.
     let credited_version_match = strong_version_match
-        && expected_mix
-            .as_deref()
-            .is_some_and(|m| !mix_credits(m).is_empty());
+        && raw
+            .isolated_mix()
+            .is_some_and(|m| !mix_credits(&m).is_empty());
     let version_score = match version {
         VersionMatch::Match if strong_version_match => 0.25,
         VersionMatch::Match => 0.15,
@@ -2839,6 +2857,15 @@ const MIX_DESCRIPTORS: &[&str] = &[
     "full",
     "12",
     "12inch",
+    "album",
+    "single",
+    "clean",
+    "explicit",
+    "dirty",
+    "acoustic",
+    "live",
+    "mono",
+    "stereo",
 ];
 
 /// The remixer names credited by a mix tag, e.g. "Luch & Nils Hoffmann Remix" ->
@@ -3693,7 +3720,7 @@ mod top100_tests {
 #[cfg(test)]
 mod remix_match_tests {
     use super::*;
-    use crate::models::BPTrack;
+    use crate::models::{BPTrack, SCTrack};
 
     fn bp_track(track_name: &str, mix_name: &str) -> BPTrack {
         BPTrack {
@@ -4085,6 +4112,36 @@ mod remix_match_tests {
         let raw = RawTrack::Bp(bp_track("good time..", "Extended Mix"));
         let wrong = video_from("Good Time (Extended Mix)", "Release - Topic");
         assert!(choose_best_match(&raw, vec![wrong]).is_none());
+    }
+
+    #[test]
+    fn rejects_generic_version_labels_by_another_artist() {
+        for mix in ["Album Version", "Single Version", "Clean Version"] {
+            let raw = RawTrack::Bp(bp_track("Borderline", mix));
+            let wrong = video_from(&format!("Borderline ({mix})"), "Brooke Lee - Topic");
+            assert!(choose_best_match(&raw, vec![wrong]).is_none(), "{mix}");
+        }
+    }
+
+    fn sc_track(track_name: &str) -> RawTrack {
+        RawTrack::Sc(SCTrack {
+            artists: vec!["Naarly".to_string()],
+            label: None,
+            release_date: chrono::NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+            track_name: track_name.to_string(),
+            genre: vec![],
+        })
+    }
+
+    #[test]
+    fn unbracketed_mix_in_a_title_does_not_credit_the_title() {
+        for title in ["Good Time Extended Mix", "Good Time (Extended Mix)"] {
+            let raw = sc_track(title);
+            let wrong = video_from(title, "Release - Topic");
+            assert!(choose_best_match(&raw, vec![wrong]).is_none(), "{title}");
+            let right = video_from(title, "Naarly - Topic");
+            assert!(choose_best_match(&raw, vec![right]).is_some(), "{title}");
+        }
     }
 
     #[test]
