@@ -1133,9 +1133,22 @@ esac
         );
         let new_cache =
             || AudioCache::new(cache_dir.path().to_path_buf(), u64::MAX, yt_dlp.clone());
+        // A process spawned by another test briefly shares every open file, the lock included
+        // (macOS closes the spawned process's copies only once it starts running), so a sole
+        // process may take another start to clean up.
+        let sole_cache = || async {
+            for _ in 0..100 {
+                let cache = new_cache().await.unwrap();
+                if !leftover.exists() {
+                    return cache;
+                }
+                drop(cache);
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            panic!("a sole process cleans up leftovers");
+        };
 
-        let first = Arc::new(new_cache().await.unwrap());
-        assert!(!leftover.exists(), "a sole process cleans up leftovers");
+        let first = Arc::new(sole_cache().await);
         std::fs::create_dir(&leftover).unwrap();
 
         let download = tokio::spawn({
@@ -1156,8 +1169,7 @@ esac
 
         drop(first);
         drop(second);
-        new_cache().await.unwrap();
-        assert!(!leftover.exists());
+        sole_cache().await;
     }
 
     #[tokio::test]
