@@ -63,6 +63,14 @@ const MAX_CONCURRENT_DOWNLOADS: usize = 3;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// A failed download is not retried for this long, so prefetch + play don't run it twice.
 const FAILURE_TTL: Duration = Duration::from_secs(300);
+/// The same for a failure that may well go away (see [`is_transient`]), once it was retried.
+const TRANSIENT_FAILURE_TTL: Duration = Duration::from_secs(30);
+/// Waits before retrying a download that failed transiently, one per retry.
+const RETRY_DELAYS: [Duration; 2] = if cfg!(test) {
+    [Duration::from_millis(10), Duration::from_millis(10)]
+} else {
+    [Duration::from_secs(2), Duration::from_secs(5)]
+};
 /// Serving a file bumps its mtime (its recency for eviction) at most this often.
 const TOUCH_INTERVAL: Duration = Duration::from_secs(3600);
 /// Download progress is reported at most this often per download.
@@ -117,6 +125,7 @@ pub struct AudioCache {
     downloads: Semaphore,
     waveforms: Semaphore,
     in_flight: Mutex<HashMap<String, Download>>,
+    /// Recent failures, with when they expire.
     failures: Mutex<HashMap<String, (Instant, Arc<str>)>>,
     /// The latest update of every download that hasn't finished, for sessions that connect later.
     active: Mutex<HashMap<String, DownloadUpdate>>,
@@ -222,6 +231,24 @@ async fn yt_dlp_version(yt_dlp: &str) -> anyhow::Result<String> {
     .with_context(|| format!("can't run `{yt_dlp}`"))?;
     anyhow::ensure!(output.status.success(), "`{yt_dlp} --version` failed");
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Whether a failed download may well succeed when run again: YouTube now and then refuses a
+/// stream URL with 403 Forbidden, which the next run's URL gets past, and the network may be
+/// briefly unavailable. Not a timeout, which already took minutes.
+fn is_transient(error: &anyhow::Error) -> bool {
+    const TRANSIENT: &[&str] = &[
+        "HTTP Error 403",
+        "HTTP Error 5",
+        "Failed to resolve",
+        "Temporary failure in name resolution",
+        "Connection reset",
+        "Connection refused",
+        "Read timed out",
+        "IncompleteRead",
+    ];
+    let message = format!("{error:#}");
+    message.starts_with("yt-dlp failed:") && TRANSIENT.iter().any(|t| message.contains(t))
 }
 
 /// YouTube video ids are 11 characters of URL-safe base64. Checking this keeps ids out of
@@ -340,7 +367,8 @@ impl AudioCache {
         }
         {
             let mut failures = self.failures.lock().unwrap();
-            failures.retain(|_, (at, _)| at.elapsed() < FAILURE_TTL);
+            let now = Instant::now();
+            failures.retain(|_, (expires, _)| *expires > now);
             if let Some((_, error)) = failures.get(id) {
                 return Err(error.clone());
             }
@@ -355,10 +383,12 @@ impl AudioCache {
                 let id = id.to_string();
                 self.report(&id, AudioDownloadStatus::Queued, None, None);
                 let task = tokio::spawn(async move {
-                    let result = this
-                        .download(&id)
-                        .await
-                        .map_err(|e| Arc::<str>::from(format!("{e:#}")));
+                    let result = this.download(&id).await;
+                    let ttl = match &result {
+                        Err(e) if is_transient(e) => TRANSIENT_FAILURE_TTL,
+                        _ => FAILURE_TTL,
+                    };
+                    let result = result.map_err(|e| Arc::<str>::from(format!("{e:#}")));
                     let (status, error) = match &result {
                         Ok(_) => (AudioDownloadStatus::Done, None),
                         Err(error) => (AudioDownloadStatus::Failed, Some(error.clone())),
@@ -369,7 +399,7 @@ impl AudioCache {
                         this.failures
                             .lock()
                             .unwrap()
-                            .insert(id.clone(), (Instant::now(), error.clone()));
+                            .insert(id.clone(), (Instant::now() + ttl, error.clone()));
                     }
                     this.in_flight.lock().unwrap().remove(&id);
                     result
@@ -385,12 +415,29 @@ impl AudioCache {
         download.await
     }
 
+    /// Downloads a track, retrying failures that may well go away.
     async fn download(&self, id: &str) -> anyhow::Result<PathBuf> {
         let _permit = self.downloads.acquire().await?;
         // A download that finished just before this one was registered.
         if let Some(path) = self.cached(id).await {
             return Ok(path);
         }
+        let mut delays = RETRY_DELAYS.iter();
+        loop {
+            match self.download_once(id).await {
+                Err(e) if is_transient(&e) => {
+                    let Some(delay) = delays.next() else {
+                        return Err(e);
+                    };
+                    tracing::info!("Audio download of {id} failed, retrying: {e:#}");
+                    tokio::time::sleep(*delay).await;
+                }
+                result => return result,
+            }
+        }
+    }
+
+    async fn download_once(&self, id: &str) -> anyhow::Result<PathBuf> {
         // Before the transfer starts, yt-dlp spends a few seconds extracting the stream URL.
         self.report(id, AudioDownloadStatus::Preparing, None, None);
         let started = Instant::now();
@@ -933,6 +980,52 @@ exit 1"#,
             .filter(|e| e.as_ref().unwrap().file_name() != LOCK_FILE)
             .count();
         assert_eq!(leftovers, 0, "the download directory is cleaned up");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn retries_transient_failures() {
+        let tools = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        // Refused twice, then succeeds.
+        let yt_dlp = fake_yt_dlp(
+            tools.path(),
+            &format!(
+                r#"if [ "$(wc -l < "$(dirname "$0")/runs" 2>/dev/null || echo 0)" -lt 2 ]; then
+  echo run >> "$(dirname "$0")/runs"
+  echo "ERROR: unable to download video data: HTTP Error 403: Forbidden" >&2
+  exit 1
+fi
+{WRITE_OUTPUT}"#
+            ),
+        );
+        let cache = Arc::new(
+            AudioCache::new(cache_dir.path().to_path_buf(), u64::MAX, yt_dlp)
+                .await
+                .unwrap(),
+        );
+        cache.get("dQw4w9WgXcQ").await.unwrap();
+        let runs = std::fs::read_to_string(tools.path().join("runs")).unwrap();
+        assert_eq!(runs.lines().count(), 3, "two retries");
+
+        // Refused every time: gives up after the retries, and remembers it only briefly.
+        let tools = tempfile::tempdir().unwrap();
+        let yt_dlp = fake_yt_dlp(
+            tools.path(),
+            r#"echo run >> "$(dirname "$0")/runs"
+echo "ERROR: unable to download video data: HTTP Error 403: Forbidden" >&2
+exit 1"#,
+        );
+        let cache = Arc::new(
+            AudioCache::new(cache_dir.path().to_path_buf(), u64::MAX, yt_dlp)
+                .await
+                .unwrap(),
+        );
+        cache.get("xxxxxxxxxxx").await.unwrap_err();
+        let runs = std::fs::read_to_string(tools.path().join("runs")).unwrap();
+        assert_eq!(runs.lines().count(), 3, "gives up after two retries");
+        let (expires, _) = cache.failures.lock().unwrap()["xxxxxxxxxxx"].clone();
+        assert!(expires <= Instant::now() + TRANSIENT_FAILURE_TTL);
     }
 
     #[cfg(unix)]
