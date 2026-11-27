@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # Points the Nix packages at a release's binaries and desktop bundles.
-# Usage: update-nix-package.sh [version]  (default: the latest GitHub release)
+# Usage: update-nix-package.sh [--only-newer] [version]  (default: the latest GitHub release)
+# With --only-newer it leaves packages of the same or a newer version alone, as the release
+# workflow does: an older tag's run finishing last, or run again, mustn't downgrade them.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 package_files=(nix/package.nix nix/desktop-package.nix)
 repo_url="https://github.com/buntec/stereo"
 
+only_newer=false
+if [[ "${1:-}" == --only-newer ]]; then
+  only_newer=true
+  shift
+fi
 version="${1:-}"
 version="${version#v}"
 
@@ -22,6 +29,22 @@ fi
 if [[ -z "$version" ]]; then
   echo "error: could not determine the latest GitHub release" >&2
   exit 1
+fi
+
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "error: not a release version: $version" >&2
+  exit 1
+fi
+
+if $only_newer; then
+  for package_file in "${package_files[@]}"; do
+    current="$(sed -n 's/^  version = "\(.*\)";/\1/p' "$package_file")"
+    newest="$(printf '%s\n%s\n' "$current" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)"
+    if [[ "$current" == "$version" || "$newest" != "$version" ]]; then
+      echo "$package_file is at $current already, not older than $version: leaving it"
+      exit 0
+    fi
+  done
 fi
 
 # In the order of the packages' `platforms`.

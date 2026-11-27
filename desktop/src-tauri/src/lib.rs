@@ -67,11 +67,13 @@ struct Backend {
 #[derive(Default)]
 struct TokenPrompt(Mutex<Option<(u16, Url, u32)>>);
 
-/// The data directory the bundled backend uses, as `Settings::home_dir` finds it.
+/// The data directory the bundled backend uses: `STEREO_HOME`, else on macOS the launchd
+/// service's, else the default, as `Settings::home_dir` finds it.
 fn data_dir() -> PathBuf {
     let home = std::env::var_os("STEREO_HOME")
         .filter(|home| !home.is_empty())
         .map(PathBuf::from)
+        .or_else(launchd_home)
         .unwrap_or_else(|| {
             let base = ["HOME", "USERPROFILE"]
                 .into_iter()
@@ -351,23 +353,49 @@ fn launchd_token() -> Option<String> {
     launchd_plist_value("EnvironmentVariables.STEREO_WS_TOKEN", "raw")
 }
 
-/// The launchd service's port, from the `--port` its plist runs it with.
+/// A setting of the launchd service: its `name` argument, as `stereo install` passes it, or its
+/// `env` variable, as the Home Manager module (`nix/home-manager.nix`) sets it, whose
+/// `ProgramArguments` Home Manager wraps in a script.
 #[cfg(target_os = "macos")]
-fn launchd_port() -> Option<u16> {
-    let args = launchd_plist_value("ProgramArguments", "json")?;
-    port_argument(&serde_json::from_str::<Vec<String>>(&args).ok()?)
+fn launchd_setting(name: &str, env: &str) -> Option<String> {
+    launchd_plist_value("ProgramArguments", "json")
+        .and_then(|args| serde_json::from_str::<Vec<String>>(&args).ok())
+        .and_then(|args| argument(&args, name))
+        .or_else(|| launchd_plist_value(&format!("EnvironmentVariables.{env}"), "raw"))
 }
 
-/// The port in a `stereo` command line's `--port N` or `--port=N`.
+/// The launchd service's port.
+#[cfg(target_os = "macos")]
+fn launchd_port() -> Option<u16> {
+    launchd_setting("--port", "STEREO_PORT")?.parse().ok()
+}
+
+/// The launchd service's data directory, which the bundled backend then uses too.
+#[cfg(target_os = "macos")]
+fn launchd_home() -> Option<PathBuf> {
+    launchd_setting("--home", "STEREO_HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launchd_home() -> Option<PathBuf> {
+    None
+}
+
+/// The value of a `stereo` command line's `name` option, as in `--port N` or `--port=N`.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn port_argument(args: &[String]) -> Option<u16> {
+fn argument(args: &[String], name: &str) -> Option<String> {
     let mut args = args.iter();
     while let Some(arg) = args.next() {
-        if arg == "--port" {
-            return args.next()?.parse().ok();
+        if arg == name {
+            return args.next().cloned();
         }
-        if let Some(port) = arg.strip_prefix("--port=") {
-            return port.parse().ok();
+        if let Some(value) = arg
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix('='))
+        {
+            return Some(value.to_string());
         }
     }
     None
@@ -582,11 +610,12 @@ fn login_path() -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Starts the bundled backend on `port`. Its stderr's last lines are kept in `stderr` and it
+/// Starts the bundled backend on `port` with the data directory `dir`. Its stderr's last lines are kept in `stderr` and it
 /// reports its exit to `exited`.
 fn start_backend(
     app: &AppHandle,
     port: u16,
+    dir: &Path,
     stderr: Arc<Mutex<VecDeque<String>>>,
     exited: Arc<Mutex<Option<String>>>,
 ) -> Result<(), String> {
@@ -596,6 +625,8 @@ fn start_backend(
         .sidecar("stereo")
         .map_err(|error| format!("Could not find Stereo's backend: {error}"))?
         .args(["--port", &port.to_string(), "--exit-with-stdin"])
+        // Where the app looked for a running backend, which may be the launchd service's.
+        .args([std::ffi::OsStr::new("--home"), dir.as_os_str()])
         // Also ends the yt-dlp downloads it started when the app quits (`stop_backend`), or when
         // it exits by itself and the event loop below drops its child.
         .set_process_group(true)
@@ -674,7 +705,7 @@ fn connect(app: AppHandle, window: WebviewWindow, start_page: Url) {
 
         let stderr = Arc::new(Mutex::new(VecDeque::new()));
         let exited = Arc::new(Mutex::new(None));
-        if let Err(error) = start_backend(&app, port, stderr.clone(), exited.clone()) {
+        if let Err(error) = start_backend(&app, port, &dir, stderr.clone(), exited.clone()) {
             return show_error(&window, &start_page, &error, "");
         }
         let started = loop {
@@ -900,21 +931,21 @@ mod tests {
     }
 
     #[test]
-    fn finds_the_port_on_a_command_line() {
+    fn finds_an_option_on_a_command_line() {
         let args = |args: &[&str]| args.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let port = |a: &[&str]| argument(&args(a), "--port");
+        assert_eq!(port(&["stereo", "--port", "9000"]).as_deref(), Some("9000"));
         assert_eq!(
-            port_argument(&args(&["stereo", "--port", "9000"])),
-            Some(9000)
+            port(&["stereo", "--port=9001", "-v"]).as_deref(),
+            Some("9001")
         );
+        assert_eq!(port(&["stereo", "--host", "localhost"]), None);
+        assert_eq!(port(&["stereo", "--portal=1"]), None);
+        assert_eq!(port(&["stereo", "--port"]), None);
         assert_eq!(
-            port_argument(&args(&["stereo", "--port=9001", "-v"])),
-            Some(9001)
+            argument(&args(&["stereo", "--home", "/music"]), "--home").as_deref(),
+            Some("/music")
         );
-        assert_eq!(
-            port_argument(&args(&["stereo", "--host", "localhost"])),
-            None
-        );
-        assert_eq!(port_argument(&args(&["stereo", "--port"])), None);
     }
 
     #[test]

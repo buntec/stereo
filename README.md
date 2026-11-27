@@ -34,16 +34,28 @@ The flake packages the release binary (`packages.<system>.default`) and desktop 
 (`.desktop`), and has a Home Manager module that runs Stereo as a launchd agent on macOS
 or a systemd user service on Linux, with nixpkgs' yt-dlp:
 
+Add the flake to your `flake.nix`'s inputs, and its module to your Home Manager
+configuration's modules:
+
 ```nix
 {
   inputs.stereo.url = "github:buntec/stereo";
 
-  # In your Home Manager configuration:
-  imports = [ inputs.stereo.homeManagerModules.default ];
-  programs.stereo = {
-    enable = true;
-    desktop.enable = true; # optional; opens the service's backend
-    service.tailscale = true; # optional
+  outputs = { nixpkgs, home-manager, stereo, ... }: {
+    homeConfigurations.me = home-manager.lib.homeManagerConfiguration {
+      pkgs = nixpkgs.legacyPackages.aarch64-darwin;
+      modules = [
+        stereo.homeManagerModules.default
+        {
+          programs.stereo = {
+            enable = true;
+            desktop.enable = true; # optional; opens the service's backend
+            service.tailscale = true; # optional
+          };
+        }
+        # ...
+      ];
+    };
   };
 }
 ```

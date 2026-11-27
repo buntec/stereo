@@ -234,7 +234,9 @@ web UI. See [desktop/README.md](desktop/README.md) for packaging and launcher be
 
 - **Backend selection.** The launcher checks the process that owns the data directory,
   waiting for it to publish its port if needed. Otherwise it checks port 8005 and the
-  launchd service's port, or uses `STEREO_PORT` for the port lookup when set. It recognizes
+  launchd service's port, or uses `STEREO_PORT` for the port lookup when set. Without
+  `STEREO_HOME`, the data directory on macOS is the launchd service's. Both come from the
+  plist's `--port` and `--home` (`stereo install`) or its environment (Home Manager). It recognizes
   Stereo by `/info`, with the page title as a fallback for older backends. If needed it
   starts the bundled sidecar, preferring the default or configured port when free.
 - **Lifecycle.** A second launch focuses the existing window. The bundled backend's
@@ -268,8 +270,10 @@ bundles (`.dmg`, `.deb`) rather than building from source. The release workflow'
 runs `scripts/update-nix-package.sh` to point them at a new tag and pushes that to `main`.
 `nix/home-manager.nix` (`programs.stereo`, alias `services.stereo`) runs the backend as a
 launchd agent labelled `com.stereo` like `stereo install`, or a systemd user service. Keep its
-options in step with `settings.rs`. Home Manager wraps the agent's `ProgramArguments`, so the
-desktop app finds the service through `stereo.port` rather than the plist's `--port`.
+options in step with `settings.rs`. Home Manager wraps the agent's `ProgramArguments` in a
+script, so the module passes the port and data directory as `STEREO_PORT` and `STEREO_HOME`,
+where the desktop app reads them from the plist. On Linux it wraps the desktop app with them.
+Unit fields use systemd's quoting (`systemdQuote`), not the shell's.
 
 ### Protocol sync
 

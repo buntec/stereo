@@ -11,6 +11,7 @@
   libsoup_3,
   gtk3,
   glib-networking,
+  gst_all_1,
 }:
 
 let
@@ -59,6 +60,13 @@ stdenv.mkDerivation {
     libsoup_3
     gtk3
     glib-networking
+    # WebKitGTK plays audio with GStreamer, whose plugins it leaves to the system. Stereo's audio
+    # is AAC in MP4 (`audio.rs`): qtdemux is in -good, the AAC decoder in -libav. wrapGAppsHook3
+    # puts them on GST_PLUGIN_SYSTEM_PATH_1_0.
+    gst_all_1.gstreamer
+    gst_all_1.gst-plugins-base
+    gst_all_1.gst-plugins-good
+    gst_all_1.gst-libav
   ];
 
   sourceRoot = ".";

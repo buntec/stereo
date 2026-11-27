@@ -35,19 +35,13 @@ let
     exec "$@"
   '';
 
-  # `--port` stays in the arguments: the desktop app reads it from the launchd plist.
+  # The port and data directory go in the environment (`location`) instead.
   programArguments =
     lib.optional (svc.wsTokenFile != null) "${tokenWrapper}"
     ++ [
       (lib.getExe cfg.package)
       "--host"
       svc.host
-      "--port"
-      (toString svc.port)
-    ]
-    ++ lib.optionals (svc.home != null) [
-      "--home"
-      (toString svc.home)
     ]
     ++ lib.optionals (svc.cacheDir != null) [
       "--cache-dir"
@@ -68,6 +62,15 @@ let
     ++ lib.optional svc.tailscale "--tailscale"
     ++ lib.optional (svc.verbosity > 0) "-${lib.concatStrings (lib.replicate svc.verbosity "v")}"
     ++ svc.extraArgs;
+
+  # The service's port and data directory, as the CLI also reads them. The desktop app needs them
+  # to find the service: from its own environment (`desktopPackage`), and on macOS, where apps
+  # opened from the Finder don't get one, from the launchd plist's, since Home Manager wraps the
+  # plist's `ProgramArguments` in a script.
+  location = {
+    STEREO_PORT = toString svc.port;
+  }
+  // lib.optionalAttrs (svc.home != null) { STEREO_HOME = toString svc.home; };
 
   serviceEnvironment = {
     HOME = config.home.homeDirectory;
@@ -90,7 +93,40 @@ let
       ]
     );
   }
+  // location
   // svc.environment;
+
+  # The desktop app with the service's location, when that isn't the default one it looks at.
+  desktopPackage =
+    if !svc.enable || (svc.port == 8005 && svc.home == null) then
+      cfg.desktop.package
+    else
+      pkgs.symlinkJoin {
+        name = "stereo-desktop-${cfg.desktop.package.version or "wrapped"}";
+        paths = [ cfg.desktop.package ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postBuild = ''
+          wrapProgram "$out/bin/stereo-desktop" ${
+            lib.concatStringsSep " " (
+              lib.mapAttrsToList (name: value: "--set-default ${name} ${lib.escapeShellArg value}") location
+            )
+          }
+          entry="$out/share/applications/Stereo.desktop"
+          if [[ -L "$entry" ]]; then
+            target=$(readlink "$entry")
+            rm "$entry"
+            sed "s|^Exec=.*|Exec=$out/bin/stereo-desktop|" "$target" > "$entry"
+          fi
+        '';
+        meta = cfg.desktop.package.meta or { };
+      };
+
+  # systemd's own quoting: double quotes with C escapes, and `%` (specifiers) doubled; `$` too in
+  # command lines, where it would expand a variable.
+  systemdQuote = s: ''"${lib.replaceStrings [ "\\" "\"" "\n" "%" ] [ "\\\\" "\\\"" "\\n" "%%" ] s}"'';
+  systemdExecArgs =
+    args:
+    lib.concatMapStringsSep " " (arg: systemdQuote (lib.replaceStrings [ "$" ] [ "$$" ] arg)) args;
 
   hasToken = svc.wsTokenFile != null || svc.environment ? STEREO_WS_TOKEN;
 in
@@ -275,7 +311,7 @@ in
 
     home.packages =
       lib.optional (cfg.package != null) cfg.package
-      ++ lib.optional (cfg.desktop.enable && cfg.desktop.package != null) cfg.desktop.package;
+      ++ lib.optional (cfg.desktop.enable && cfg.desktop.package != null) desktopPackage;
 
     # A new package or definition changes the unit, which Home Manager then restarts.
     systemd.user.services.stereo = lib.mkIf (svc.enable && isLinux) {
@@ -285,8 +321,8 @@ in
       };
 
       Service = {
-        ExecStart = lib.escapeShellArgs programArguments;
-        Environment = lib.mapAttrsToList (name: value: "${name}=${value}") serviceEnvironment;
+        ExecStart = systemdExecArgs programArguments;
+        Environment = lib.mapAttrsToList (name: value: systemdQuote "${name}=${value}") serviceEnvironment;
         Restart = "on-failure";
         # Leaves time to remove the `tailscale serve` route on shutdown.
         TimeoutStopSec = 30;
