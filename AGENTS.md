@@ -261,6 +261,16 @@ web UI. See [desktop/README.md](desktop/README.md) for packaging and launcher be
   YouTube connects from the webview and searches all supported browsers for a
   login.
 
+### Nix (`flake.nix`, `nix/`)
+
+`nix/package.nix` and `nix/desktop-package.nix` fetch the release's binaries and desktop
+bundles (`.dmg`, `.deb`) rather than building from source. The release workflow's `nix` job
+runs `scripts/update-nix-package.sh` to point them at a new tag and pushes that to `main`.
+`nix/home-manager.nix` (`programs.stereo`, alias `services.stereo`) runs the backend as a
+launchd agent labelled `com.stereo` like `stereo install`, or a systemd user service. Keep its
+options in step with `settings.rs`. Home Manager wraps the agent's `ProgramArguments`, so the
+desktop app finds the service through `stereo.port` rather than the plist's `--port`.
+
 ### Protocol sync
 
 When changing the WS protocol, both sides need updating and must be kept structurally consistent by hand:
