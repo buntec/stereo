@@ -91,6 +91,9 @@ async function openApp(
   const audioRequests: string[] = [];
   /** Requests answered with `hold`, which a test may still answer itself. */
   const heldAudio: Route[] = [];
+  /** Replies to the queue's `get-rows` (the whole view), while held. */
+  let holdQueue = false;
+  const heldQueue: (() => void)[] = [];
   let audio = options.audio ?? "hold";
   if (audio !== "off")
     await page.route("**/audio/**", (route) => {
@@ -132,8 +135,8 @@ async function openApp(
       const message = JSON.parse(raw.toString());
       messages.push(message);
       switch (message.type) {
-        case "get-rows":
-          if (!options.holdRows)
+        case "get-rows": {
+          const reply = () =>
             send({
               type: "rows",
               id: message.id,
@@ -149,7 +152,11 @@ async function openApp(
                   ? 0
                   : tracks.length,
             });
+          if (options.holdRows) break;
+          if (holdQueue && message.endRow === 10000) heldQueue.push(reply);
+          else reply();
           break;
+        }
         case "set-repo":
           send({
             type: "collections",
@@ -310,6 +317,11 @@ async function openApp(
     absent,
     audioRequests,
     heldAudio,
+    /** Holds the replies that set the queue to the collection's view, or sends them. */
+    holdQueue: (hold: boolean) => {
+      holdQueue = hold;
+      if (!hold) heldQueue.splice(0).forEach((reply) => reply());
+    },
     /** Changes how further audio requests are answered (not "off"). */
     setAudio: (mode: "hold" | "ok" | "fail") => {
       audio = mode;
@@ -2204,6 +2216,75 @@ test("an evicted track stays shown as not downloaded when its buffered audio pla
   await expect
     .poll(() => messages.filter((m) => m.type === "download-audio"))
     .toEqual([{ type: "download-audio", yt_id: "audit0" }]);
+});
+
+/** Pauses playback at `seconds` (in steps of five) into the track. */
+async function pauseAt(page: Page, seconds: number) {
+  const button = page.locator(".play-pause-button");
+  const slider = page.getByRole("slider", {
+    name: "Playback position",
+    exact: true,
+  });
+  await expect(slider).toBeEnabled();
+  await button.click();
+  await expect(button).toHaveAccessibleName("Play");
+  await slider.focus();
+  await page.keyboard.press("Home");
+  for (let i = 0; i < seconds / 5; i++) await page.keyboard.press("ArrowRight");
+  await expect
+    .poll(async () => Number(await slider.getAttribute("aria-valuenow")))
+    .toBeCloseTo(seconds, 0);
+  return slider;
+}
+
+test("a paused track's row play button resumes it where it was", async ({
+  page,
+}) => {
+  await openApp(page, { audio: "ok", audioSeconds: 240 });
+  await startPlayback(page);
+  const button = page.locator(".play-pause-button");
+  await expect(button).toHaveAccessibleName("Pause");
+  const slider = await pauseAt(page, 30);
+  await page.locator('.ag-row[row-index="0"] .thumbnail-play-button').click();
+  await expect(button).toHaveAccessibleName("Pause");
+  // Playing on from there, not from the start.
+  await expect
+    .poll(async () => Number(await slider.getAttribute("aria-valuenow")))
+    .toBeGreaterThan(31);
+});
+
+test("a search result resumed from the collection plays on in the collection", async ({
+  page,
+}) => {
+  const { audioRequests, holdQueue } = await openApp(page, {
+    audio: "ok",
+    audioSeconds: 15,
+    searchResults: [
+      { title: "Result A", artists: ["Artist A"], yt_id: "audit0", bp_id: 1 },
+      searchResults[1],
+    ],
+  });
+  await page.getByRole("textbox", { name: /Search query/ }).fill("results");
+  await page.keyboard.press("Enter");
+  await page
+    .getByRole("button", { name: "Play Result A", exact: true })
+    .click();
+  const button = page.locator(".play-pause-button");
+  await expect(button).toHaveAccessibleName("Pause");
+  await pauseAt(page, 10);
+  await page.getByRole("button", { name: "Exit search", exact: true }).click();
+  // The collection's queue arrives only after the track has ended.
+  holdQueue(true);
+  // Played next, rather than prefetched (with HEAD) while Result A played.
+  const before = audioRequests.length;
+  const played = (id: string) =>
+    audioRequests.slice(before).some((r) => r.startsWith(`GET /audio/${id}?`));
+  await page.locator('.ag-row[row-index="0"] .thumbnail-play-button').click();
+  await page.waitForTimeout(6500);
+  expect(played("bVideo00002")).toBe(false);
+  holdQueue(false);
+  await expect.poll(() => played("audit1"), { timeout: 10_000 }).toBe(true);
+  expect(played("bVideo00002")).toBe(false);
 });
 
 test("the background pulses with the playing track's beats", async ({
