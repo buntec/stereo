@@ -148,7 +148,7 @@ import { useTrackSelection } from "./TrackSelection.ts";
 import PlaylistMenu from "./PlaylistMenu.tsx";
 import SavePlaylistDialog from "./SavePlaylistDialog.tsx";
 import PlaylistsDialog from "./PlaylistsDialog.tsx";
-import { sameView } from "./playlists.ts";
+import { hasExportError, sameView } from "./playlists.ts";
 import { currentWsToken, forgetWsToken, rememberWsToken } from "./wsToken.ts";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
@@ -952,8 +952,22 @@ const reducer = (state: State, action: Action): State => {
     case "clear-youtube-fixup-result":
       return { ...state, youtube_fixup_tracks: undefined };
 
-    case "playlists":
-      return { ...state, dynamic_playlists: action.playlists };
+    case "playlists": {
+      // Forget the sync status of exports that are gone, so that one turned
+      // back on doesn't show the old one's failure.
+      const live = Object.entries(state.playlist_sync);
+      const kept = live.filter(([, s]) =>
+        action.playlists.some((p) => p.id === s.playlist_id && p[s.service]),
+      );
+      return {
+        ...state,
+        dynamic_playlists: action.playlists,
+        playlist_sync:
+          kept.length === live.length
+            ? state.playlist_sync
+            : Object.fromEntries(kept),
+      };
+    }
 
     case "clear-playlists":
       return { ...state, dynamic_playlists: undefined, playlist_sync: {} };
@@ -2532,15 +2546,8 @@ function App() {
   );
   const isPlaylistModified =
     !!activePlaylist && !sameView(activePlaylist, currentView);
-  const hasPlaylistSyncErrors = playlists.some(
-    (p) =>
-      !!p.spotify_status?.error ||
-      !!p.youtube_status?.error ||
-      (["spotify", "youtube"] as const).some(
-        (service) =>
-          state.playlist_sync[playlistSyncKey(p.id, service)]?.state ===
-          "failed",
-      ),
+  const hasPlaylistSyncErrors = playlists.some((p) =>
+    hasExportError(p, state.playlist_sync),
   );
 
   const applyPlaylist = useCallback(

@@ -16,7 +16,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { LinkBreak2Icon, TrashIcon, UpdateIcon } from "@radix-ui/react-icons";
 import { collectionLabel } from "./CollectionSelector.tsx";
-import { describeView } from "./playlists.ts";
+import { describeView, exportError, hasExportError } from "./playlists.ts";
 import { timeAgo } from "./Utils.tsx";
 import {
   playlistSyncKey,
@@ -57,8 +57,7 @@ function ServiceSection({
   const target = playlist[service];
   const status = playlist[`${service}_status`];
   const isRunning = live?.state === "running";
-  const error =
-    live?.state === "failed" ? live.error : isRunning ? null : status?.error;
+  const error = exportError(playlist, service, live);
 
   return (
     <VStack gap={2}>
@@ -316,11 +315,7 @@ function PlaylistsDialog({
                 <StackItem>
                   <List density="compact">
                     {playlists.map((p) => {
-                      const failed = (["spotify", "youtube"] as const).some(
-                        (s) =>
-                          syncStatus[playlistSyncKey(p.id, s)]?.state ===
-                            "failed" || !!p[`${s}_status`]?.error,
-                      );
+                      const failed = hasExportError(p, syncStatus);
                       return (
                         <ListItem
                           key={p.id}

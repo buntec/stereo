@@ -48,6 +48,12 @@ function PlaylistMenu({
   const label = active
     ? `${active.name}${isModified ? " (modified)" : ""}`
     : "Playlists";
+  const viewTooltip = active
+    ? `Playlist ${active.name}${isModified ? ", with changed filters or sorting" : ""}`
+    : "Saved views of your collections, which can be kept in sync with Spotify and YouTube";
+  const tooltip = hasSyncErrors
+    ? `${active ? `${viewTooltip}. ` : ""}A playlist failed to sync: see Manage playlists.`
+    : viewTooltip;
   return (
     <DropdownMenu
       menuWidth={300}
@@ -55,9 +61,7 @@ function PlaylistMenu({
         label,
         variant: "ghost",
         style: { maxWidth: "100%" },
-        tooltip: active
-          ? `Playlist ${active.name}${isModified ? ", with changed filters or sorting" : ""}`
-          : "Saved views of your collections, which can be kept in sync with Spotify and YouTube",
+        tooltip,
         icon: hasSyncErrors ? (
           <StatusDot variant="error" label="A playlist failed to sync" />
         ) : (
@@ -111,6 +115,13 @@ function PlaylistMenu({
       <DropdownMenuItem
         icon={<GearIcon />}
         label="Manage playlists…"
+        description={hasSyncErrors ? "A playlist failed to sync" : undefined}
+        endContent={
+          // The description carries the error for screen readers.
+          hasSyncErrors && (
+            <StatusDot variant="error" label="Sync failed" aria-hidden />
+          )
+        }
         isDisabled={playlists.length === 0}
         onClick={onManage}
       />
