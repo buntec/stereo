@@ -2195,20 +2195,7 @@ pub(crate) const MIX_KEYWORDS: &[&str] = &[
 /// also recognized.
 fn extract_mix_tag(title: &str) -> Option<String> {
     let lower = title.to_lowercase();
-    let mut result = None;
-    for (open, close) in [('(', ')'), ('[', ']')] {
-        let mut rest = lower.as_str();
-        while let Some(start) = rest.find(open) {
-            let Some(end) = rest[start..].find(close) else {
-                break;
-            };
-            let inner = rest[start + 1..start + end].trim();
-            if MIX_KEYWORDS.iter().any(|k| inner.contains(k)) {
-                result = Some(inner.to_string());
-            }
-            rest = &rest[start + end + 1..];
-        }
-    }
+    let mut result = bracketed_mix_tag(&lower);
     if result.is_none() {
         // A sizeable number of label uploads use an unbracketed suffix, e.g.
         // "Artist - Track - Extended Mix". Only inspect complete separator-delimited
@@ -2224,6 +2211,25 @@ fn extract_mix_tag(title: &str) -> Option<String> {
                 result = Some(segment.to_string());
                 break;
             }
+        }
+    }
+    result
+}
+
+/// The last bracketed group of a lowercase title that names a mix, as in "track (someone remix)".
+fn bracketed_mix_tag(lower: &str) -> Option<String> {
+    let mut result = None;
+    for (open, close) in [('(', ')'), ('[', ']')] {
+        let mut rest = lower;
+        while let Some(start) = rest.find(open) {
+            let Some(end) = rest[start..].find(close) else {
+                break;
+            };
+            let inner = rest[start + 1..start + end].trim();
+            if MIX_KEYWORDS.iter().any(|k| inner.contains(k)) {
+                result = Some(inner.to_string());
+            }
+            rest = &rest[start + end + 1..];
         }
     }
     result
@@ -2294,6 +2300,27 @@ impl RawTrack {
         }
     }
 
+    /// The expected mix when it is set apart from the track's name: a field of its own, a
+    /// bracketed tag, or Spotify's " - Someone Remix" suffix (its names never start with the
+    /// artist). Otherwise, as in SoundCloud's "Good Time Extended Mix" or "Artist - Good Time
+    /// Extended Mix", the tag may run into the name, whose words would pass for a remixer's.
+    fn isolated_mix(&self) -> Option<String> {
+        match self {
+            RawTrack::Sc(t) => bracketed_mix_tag(&t.track_name.to_lowercase()),
+            RawTrack::Sp(t) => {
+                let lower = t.track_name.to_lowercase();
+                bracketed_mix_tag(&lower).or_else(|| {
+                    let segments = title_segments(&lower);
+                    let segment = segments.last().filter(|_| segments.len() > 1)?.trim();
+                    (extract_mix_tag(segment).as_deref() == Some(segment))
+                        .then(|| segment.to_string())
+                })
+            }
+            RawTrack::Sz(t) => bracketed_mix_tag(&t.title.to_lowercase()),
+            _ => self.expected_mix(),
+        }
+    }
+
     fn source(&self) -> TrackSource {
         match self {
             RawTrack::Bp(_) => TrackSource::Beatport,
@@ -2356,7 +2383,8 @@ struct MatchScore {
     version: VersionMatch,
     candidate_mix: Option<String>,
     specific_version_expected: bool,
-    strong_version_match: bool,
+    /// The matched version credits a remixer, which stands in for the artist.
+    credited_version_match: bool,
     disqualified: bool,
 }
 
@@ -2367,7 +2395,7 @@ impl MatchScore {
             && (!self.specific_version_expected || self.version == VersionMatch::Match)
             && self.title >= MIN_TITLE_SCORE
             && (self.artist >= MIN_ARTIST_SCORE
-                || (self.strong_version_match && self.title >= 0.80))
+                || (self.credited_version_match && self.title >= 0.80))
             && self.total >= MIN_MATCH_SCORE
     }
 }
@@ -2497,6 +2525,14 @@ fn match_score(raw: &RawTrack, candidate: &YTVideo) -> MatchScore {
     );
 
     let strong_version_match = expected_mix.is_some() && version == VersionMatch::Match;
+    // A generic version such as "Extended Mix" says nothing about who made the upload.
+    let credited_version_match = strong_version_match
+        && raw.isolated_mix().is_some_and(|m| {
+            // A year, as in "2024 Remix", names no one either.
+            mix_credits(&m)
+                .iter()
+                .any(|name| name.chars().any(char::is_alphabetic))
+        });
     let version_score = match version {
         VersionMatch::Match if strong_version_match => 0.25,
         VersionMatch::Match => 0.15,
@@ -2529,7 +2565,7 @@ fn match_score(raw: &RawTrack, candidate: &YTVideo) -> MatchScore {
         version,
         candidate_mix,
         specific_version_expected,
-        strong_version_match,
+        credited_version_match,
         disqualified,
     }
 }
@@ -2833,6 +2869,14 @@ const MIX_DESCRIPTORS: &[&str] = &[
     "full",
     "12",
     "12inch",
+    "album",
+    "single",
+    "clean",
+    "explicit",
+    "dirty",
+    "acoustic",
+    "live",
+    "mixed",
 ];
 
 /// The remixer names credited by a mix tag, e.g. "Luch & Nils Hoffmann Remix" ->
@@ -3687,7 +3731,7 @@ mod top100_tests {
 #[cfg(test)]
 mod remix_match_tests {
     use super::*;
-    use crate::models::BPTrack;
+    use crate::models::{BPTrack, SCTrack};
 
     fn bp_track(track_name: &str, mix_name: &str) -> BPTrack {
         BPTrack {
@@ -4068,6 +4112,80 @@ mod remix_match_tests {
         let raw = RawTrack::Bp(bp_track("Just Like Magic", "Original Mix"));
         let wrong = video_from("Wrong Artist - Just Like Magic", "Wrong Artist");
         assert!(choose_best_match(&raw, vec![wrong]).is_none());
+    }
+
+    #[test]
+    fn rejects_generic_version_by_another_artist() {
+        // Naarly's "BORDERLINE (Extended Mix)" and "good time.. (Extended Mix)" matched these.
+        let raw = RawTrack::Bp(bp_track("BORDERLINE", "Extended Mix"));
+        let wrong = video_from("Borderline (Extended Mix)", "Brooke Lee - Topic");
+        assert!(choose_best_match(&raw, vec![wrong]).is_none());
+        let raw = RawTrack::Bp(bp_track("good time..", "Extended Mix"));
+        let wrong = video_from("Good Time (Extended Mix)", "Release - Topic");
+        assert!(choose_best_match(&raw, vec![wrong]).is_none());
+    }
+
+    #[test]
+    fn rejects_generic_version_labels_by_another_artist() {
+        for mix in [
+            "Album Version",
+            "Single Version",
+            "Clean Version",
+            "Mixed",
+            "2024 Remix",
+        ] {
+            let raw = RawTrack::Bp(bp_track("Borderline", mix));
+            let wrong = video_from(&format!("Borderline ({mix})"), "Brooke Lee - Topic");
+            assert!(choose_best_match(&raw, vec![wrong]).is_none(), "{mix}");
+        }
+    }
+
+    fn sc_track(track_name: &str) -> RawTrack {
+        RawTrack::Sc(SCTrack {
+            artists: vec!["Naarly".to_string()],
+            label: None,
+            release_date: chrono::NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+            track_name: track_name.to_string(),
+            genre: vec![],
+        })
+    }
+
+    #[test]
+    fn unbracketed_mix_in_a_title_does_not_credit_the_title() {
+        for title in ["Good Time Extended Mix", "Good Time (Extended Mix)"] {
+            let raw = sc_track(title);
+            let wrong = video_from(title, "Release - Topic");
+            assert!(choose_best_match(&raw, vec![wrong]).is_none(), "{title}");
+            let right = video_from(title, "Naarly - Topic");
+            assert!(choose_best_match(&raw, vec![right]).is_some(), "{title}");
+        }
+    }
+
+    fn sp_track(track_name: &str) -> RawTrack {
+        RawTrack::Sp(crate::spotify::SpTrack {
+            artists: vec!["Aquarius Heaven".to_string()],
+            track_name: track_name.to_string(),
+            album: None,
+            release_date: chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            uri: "spotify:track:id".to_string(),
+        })
+    }
+
+    #[test]
+    fn spotify_version_suffix_credits_its_remixer() {
+        let raw = sp_track("Just Like Magic - Someone Remix");
+        let label_upload = video_from("Just Like Magic (Someone Remix)", "Some Label");
+        assert!(choose_best_match(&raw, vec![label_upload]).is_some());
+        let raw = sp_track("Just Like Magic - Extended Mix");
+        let wrong = video_from("Just Like Magic (Extended Mix)", "Brooke Lee - Topic");
+        assert!(choose_best_match(&raw, vec![wrong]).is_none());
+    }
+
+    #[test]
+    fn accepts_remix_credit_without_the_artist() {
+        let raw = RawTrack::Bp(bp_track("Just Like Magic", "Someone Remix"));
+        let label_upload = video_from("Just Like Magic (Someone Remix)", "Some Label");
+        assert!(choose_best_match(&raw, vec![label_upload]).is_some());
     }
 
     #[test]
