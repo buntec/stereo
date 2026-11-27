@@ -2300,13 +2300,22 @@ impl RawTrack {
         }
     }
 
-    /// The expected mix when it is set apart from the track's name: a field of its own or a
-    /// bracketed tag. An unbracketed one, as in SoundCloud's "Good Time Extended Mix", may run
-    /// into the name, whose words would then pass for a remixer's.
+    /// The expected mix when it is set apart from the track's name: a field of its own, a
+    /// bracketed tag, or Spotify's " - Someone Remix" suffix (its names never start with the
+    /// artist). Otherwise, as in SoundCloud's "Good Time Extended Mix" or "Artist - Good Time
+    /// Extended Mix", the tag may run into the name, whose words would pass for a remixer's.
     fn isolated_mix(&self) -> Option<String> {
         match self {
             RawTrack::Sc(t) => bracketed_mix_tag(&t.track_name.to_lowercase()),
-            RawTrack::Sp(t) => bracketed_mix_tag(&t.track_name.to_lowercase()),
+            RawTrack::Sp(t) => {
+                let lower = t.track_name.to_lowercase();
+                bracketed_mix_tag(&lower).or_else(|| {
+                    let segments = title_segments(&lower);
+                    let segment = segments.last().filter(|_| segments.len() > 1)?.trim();
+                    (extract_mix_tag(segment).as_deref() == Some(segment))
+                        .then(|| segment.to_string())
+                })
+            }
             RawTrack::Sz(t) => bracketed_mix_tag(&t.title.to_lowercase()),
             _ => self.expected_mix(),
         }
@@ -2518,9 +2527,12 @@ fn match_score(raw: &RawTrack, candidate: &YTVideo) -> MatchScore {
     let strong_version_match = expected_mix.is_some() && version == VersionMatch::Match;
     // A generic version such as "Extended Mix" says nothing about who made the upload.
     let credited_version_match = strong_version_match
-        && raw
-            .isolated_mix()
-            .is_some_and(|m| !mix_credits(&m).is_empty());
+        && raw.isolated_mix().is_some_and(|m| {
+            // A year, as in "2024 Remix", names no one either.
+            mix_credits(&m)
+                .iter()
+                .any(|name| name.chars().any(char::is_alphabetic))
+        });
     let version_score = match version {
         VersionMatch::Match if strong_version_match => 0.25,
         VersionMatch::Match => 0.15,
@@ -2864,8 +2876,7 @@ const MIX_DESCRIPTORS: &[&str] = &[
     "dirty",
     "acoustic",
     "live",
-    "mono",
-    "stereo",
+    "mixed",
 ];
 
 /// The remixer names credited by a mix tag, e.g. "Luch & Nils Hoffmann Remix" ->
@@ -4116,7 +4127,13 @@ mod remix_match_tests {
 
     #[test]
     fn rejects_generic_version_labels_by_another_artist() {
-        for mix in ["Album Version", "Single Version", "Clean Version"] {
+        for mix in [
+            "Album Version",
+            "Single Version",
+            "Clean Version",
+            "Mixed",
+            "2024 Remix",
+        ] {
             let raw = RawTrack::Bp(bp_track("Borderline", mix));
             let wrong = video_from(&format!("Borderline ({mix})"), "Brooke Lee - Topic");
             assert!(choose_best_match(&raw, vec![wrong]).is_none(), "{mix}");
@@ -4142,6 +4159,26 @@ mod remix_match_tests {
             let right = video_from(title, "Naarly - Topic");
             assert!(choose_best_match(&raw, vec![right]).is_some(), "{title}");
         }
+    }
+
+    fn sp_track(track_name: &str) -> RawTrack {
+        RawTrack::Sp(crate::spotify::SpTrack {
+            artists: vec!["Aquarius Heaven".to_string()],
+            track_name: track_name.to_string(),
+            album: None,
+            release_date: chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            uri: "spotify:track:id".to_string(),
+        })
+    }
+
+    #[test]
+    fn spotify_version_suffix_credits_its_remixer() {
+        let raw = sp_track("Just Like Magic - Someone Remix");
+        let label_upload = video_from("Just Like Magic (Someone Remix)", "Some Label");
+        assert!(choose_best_match(&raw, vec![label_upload]).is_some());
+        let raw = sp_track("Just Like Magic - Extended Mix");
+        let wrong = video_from("Just Like Magic (Extended Mix)", "Brooke Lee - Topic");
+        assert!(choose_best_match(&raw, vec![wrong]).is_none());
     }
 
     #[test]
