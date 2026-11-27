@@ -1389,7 +1389,9 @@ function App() {
             done("The backend didn't answer.");
           }
         },
-        30_000,
+        // Past the backend's 30 s deadline for the GitHub request, so a stalled
+        // GitHub is reported as such rather than as a silent backend.
+        45_000,
       ),
     [requestReply],
   );
