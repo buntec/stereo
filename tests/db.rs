@@ -890,3 +890,31 @@ async fn test_import_collection_refuses_wal_mode() {
     assert!(err.to_string().contains("WAL mode"), "{err}");
     assert!(!dest.exists());
 }
+
+#[tokio::test]
+async fn test_track_identities_and_tracks_by_ids() {
+    let (pool, _dir) = setup().await;
+    let mut a = make_track("a");
+    a.mix_name = Some("Extended Mix".to_string());
+    a.bp_id = Some(7);
+    db::insert_track(&pool, &a, true).await.unwrap();
+    db::insert_track(&pool, &make_track("b"), true)
+        .await
+        .unwrap();
+
+    let mut ids = db::get_track_identities(&pool).await.unwrap();
+    ids.sort_by(|x, y| x.yt_id.cmp(&y.yt_id));
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0].title, "Track a");
+    assert_eq!(ids[0].mix_name.as_deref(), Some("Extended Mix"));
+    assert_eq!(ids[0].artists, vec!["Artist A"]);
+    assert_eq!(ids[0].bp_id, Some(7));
+    assert_eq!(ids[1].sp_id.as_deref(), Some("4uLU6hMCjMI75M1A2tKUQC"));
+
+    let tracks = db::get_tracks_by_ids(&pool, &["b".to_string(), "missing".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(tracks.len(), 1);
+    assert_eq!(tracks[0].yt_id, "b");
+    assert!(db::get_tracks_by_ids(&pool, &[]).await.unwrap().is_empty());
+}

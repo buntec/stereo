@@ -41,6 +41,7 @@ import {
   type SelectionColumnDef,
   type SelectionChangedEvent,
   type CellKeyDownEvent,
+  type SuppressKeyboardEventParams,
   type FullWidthCellKeyDownEvent,
   themeQuartz,
   colorSchemeDark,
@@ -77,6 +78,7 @@ import { EditTrackDialog } from "./EditDialog.tsx";
 import { GridScrollButtons } from "./GridScrollButtons.tsx";
 import { scrollGridToTop, useGridScrollState } from "./useGridScrollState.ts";
 import { AudioCacheButton } from "./AudioCacheButton.tsx";
+import SimilarTracksWarning from "./SimilarTracksWarning.tsx";
 import logger from "./logger.tsx";
 import { rowProgressStyle } from "./rowProgress.ts";
 import ShazamIcon from "./ShazamIcon.tsx";
@@ -112,11 +114,49 @@ const flexWidth = (flex: number): ColDef => ({
   minWidth: 120,
 });
 
+// The grid moves Tab from cell to cell, skipping the buttons within one. In the controls
+// column, Tab and Shift+Tab step through the cell's buttons first, from the cell itself to the
+// first, and leave the cell after the last (or before the first), as AG Grid suggests for
+// custom cell components.
+function tabWithinCell({ event }: SuppressKeyboardEventParams): boolean {
+  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey)
+    return false;
+  const target = event.target as HTMLElement;
+  const cell = target.closest(".ag-cell");
+  if (!cell) return false;
+  // A dialog rendered within the cell (the row's edit dialog) is left to the browser and its
+  // focus trap: the grid would otherwise move Tab out of it to the next cell.
+  const dialog = target.closest("dialog");
+  if (dialog && cell.contains(dialog)) return true;
+  const buttons = Array.from(
+    cell.querySelectorAll<HTMLElement>("button, a[href]"),
+  ).filter(
+    (el) =>
+      el.tabIndex >= 0 &&
+      el.getClientRects().length > 0 &&
+      !el.closest("dialog"),
+  );
+  const at = buttons.indexOf(target);
+  const next = event.shiftKey ? (at < 0 ? -1 : at - 1) : at + 1;
+  if (next < 0 || next >= buttons.length) return false;
+  if (event.type === "keydown") {
+    event.preventDefault();
+    buttons[next].focus();
+  }
+  return true;
+}
+
+const controlsColumn = (width: number): ColDef => ({
+  ...fixedWidth(width),
+  suppressKeyboardEvent: tabWithinCell,
+});
+
 // Width of the controls column (thumbnail play button and two icon buttons), which is
 // fixed by its renderer's content: 104px plus the cell's horizontal padding.
 const CONTROLS_WIDTH = 136;
-// The search results' controls have a third icon button (28px plus a 4px gap).
-const SEARCH_CONTROLS_WIDTH = CONTROLS_WIDTH + 32;
+// The search results' controls have a third icon button, and room for a fourth (the
+// similar-tracks warning) on any row, each 28px plus a 4px gap.
+const SEARCH_CONTROLS_WIDTH = CONTROLS_WIDTH + 2 * 32;
 
 // Narrow screens: App.css halves the cells' horizontal padding there, so the fixed
 // columns shrink by as much, and the free-text columns may get narrower before the grid
@@ -430,6 +470,10 @@ const SearchPlayControlRenderer: React.FC<
   }, [data, context]);
 
   const exists = !!data && context.inCollection.current.has(data.yt_id);
+  const similar =
+    data?.result_id !== undefined
+      ? context.similar.current.get(data.result_id)
+      : undefined;
 
   const handleAdd = useCallback(() => {
     if (data) {
@@ -501,6 +545,8 @@ const SearchPlayControlRenderer: React.FC<
           icon={<PlusIcon />}
         />
       )}
+      {/* After Add, so the add buttons line up across rows. */}
+      {similar && <SimilarTracksWarning similar={similar} />}
     </HStack>
   );
 };
@@ -532,6 +578,8 @@ interface SearchResultsGridProps {
   dispatch: Dispatch<Action>;
   tracks?: ITrack[];
   lastCollectionUpdate?: number;
+  // The open collection's path, whose tracks the results are compared with.
+  collection?: string;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
   addTrack: (track: ITrack) => void;
@@ -547,6 +595,8 @@ type SearchResultsGridContext = {
   // Result ids already in the collection. A stable ref, so updating it doesn't replace the
   // grid context; cells are refreshed explicitly instead.
   inCollection: RefObject<Set<string>>;
+  // Like `inCollection`: collection tracks that look like the same recording, by `result_id`.
+  similar: RefObject<Map<number, ITrack[]>>;
   dispatch: Dispatch<Action>;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
@@ -566,6 +616,7 @@ export const SearchResultsGrid = ({
   dispatch,
   tracks,
   lastCollectionUpdate,
+  collection,
   onArtistClick,
   onLabelClick,
   addTrack,
@@ -594,7 +645,7 @@ export const SearchResultsGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: SearchPlayControlRenderer,
-      ...fixedWidth(SEARCH_CONTROLS_WIDTH),
+      ...controlsColumn(SEARCH_CONTROLS_WIDTH),
     },
     {
       field: "title",
@@ -740,6 +791,8 @@ export const SearchResultsGrid = ({
   // One batched lookup for all results instead of one request per row. Results stream in one
   // at a time, so the lookup is debounced.
   const inCollection = useRef<Set<string>>(new Set());
+  // Collection tracks like each result, by `result_id`, for results that have any.
+  const similar = useRef<Map<number, ITrack[]>>(new Map());
   const resultIds = useMemo(() => (tracks ?? []).map((t) => t.yt_id), [tracks]);
   useEffect(() => {
     if (resultIds.length === 0) return;
@@ -763,6 +816,55 @@ export const SearchResultsGrid = ({
     };
   }, [resultIds, lastCollectionUpdate, requestReply, gridRef]);
 
+  // Kept apart from the lookup above so that its warnings belong to `collection`: they're
+  // cleared as soon as another collection (or none) is open, rather than when a reply comes.
+  const similarCollection = useRef(collection);
+  useEffect(() => {
+    const refresh = () =>
+      gridRef.current?.api?.refreshCells({ columns: ["yt_id"], force: true });
+    if (similarCollection.current !== collection) {
+      similarCollection.current = collection;
+      similar.current = new Map();
+      refresh();
+    }
+    if (!collection || !tracks?.length) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const queried = tracks;
+      requestReply(
+        {
+          type: "find-similar-tracks",
+          collection,
+          tracks: queried.map(
+            ({ yt_id, title, mix_name, artists, bp_id, sp_id }) => ({
+              yt_id,
+              title,
+              mix_name,
+              artists,
+              bp_id,
+              sp_id,
+            }),
+          ),
+        },
+        (msg) => {
+          if (cancelled || !("similar" in msg)) return;
+          const found = new Map<number, ITrack[]>();
+          queried.forEach((t, i) => {
+            const tracks = msg.similar[i];
+            if (t.result_id !== undefined && tracks?.length)
+              found.set(t.result_id, tracks);
+          });
+          similar.current = found;
+          refresh();
+        },
+      );
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [tracks, collection, lastCollectionUpdate, requestReply, gridRef]);
+
   const [changingVideo, setChangingVideo] = useState<ITrack | null>(null);
   const changeVideo = useCallback(
     (track: ITrack, yt_id: string) => {
@@ -781,6 +883,7 @@ export const SearchResultsGrid = ({
       requestReply,
       playId,
       inCollection,
+      similar,
       dispatch,
       onArtistClick,
       onLabelClick,
@@ -1010,7 +1113,7 @@ export const TracksGrid = ({
       field: "yt_id",
       headerName: "",
       cellRenderer: PlayControlRenderer,
-      ...fixedWidth(CONTROLS_WIDTH),
+      ...controlsColumn(CONTROLS_WIDTH),
     },
     {
       field: "title",
