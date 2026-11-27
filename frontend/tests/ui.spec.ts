@@ -3588,6 +3588,110 @@ test("the version shows whether a newer release is out", async ({ page }) => {
   ).toContainText("GitHub replied 403 Forbidden");
 });
 
+test("the version card checks for updates on request", async ({ page }) => {
+  const { messages, send } = await openApp(page);
+  send({
+    type: "update-check",
+    status: {
+      state: "up-to-date",
+      latest: { ...updateRelease, version: "0.1.0" },
+      checked_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    },
+  });
+  await page.getByRole("button", { name: "Stereo is up to date" }).click();
+  const card = page.getByRole("dialog", { name: "Stereo is up to date" });
+  const checkNow = card.getByRole("button", { name: "Check now" });
+  await checkNow.click();
+  const requests = () =>
+    messages.filter((message) => message.type === "check-for-updates");
+  await expect.poll(() => requests().length).toBe(1);
+  await expect(checkNow).toHaveAttribute("aria-busy", "true");
+
+  send({
+    type: "error-reply",
+    id: requests()[0].id,
+    message: "update checks are off",
+  });
+  await expect(card).toContainText("Couldn't check: update checks are off");
+  await expect(checkNow).not.toHaveAttribute("aria-busy", "true");
+  // Focus stays on the button, so the outcome is announced.
+  await expect(card.locator("div[role=status]")).toHaveText(
+    "Couldn't check: update checks are off",
+  );
+
+  await checkNow.click();
+  await expect.poll(() => requests().length).toBe(2);
+  send({
+    type: "update-check-reply",
+    id: requests()[1].id,
+    status: {
+      state: "available",
+      latest: updateRelease,
+      checked_at: new Date().toISOString(),
+    },
+  });
+  await expect(
+    page.getByRole("button", { name: "vtest, Stereo v0.2.0 is available" }),
+  ).toBeVisible();
+  const updated = page.getByRole("dialog", {
+    name: "Stereo v0.2.0 is available",
+  });
+  await expect(updated.locator("div[role=status]")).toHaveText(
+    "Stereo v0.2.0 is available",
+  );
+  await expect(updated).not.toContainText("Couldn't check");
+});
+
+test("a manual update check outlasts a stalled GitHub request", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const { messages, send } = await openApp(page);
+  const status = (checked_at: string) => ({
+    state: "up-to-date" as const,
+    latest: { ...updateRelease, version: "0.1.0" },
+    checked_at,
+  });
+  send({ type: "update-check", status: status(new Date().toISOString()) });
+  await page.getByRole("button", { name: "Stereo is up to date" }).click();
+  const card = page.getByRole("dialog", { name: "Stereo is up to date" });
+  const checkNow = card.getByRole("button", { name: "Check now" });
+  const requests = () =>
+    messages.filter((message) => message.type === "check-for-updates");
+
+  // The backend gives up on GitHub after 30 s; its reply still lands.
+  await checkNow.click();
+  await expect.poll(() => requests().length).toBe(1);
+  await page.clock.runFor(31_000);
+  await expect(checkNow).toHaveAttribute("aria-busy", "true");
+  // The page's clock has run ahead of the test's.
+  const failedAt = await page.evaluate(() => new Date().toISOString());
+  send({
+    type: "update-check-reply",
+    id: requests()[0].id,
+    status: {
+      ...status(failedAt),
+      refresh_error: {
+        message: "operation timed out",
+        failed_at: failedAt,
+        is_stale: false,
+      },
+    },
+  });
+  await expect(card.locator("div[role=status]")).toContainText(
+    "Checking again failed just now: operation timed out",
+  );
+  await expect(card).not.toContainText("didn't answer");
+
+  // A backend that doesn't answer at all is reported, until a status arrives.
+  await checkNow.click();
+  await expect.poll(() => requests().length).toBe(2);
+  await page.clock.runFor(46_000);
+  await expect(card).toContainText("Couldn't check: The backend didn't answer.");
+  send({ type: "update-check", status: status(failedAt) });
+  await expect(card).not.toContainText("Couldn't check");
+});
+
 test(
   "the update details open from the keyboard",
   { tag: "@webkit" },

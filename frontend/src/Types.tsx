@@ -222,6 +222,7 @@ export type UpdateStatus =
 
 export type ClientMsg =
   | { type: "run-health-check" }
+  | { type: "check-for-updates" }
   | { type: "set-collection"; path: string }
   | { type: "validate-track"; track: unknown; id?: number }
   | { type: "check-spotify-id"; sp_id: string; id?: number }
@@ -435,6 +436,7 @@ export type ServerMsg =
     }
   | { type: "tailscale"; status: TailscaleStatus }
   | { type: "update-check"; status: UpdateStatus }
+  | { type: "update-check-reply"; id: number; status: UpdateStatus }
   | { type: "pairing-code"; id: number; code: string; expires_in: number }
   | { type: "auth-token"; token: string }
   | {

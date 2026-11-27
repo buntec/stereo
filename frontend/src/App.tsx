@@ -826,6 +826,7 @@ const reducer = (state: State, action: Action): State => {
     case "set-git-remote-reply":
     case "new-releases-candidates":
     case "pairing-code":
+    case "update-check-reply": // a reply, for UpdateIndicator
     case "health-check-progress":
     case "health-check":
     case "collection-track": // a reply, for BpmCheck
@@ -834,7 +835,7 @@ const reducer = (state: State, action: Action): State => {
     case "audio-cached": // these three are kept in AudioCache.ts's store
     case "audio-evicted":
     case "audio-download":
-    case "error-reply": // the server also sends a notification with the reason
+    case "error-reply": // the server also notifies, except for check-for-updates
       return state;
 
     case "start-spotify-backfill":
@@ -1373,6 +1374,28 @@ function App() {
   const queryId = useRef<number>(0);
 
   const backfillId = useRef<number>(0);
+  // The reply carries the status, since the broadcast `update-check` may come after it.
+  const checkForUpdates = useCallback(
+    (done: (error?: string) => void) =>
+      requestReply(
+        { type: "check-for-updates" },
+        (msg) => {
+          if (msg.type === "update-check-reply" && "status" in msg) {
+            dispatch({ type: "update-check", status: msg.status });
+            done();
+          } else if (msg.type === "error-reply" && "message" in msg) {
+            done(msg.message);
+          } else {
+            done("The backend didn't answer.");
+          }
+        },
+        // Past the backend's 30 s deadline for the GitHub request, so a stalled
+        // GitHub is reported as such rather than as a silent backend.
+        45_000,
+      ),
+    [requestReply],
+  );
+
   const backfillSpotifyIds = useCallback(() => {
     const id = ++backfillId.current;
     dispatch({ type: "start-spotify-backfill", id });
@@ -3317,6 +3340,7 @@ function App() {
                   isCompact={narrow}
                   version={state.backend_version}
                   update={state.update}
+                  checkForUpdates={checkForUpdates}
                   appearance={settings.appearance}
                   setAppearance={(appearance) =>
                     setSettings({ ...settings, appearance })

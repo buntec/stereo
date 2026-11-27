@@ -1,10 +1,11 @@
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 import { useHoverCard } from "@astryxdesign/core/HoverCard";
 import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
 import { Link } from "@astryxdesign/core/Link";
 import { Text } from "@astryxdesign/core/Text";
-import { VStack } from "@astryxdesign/core/Stack";
+import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { CircleArrowUp } from "lucide-react";
 import type { UpdateStatus } from "./Types.tsx";
 import { timeAgo } from "./Utils.tsx";
@@ -26,33 +27,66 @@ const ago = (iso: string) => timeAgo(Date.parse(iso));
  * Tooltip, since the card holds a link and a tap on touch screens must open it.
  * The hook rather than the HoverCard component, for its `show()`: pressing the
  * button (Enter, Space, a click) opens the card too, as a button should. A
- * controlled `isOpen` can't do that, since a held `false` also blocks hover. */
+ * controlled `isOpen` can't do that, since a held `false` also blocks hover.
+ * "Check now" asks the backend to check right away rather than wait for the
+ * daily check. */
 function UpdateIndicator({
   version,
   status,
+  checkForUpdates,
 }: {
   version: string;
   status: UpdateStatus;
+  /** `done` gets an error message if the check couldn't be made. */
+  checkForUpdates: (done: (error?: string) => void) => void;
 }) {
+  const [checking, setChecking] = useState(false);
+  // A failed request; a failed check is reported in `status` instead.
+  const [checkError, setCheckError] = useState<string>();
+  // Whether the live region should announce the outcome of "Check now", which
+  // otherwise appears away from the button that keeps focus.
+  const [announce, setAnnounce] = useState(false);
+  // A status that arrives anyway (a reply after the timeout, or another
+  // session's check) supersedes the failed request.
+  const [shownStatus, setShownStatus] = useState(status);
+  if (shownStatus !== status) {
+    setShownStatus(status);
+    setCheckError(undefined);
+  }
+  const checkNow = () => {
+    setChecking(true);
+    setCheckError(undefined);
+    setAnnounce(false);
+    checkForUpdates((error) => {
+      setChecking(false);
+      setCheckError(error);
+      setAnnounce(true);
+    });
+  };
   // "Checked … ago" is computed on render, and nothing else re-renders this
   // while a tab stays open for hours, so render again on every opening.
   const [, refresh] = useReducer((n: number) => n + 1, 0);
+  const onShow = () => {
+    setAnnounce(false);
+    refresh();
+  };
   let label: string;
   let lines: string[];
   let icon: React.ReactElement<React.ComponentProps<typeof Icon>>;
   let url = RELEASES_URL;
   let linkText = "All releases";
   const footer: string[] = [];
+  let failure: string | undefined;
   switch (status.state) {
     case "available":
     case "up-to-date": {
       const { latest, refresh_error } = status;
       url = releaseUrl(latest.url);
       footer.push(`Checked ${ago(status.checked_at)}`);
-      if (refresh_error)
-        footer.push(
-          `Checking again failed ${ago(refresh_error.failed_at)}: ${refresh_error.message}`,
-        );
+      if (refresh_error) {
+        failure = `Checking again failed ${ago(refresh_error.failed_at)}: ${refresh_error.message}`;
+        footer.push(failure);
+      }
       if (status.state === "available") {
         const released = releaseDate(latest.published_at);
         label = `Stereo v${latest.version} is available`;
@@ -86,6 +120,7 @@ function UpdateIndicator({
     case "error":
       label = "Couldn't check for updates";
       lines = [status.message];
+      failure = status.message;
       footer.push(`Tried ${ago(status.checked_at)}`);
       icon = <Icon icon="warning" color="tertiary" size="sm" />;
       break;
@@ -100,7 +135,7 @@ function UpdateIndicator({
     label,
     placement: "below",
     touchTrigger: "tap",
-    onShow: refresh,
+    onShow,
   });
   return (
     <>
@@ -135,9 +170,30 @@ function UpdateIndicator({
               {line}
             </Text>
           ))}
-          <Link href={url} type="supporting" isExternalLink>
-            {linkText}
-          </Link>
+          {checkError && (
+            <Text type="supporting" color="secondary">
+              Couldn't check: {checkError}
+            </Text>
+          )}
+          {/* Mounted with the card, so it's in place before its text changes. */}
+          <VisuallyHidden as="div" role="status" aria-live="polite">
+            {announce &&
+              (checkError
+                ? `Couldn't check: ${checkError}`
+                : [label, failure].filter(Boolean).join(". "))}
+          </VisuallyHidden>
+          <HStack gap={2} vAlign="center" hAlign="between">
+            <Link href={url} type="supporting" isExternalLink>
+              {linkText}
+            </Link>
+            <Button
+              label="Check now"
+              variant="secondary"
+              size="sm"
+              isLoading={checking}
+              onClick={checkNow}
+            />
+          </HStack>
         </VStack>,
       )}
     </>

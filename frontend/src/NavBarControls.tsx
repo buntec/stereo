@@ -35,6 +35,8 @@ type NavBarControlsProps = {
   version?: string;
   /** Whether a newer release is out, once the backend has checked. */
   update?: UpdateStatus;
+  /** Checks for a newer release now; `done` gets an error message if it failed. */
+  checkForUpdates: (done: (error?: string) => void) => void;
   appearance: AppearanceType;
   setAppearance: (appearance: AppearanceType) => void;
   backgroundShown: boolean;
@@ -113,6 +115,7 @@ function AccountButton({
 function NavBarControls({
   version,
   update,
+  checkForUpdates,
   appearance,
   setAppearance,
   backgroundShown,
@@ -194,7 +197,11 @@ function NavBarControls({
 
   const versionText =
     version && update ? (
-      <UpdateIndicator version={version} status={update} />
+      <UpdateIndicator
+        version={version}
+        status={update}
+        checkForUpdates={checkForUpdates}
+      />
     ) : (
       <Text type="supporting" color="secondary">
         v{version}

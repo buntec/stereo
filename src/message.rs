@@ -64,6 +64,11 @@ pub enum MsgServer {
     UpdateCheck {
         status: crate::update_check::UpdateStatus,
     },
+    /// Reply to `CheckForUpdates`: the status after the check.
+    UpdateCheckReply {
+        id: i64,
+        status: crate::update_check::UpdateStatus,
+    },
     /// Reply to `CreatePairingCode`: a single-use code that signs a browser on the tailnet in,
     /// valid for `expires_in` seconds.
     PairingCode {
@@ -698,6 +703,11 @@ pub enum MsgClient {
         id: i64,
         yt_ids: Vec<String>,
     },
+    /// Checks for a newer release now (`MsgServer::UpdateCheckReply`), unless the last check
+    /// was within the minute; every session also gets the result as `MsgServer::UpdateCheck`.
+    CheckForUpdates {
+        id: i64,
+    },
     /// Asks for a pairing code (`MsgServer::PairingCode`), with `--tailscale` only.
     CreatePairingCode {
         id: i64,
@@ -885,6 +895,7 @@ impl MsgClient {
             | Self::ImportCollection { id, .. }
             | Self::GetWaveform { id, .. }
             | Self::CreatePairingCode { id }
+            | Self::CheckForUpdates { id }
             | Self::GetNewReleasesCandidates { id }
             | Self::RunHealthCheck { id }
             | Self::CreateYtAnonPlaylist { id, .. }
@@ -968,6 +979,23 @@ mod tests {
         });
         assert_eq!(error["status"]["state"], "error");
         assert_eq!(error["status"]["message"], "GitHub replied 403");
+
+        let request: MsgClient = serde_json::from_value(serde_json::json!({
+            "type": "check-for-updates", "id": 7,
+        }))
+        .unwrap();
+        assert_eq!(request.request_id(), Some(7));
+        let reply = serde_json::to_value(MsgServer::UpdateCheckReply {
+            id: 7,
+            status: UpdateStatus::Error {
+                message: "GitHub replied 403".into(),
+                checked_at,
+            },
+        })
+        .unwrap();
+        assert_eq!(reply["type"], "update-check-reply");
+        assert_eq!(reply["id"], 7);
+        assert_eq!(reply["status"]["state"], "error");
     }
 
     #[test]
