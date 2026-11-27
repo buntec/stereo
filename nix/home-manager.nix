@@ -30,6 +30,7 @@ let
   # Reads the token when the service starts, so that it stays out of the Nix store, the plist or
   # unit, and `ps`.
   tokenWrapper = pkgs.writeShellScript "stereo-service" ''
+    set -eu
     STEREO_WS_TOKEN=$(< ${lib.escapeShellArg (toString svc.wsTokenFile)})
     export STEREO_WS_TOKEN
     exec "$@"
@@ -96,9 +97,21 @@ let
   // location
   // svc.environment;
 
-  # The desktop app with the service's location, when that isn't the default one it looks at.
+  # Where the service ends up, `environment` included, for the desktop app.
+  desktopLocation = lib.filterAttrs (name: _: location ? ${name}) serviceEnvironment;
+
+  # On Linux, the desktop app with the service's location, when that isn't the default one it
+  # looks at. Not on macOS, where the app finds it in the plist: an app bundle in a symlinkJoin
+  # becomes a tree of symlinks, which its code signature doesn't allow for.
   desktopPackage =
-    if !svc.enable || (svc.port == 8005 && svc.home == null) then
+    if
+      !svc.enable
+      || !isLinux
+      ||
+        desktopLocation == {
+          STEREO_PORT = "8005";
+        }
+    then
       cfg.desktop.package
     else
       pkgs.symlinkJoin {
@@ -108,7 +121,9 @@ let
         postBuild = ''
           wrapProgram "$out/bin/stereo-desktop" ${
             lib.concatStringsSep " " (
-              lib.mapAttrsToList (name: value: "--set-default ${name} ${lib.escapeShellArg value}") location
+              lib.mapAttrsToList (
+                name: value: "--set-default ${name} ${lib.escapeShellArg value}"
+              ) desktopLocation
             )
           }
           entry="$out/share/applications/Stereo.desktop"
@@ -129,6 +144,13 @@ let
     lib.concatMapStringsSep " " (arg: systemdQuote (lib.replaceStrings [ "$" ] [ "$$" ] arg)) args;
 
   hasToken = svc.wsTokenFile != null || svc.environment ? STEREO_WS_TOKEN;
+
+  # As `Settings::validate_websocket_security` sees an `--allowed-origin`.
+  isLoopbackOrigin =
+    origin: builtins.match "https?://(localhost|127[.]0[.]0[.]1|[[]::1[]])(:[0-9]+)?/?" origin != null;
+
+  # launchd runs the service from `/`, and systemd from the home directory.
+  isAbsolute = dir: dir == null || lib.hasPrefix "/" (toString dir);
 in
 {
   # Stereo is both a program and a long-running server: accept the service-shaped spelling too.
@@ -207,7 +229,8 @@ in
         default = null;
         example = "/Volumes/Music/stereo";
         description = ''
-          Data directory, holding the collections' Git repositories. `null` keeps Stereo's
+          Absolute path of the data directory, holding the collections' Git repositories, which
+          the desktop app then uses too. `null` keeps Stereo's
           default, {file}`~/.local/share/stereo`, which the desktop app and the CLI use too.
         '';
       };
@@ -216,7 +239,8 @@ in
         type = with lib.types; nullOr (either str path);
         default = null;
         description = ''
-          Directory for cached data such as audio downloads. `null` keeps Stereo's default:
+          Absolute path of the directory for cached data such as audio downloads. `null` keeps
+          Stereo's default:
           {file}`~/Library/Caches/stereo` on macOS, {file}`$XDG_CACHE_HOME/stereo` elsewhere.
         '';
       };
@@ -302,6 +326,14 @@ in
       {
         assertion = !svc.enable || isLoopback svc.host || hasToken;
         message = "programs.stereo.service.wsTokenFile is required for a non-loopback host";
+      }
+      {
+        assertion = !svc.enable || lib.all isLoopbackOrigin svc.allowedOrigins || hasToken;
+        message = "programs.stereo.service.wsTokenFile is required for a remote allowed origin";
+      }
+      {
+        assertion = !svc.enable || (isAbsolute svc.home && isAbsolute svc.cacheDir);
+        message = "programs.stereo.service.home and cacheDir must be absolute paths";
       }
       {
         assertion = !svc.enable || !svc.tailscale || isLoopback svc.host;

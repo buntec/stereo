@@ -610,8 +610,8 @@ fn login_path() -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Starts the bundled backend on `port` with the data directory `dir`. Its stderr's last lines are kept in `stderr` and it
-/// reports its exit to `exited`.
+/// Starts the bundled backend on `port` with the data directory `dir`. Its stderr's last lines are
+/// kept in `stderr` and it reports its exit to `exited`.
 fn start_backend(
     app: &AppHandle,
     port: u16,
