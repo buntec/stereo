@@ -1266,7 +1266,7 @@ function App() {
         pairingCode = null;
         setSignIn({
           error:
-            "That code didn't work. It may be mistyped, expired (codes last two minutes) or already used. Enter the one shown now.",
+            "That code didn't work. It may be mistyped, expired (codes last two minutes) or already used, e.g. by scanning its QR code. Choose Get a new code in the Tailscale menu and enter that one.",
           isPending: false,
         });
         return;
@@ -3002,100 +3002,102 @@ function App() {
     visibleTrackCount > 0 &&
     trackSelection.selectionCount < visibleTrackCount;
 
-  const collectionBody = isSearchGridActive ? (
-    <SearchResultsGrid
-      isCompact={narrow}
-      // Chart results get different columns and default sort; remounting applies them.
-      key={state.search_is_chart ? "chart" : "search"}
-      isChart={state.search_is_chart}
-      isSearching={state.search_busy}
-      onExitSearch={handleExitSearch}
-      gridRef={searchGridRef}
-      currentId={state.current_id}
-      currentResultId={playingResultId}
-      playId={playId}
-      requestReply={requestReply}
-      dispatch={dispatch}
-      tracks={state.search_results}
-      lastCollectionUpdate={state.collection_last_update}
-      collection={openCollectionPath}
-      onArtistClick={handleArtistClick}
-      onLabelClick={handleLabelClick}
-      addTrack={addSearchResultTrack}
-      downloadAudio={downloadAudio}
-      onShowCurrent={centerGridAroundCurrentTrack}
-    />
-  ) : !backendReady && signIn ? (
-    <PairingSignIn
-      error={signIn.error}
-      isPending={signIn.isPending}
-      onSubmit={(code) => {
-        pairingCode = code;
-        setSignIn({ isPending: true });
-        reconnect();
-      }}
-    />
-  ) : !backendReady ? (
-    <HStack height="100%" hAlign="center" vAlign="center">
-      <Spinner label="Connecting to your collection…" />
-    </HStack>
-  ) : state.collections?.length === 0 ? (
-    <EmptyState
-      title="Create your first collection"
-      actions={
-        <Button
-          label="Create collection"
-          variant="primary"
-          onClick={() => setCreateCollectionOpen(true)}
-        />
-      }
-    />
-  ) : !state.collection ? (
-    <HStack height="100%" hAlign="center" vAlign="center">
-      <Spinner label="Opening collection…" />
-    </HStack>
-  ) : state.collection.size === 0 ? (
-    <EmptyState
-      title="Your collection is empty"
-      actions={
-        <HStack gap={2} wrap="wrap">
+  // Sign-in comes first: without it nothing else can load, search results included.
+  const collectionBody =
+    !backendReady && signIn ? (
+      <PairingSignIn
+        error={signIn.error}
+        isPending={signIn.isPending}
+        onSubmit={(code) => {
+          pairingCode = code;
+          setSignIn({ isPending: true });
+          reconnect();
+        }}
+      />
+    ) : isSearchGridActive ? (
+      <SearchResultsGrid
+        isCompact={narrow}
+        // Chart results get different columns and default sort; remounting applies them.
+        key={state.search_is_chart ? "chart" : "search"}
+        isChart={state.search_is_chart}
+        isSearching={state.search_busy}
+        onExitSearch={handleExitSearch}
+        gridRef={searchGridRef}
+        currentId={state.current_id}
+        currentResultId={playingResultId}
+        playId={playId}
+        requestReply={requestReply}
+        dispatch={dispatch}
+        tracks={state.search_results}
+        lastCollectionUpdate={state.collection_last_update}
+        collection={openCollectionPath}
+        onArtistClick={handleArtistClick}
+        onLabelClick={handleLabelClick}
+        addTrack={addSearchResultTrack}
+        downloadAudio={downloadAudio}
+        onShowCurrent={centerGridAroundCurrentTrack}
+      />
+    ) : !backendReady ? (
+      <HStack height="100%" hAlign="center" vAlign="center">
+        <Spinner label="Connecting to your collection…" />
+      </HStack>
+    ) : state.collections?.length === 0 ? (
+      <EmptyState
+        title="Create your first collection"
+        actions={
           <Button
-            label="Search for music"
+            label="Create collection"
             variant="primary"
-            onClick={() =>
-              document
-                .querySelector<HTMLInputElement>(".search-box input")
-                ?.focus()
-            }
+            onClick={() => setCreateCollectionOpen(true)}
           />
-          {importMenu()}
-        </HStack>
-      }
-    />
-  ) : (
-    <TracksGrid
-      isCompact={narrow}
-      gridRef={gridRef}
-      currentId={state.current_id}
-      playId={playIdForGrid}
-      updateRating={updateRating}
-      requestReply={requestReply}
-      sendMsg={sendMsg}
-      setGridReady={setGridReady}
-      loadInitialState={currentGridState}
-      onStateUpdate={onTrackGridStateUpdate}
-      onRowCountChange={setFilteredRowCount}
-      onSelectionChanged={trackSelection.onSelectionChanged}
-      onRowsLoaded={trackSelection.selectLoadedRows}
-      onFilterChanged={trackSelection.onFilterChanged}
-      onSelectAll={trackSelection.selectAll}
-      onArtistClick={handleArtistClick}
-      onLabelClick={handleLabelClick}
-      onShazamSimilar={handleShazamSimilar}
-      onShowCurrent={centerGridAroundCurrentTrack}
-      downloadAudio={downloadAudio}
-    />
-  );
+        }
+      />
+    ) : !state.collection ? (
+      <HStack height="100%" hAlign="center" vAlign="center">
+        <Spinner label="Opening collection…" />
+      </HStack>
+    ) : state.collection.size === 0 ? (
+      <EmptyState
+        title="Your collection is empty"
+        actions={
+          <HStack gap={2} wrap="wrap">
+            <Button
+              label="Search for music"
+              variant="primary"
+              onClick={() =>
+                document
+                  .querySelector<HTMLInputElement>(".search-box input")
+                  ?.focus()
+              }
+            />
+            {importMenu()}
+          </HStack>
+        }
+      />
+    ) : (
+      <TracksGrid
+        isCompact={narrow}
+        gridRef={gridRef}
+        currentId={state.current_id}
+        playId={playIdForGrid}
+        updateRating={updateRating}
+        requestReply={requestReply}
+        sendMsg={sendMsg}
+        setGridReady={setGridReady}
+        loadInitialState={currentGridState}
+        onStateUpdate={onTrackGridStateUpdate}
+        onRowCountChange={setFilteredRowCount}
+        onSelectionChanged={trackSelection.onSelectionChanged}
+        onRowsLoaded={trackSelection.selectLoadedRows}
+        onFilterChanged={trackSelection.onFilterChanged}
+        onSelectAll={trackSelection.selectAll}
+        onArtistClick={handleArtistClick}
+        onLabelClick={handleLabelClick}
+        onShazamSimilar={handleShazamSimilar}
+        onShowCurrent={centerGridAroundCurrentTrack}
+        downloadAudio={downloadAudio}
+      />
+    );
 
   const nowPlayingMenu = state.track_info && (
     <NowPlayingMenu

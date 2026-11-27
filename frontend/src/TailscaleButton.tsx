@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type SVGProps } from "react";
 import { encode } from "uqr";
+import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Popover } from "@astryxdesign/core/Popover";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -69,6 +70,9 @@ function PairingQr({
 }) {
   const [code, setCode] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  // Bumped for a new code before the current one is due for renewal: a scan uses it up, and
+  // the popover can't tell, so one meant for typing would otherwise be refused.
+  const [renewals, setRenewals] = useState(0);
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -88,9 +92,22 @@ function PairingQr({
       disposed = true;
       clearTimeout(timer);
     };
-  }, [requestReply]);
+  }, [requestReply, renewals]);
+  const renew = (
+    <Button
+      label="Get a new code"
+      variant="secondary"
+      size="sm"
+      onClick={() => setRenewals((n) => n + 1)}
+    />
+  );
   if (failed)
-    return <Text type="supporting">Could not create a sign-in code.</Text>;
+    return (
+      <VStack gap={1} hAlign="center">
+        <Text type="supporting">Could not create a sign-in code.</Text>
+        {renew}
+      </VStack>
+    );
   if (!code) return <svg className="tailscale-qr" aria-hidden />;
   return (
     <VStack gap={1} hAlign="center">
@@ -102,7 +119,11 @@ function PairingQr({
       <Text type="code" weight="bold" aria-label="Sign-in code">
         {formatPairingCode(code)}
       </Text>
-      <Text type="supporting">Each code works once, for two minutes.</Text>
+      <Text type="supporting">
+        Each code works once, for two minutes. Get a new one after scanning this
+        one.
+      </Text>
+      {renew}
     </VStack>
   );
 }
