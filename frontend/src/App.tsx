@@ -1439,26 +1439,34 @@ function App() {
   // effect that loads tracks doesn't run: resume it here if it's paused or has ended.
   // After `queueRef`'s effect, so that the track advances within the row's queue (a
   // collection row's arrives in a reply, and a resumed track can end before it).
+  // Each request is handled once: `playback` is recreated when the audio key comes back.
   const resumeRequest = state.resume_request;
+  const handledResumeRef = useRef(resumeRequest);
   useEffect(() => {
-    if (!resumeRequest || playback?.currentId() !== resumeRequest.id) return;
+    if (!resumeRequest || handledResumeRef.current === resumeRequest) return;
+    handledResumeRef.current = resumeRequest;
+    if (playback?.currentId() !== resumeRequest.id) return;
     const status = playback.status();
     if (status === "paused" || status === "ended") playback.play();
   }, [resumeRequest, playback]);
 
   const playId = useCallback((id: string) => {
+    // Only the track that was current: one just loaded plays, or failed to download,
+    // which resuming would retry.
+    const resume = queueRef.current.current_id === id;
     dispatch({ type: "play-id", id });
-    dispatch({ type: "resume-track", id });
+    if (resume) dispatch({ type: "resume-track", id });
   }, []);
 
   // Used by the main tracks grid: sets current track and ensures the playlist
   // reflects the current filter+sort order before the next track auto-advances.
   const playIdForGrid = useCallback(
     (id: string) => {
+      const resume = queueRef.current.current_id === id;
       dispatch({ type: "play-id", id });
-      updatePlaylist(settings.shufflePlay, () =>
-        dispatch({ type: "resume-track", id }),
-      );
+      updatePlaylist(settings.shufflePlay, () => {
+        if (resume) dispatch({ type: "resume-track", id });
+      });
     },
     [updatePlaylist, settings.shufflePlay],
   );
