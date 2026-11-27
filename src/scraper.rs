@@ -1056,7 +1056,7 @@ pub async fn sc_search_users(
 
 /// Up to `limit` of the user's tracks, newest first, from `cursor` (the start if none), and the
 /// cursor of the tracks after them, if any. The cursor is the `offset` of the response's
-/// `next_href`, which isn't a count: SoundCloud ignores a numeric one.
+/// `next_href`, which isn't a count: SoundCloud returns no tracks for a numeric one.
 pub async fn sc_get_user_tracks(
     client: &Client,
     user_id: i64,
