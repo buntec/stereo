@@ -28,6 +28,43 @@ For playback, install and keep yt-dlp up to date. Homebrew's `brew install yt-dl
 includes Deno. For other installs, see the steps for Deno and the YouTube scripts in
 the [yt-dlp setup guide](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
 
+### Nix
+
+The flake packages the release binary (`packages.<system>.default`) and desktop app
+(`.desktop`), and has a Home Manager module that runs Stereo as a launchd agent on macOS
+or a systemd user service on Linux, with nixpkgs' yt-dlp:
+
+Add the flake to your `flake.nix`'s inputs, and its module to your Home Manager
+configuration's modules:
+
+```nix
+{
+  inputs.stereo.url = "github:buntec/stereo";
+
+  outputs = { nixpkgs, home-manager, stereo, ... }: {
+    homeConfigurations.me = home-manager.lib.homeManagerConfiguration {
+      pkgs = nixpkgs.legacyPackages.aarch64-darwin;
+      modules = [
+        stereo.homeManagerModules.default
+        {
+          programs.stereo = {
+            enable = true;
+            desktop.enable = true; # optional; opens the service's backend
+            service.tailscale = true; # optional
+          };
+        }
+        # ...
+      ];
+    };
+  };
+}
+```
+
+The service uses the same launchd label as `stereo install`, so `stereo restart` works, but
+leave installing and uninstalling it to Home Manager. Set `service.wsTokenFile` to a secret
+outside the Nix store to listen on a non-loopback `service.host`. See
+[`nix/home-manager.nix`](nix/home-manager.nix) for all options.
+
 ## Use Stereo
 
 - **Collect.** Search by track, artist or label, browse charts and new releases, or import

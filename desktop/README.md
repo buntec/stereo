@@ -13,13 +13,15 @@ lints and tests the launcher.
 writes and git syncs, so a `stereo` locks its data directory (`stereo.lock` in it) before it
 touches a collection, and once it listens writes its port to `stereo.port` there; another `stereo`
 on that directory exits with an error. On launch, the app opens the Stereo that has locked its data
-directory (`STEREO_HOME`, else `~/.local/share/stereo`, which on Windows is
-`%USERPROFILE%\.local\share\stereo`), waiting for one that is still starting up.
-Otherwise it looks for a Stereo running on port 8005, the CLI's default, or on the port of the
-launchd service from `stereo install` (from its plist), and opens it. Otherwise it starts its
-bundled `stereo` (a Tauri sidecar) on port 8005, or on a free port if something else holds 8005,
-with the default data directory (`~/.local/share/stereo`), so it shows the same collections as the
-CLI. Its backend stops when the app quits, or crashes (it's started with `--exit-with-stdin`, and
+directory (`STEREO_HOME`, else on macOS the launchd service's, else `~/.local/share/stereo`,
+which on Windows is `%USERPROFILE%\.local\share\stereo`), waiting for one that is still starting
+up. Otherwise it looks for a Stereo running on port 8005, the CLI's default, or on the port of the
+launchd service, and opens it. The service's port and data directory come from its plist
+(`~/Library/LaunchAgents/com.stereo.plist`): the `--port` and `--home` that `stereo install`
+passes, or the `STEREO_PORT` and `STEREO_HOME` in its environment that the Home Manager module
+(`nix/home-manager.nix`) sets. Otherwise it starts its bundled `stereo` (a Tauri sidecar) on port
+8005, or on a free port if something else holds 8005, with that data directory, so it shows the
+same collections as the CLI. Its backend stops when the app quits, or crashes (it's started with `--exit-with-stdin`, and
 then ends its yt-dlp downloads too), and changes not yet synced with git are synced on its next
 start, as after Ctrl-C. While the app runs, its Stereo is also at `http://localhost:8005` in a
 browser. `STEREO_PORT` picks another port (and is then the only one looked at), and `STEREO_HOME`

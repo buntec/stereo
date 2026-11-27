@@ -295,3 +295,48 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/notary.p8"
+
+  # Points the Nix packages (flake.nix) at the new release's binaries and desktop bundles.
+  nix:
+    name: Update Nix packages
+    needs: build
+    # Even when a build failed, e.g. Windows': the update then fails if it lacks a file it needs,
+    # rather than being skipped. Pre-releases' tags have a `-`; the packages follow releases only.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    # One tag at a time, so that each compares its version with what the last one pushed.
+    concurrency:
+      group: nix-packages
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: cachix/install-nix-action@v31
+
+      # --only-newer, since an older tag's run may finish after a newer one's or be run again.
+      # Compared again with main's tip whenever someone else's push got there first.
+      - name: Update and push Nix packages
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            ./scripts/update-nix-package.sh --only-newer "$GITHUB_REF_NAME"
+            git add nix
+            if git diff --cached --quiet; then
+              echo "nothing to update"
+              exit 0
+            fi
+            git commit -m "Update Nix packages to ${GITHUB_REF_NAME#v}"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            sleep $((attempt * 10))
+          done
+          echo "::error::could not push the Nix package update"
+          exit 1

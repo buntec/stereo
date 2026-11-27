@@ -20,3 +20,7 @@ target/
 # Browser test artifacts
 playwright-report/
 test-results/
+
+# Nix
+result
+result-*
