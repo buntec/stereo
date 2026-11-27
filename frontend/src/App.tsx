@@ -1283,11 +1283,6 @@ function App() {
     wsOnOpen,
   );
 
-  const playId = useCallback(
-    (id: string) => dispatch({ type: "play-id", id }),
-    [],
-  );
-
   const downloadAudio = useCallback(
     (id: string) => sendMsg({ type: "download-audio", yt_id: id }),
     [sendMsg],
@@ -1346,16 +1341,6 @@ function App() {
       updatePlaylist(settings.shufflePlay);
     }
   }, [state.playlist.length, updatePlaylist, settings.shufflePlay, gridReady]);
-
-  // Used by the main tracks grid: sets current track and ensures the playlist
-  // reflects the current filter+sort order before the next track auto-advances.
-  const playIdForGrid = useCallback(
-    (id: string) => {
-      dispatch({ type: "play-id", id });
-      updatePlaylist(settings.shufflePlay);
-    },
-    [dispatch, updatePlaylist, settings.shufflePlay],
-  );
 
   const searchGridRef = useRef<AgGridReact<ITrack>>(null);
 
@@ -1437,6 +1422,36 @@ function App() {
   useEffect(() => {
     logger.debug("state:", state);
   }, [state]);
+
+  // A row's play button. Asking for the current track again changes no state, so the
+  // effect that loads tracks doesn't run: resume it here if it's paused or has ended.
+  const resumeIfCurrent = useCallback(
+    (id: string) => {
+      if (playback?.currentId() !== id) return;
+      const status = playback.status();
+      if (status === "paused" || status === "ended") playback.play();
+    },
+    [playback],
+  );
+
+  const playId = useCallback(
+    (id: string) => {
+      dispatch({ type: "play-id", id });
+      resumeIfCurrent(id);
+    },
+    [resumeIfCurrent],
+  );
+
+  // Used by the main tracks grid: sets current track and ensures the playlist
+  // reflects the current filter+sort order before the next track auto-advances.
+  const playIdForGrid = useCallback(
+    (id: string) => {
+      dispatch({ type: "play-id", id });
+      resumeIfCurrent(id);
+      updatePlaylist(settings.shufflePlay);
+    },
+    [resumeIfCurrent, updatePlaylist, settings.shufflePlay],
+  );
 
   // Auto-select repo when list first arrives (or changes)
   useEffect(() => {

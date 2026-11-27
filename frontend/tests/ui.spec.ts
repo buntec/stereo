@@ -2206,6 +2206,17 @@ test("an evicted track stays shown as not downloaded when its buffered audio pla
     .toEqual([{ type: "download-audio", yt_id: "audit0" }]);
 });
 
+test("a paused track's row play button resumes it", async ({ page }) => {
+  await openApp(page, { audio: "ok", audioSeconds: 240 });
+  await startPlayback(page);
+  const button = page.locator(".play-pause-button");
+  await expect(button).toHaveAccessibleName("Pause");
+  await button.click();
+  await expect(button).toHaveAccessibleName("Play");
+  await page.locator('.ag-row[row-index="0"] .thumbnail-play-button').click();
+  await expect(button).toHaveAccessibleName("Pause");
+});
+
 test("the background pulses with the playing track's beats", async ({
   page,
 }) => {
