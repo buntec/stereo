@@ -373,6 +373,11 @@ pub async fn inc_play_count(
     .rows_affected())
 }
 
+pub async fn get_all_tracks(pool: &SqlitePool) -> anyhow::Result<Vec<Track>> {
+    let rows = sqlx::query("SELECT * FROM tracks").fetch_all(pool).await?;
+    rows.iter().map(Track::from_db_row).collect()
+}
+
 pub async fn get_tracks_missing_sp_id(pool: &SqlitePool) -> anyhow::Result<Vec<Track>> {
     let rows = sqlx::query("SELECT * FROM tracks WHERE sp_id IS NULL")
         .fetch_all(pool)

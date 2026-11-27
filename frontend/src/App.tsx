@@ -815,6 +815,7 @@ const reducer = (state: State, action: Action): State => {
     case "row-index":
     case "heartbeat":
     case "collection-contains-ids-response":
+    case "similar-tracks":
     case "path-completions":
     case "validate-track-reply":
     case "fixup-track-reply":

@@ -175,6 +175,12 @@ pub enum MsgServer {
         id: i64,
         contained: Vec<String>,
     },
+    /// Reply to `FindSimilarTracks`: for each requested track, in order, the collection's tracks
+    /// that seem to be the same recording under another video.
+    SimilarTracks {
+        id: i64,
+        similar: Vec<Vec<Track>>,
+    },
     /// Reply to `GetCollectionTrack`: the track as stored in the collection, `None` if it isn't in
     /// it or the collection isn't the open one.
     CollectionTrack {
@@ -663,6 +669,11 @@ pub enum MsgClient {
         id: i64,
         yt_ids: Vec<String>,
     },
+    /// Looks for tracks in the open collection like each of `tracks` (`MsgServer::SimilarTracks`).
+    FindSimilarTracks {
+        id: i64,
+        tracks: Vec<crate::similar::TrackIdentity>,
+    },
     /// The track with `yt_id` as stored in `collection`, if that is the open collection.
     GetCollectionTrack {
         id: i64,
@@ -888,6 +899,7 @@ impl MsgClient {
             Self::SetCollection { id, .. }
             | Self::GetPathCompletions { id, .. }
             | Self::CollectionContainsIds { id, .. }
+            | Self::FindSimilarTracks { id, .. }
             | Self::GetCollectionTrack { id, .. }
             | Self::PrepareCollectionDownload { id, .. }
             | Self::PrepareTracksDownload { id, .. }

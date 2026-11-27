@@ -39,6 +39,8 @@ async function openApp(
     audioSeconds?: number;
     /** What every search finds. */
     searchResults?: Record<string, unknown>[];
+    /** Collection tracks like a search result, by the result's YouTube id. */
+    similarTracks?: Record<string, Record<string, unknown>[]>;
     /** Leaves `validate-track` unanswered, for the test to answer itself. */
     holdValidation?: boolean;
     /** Shows the disco ball, hidden by default (in stored settings, unless there are some already). */
@@ -276,6 +278,15 @@ async function openApp(
                 !absent.has(message.yt_id) &&
                 tracks.find((track) => track.yt_id === message.yt_id)) ||
               null,
+          });
+          break;
+        case "find-similar-tracks":
+          send({
+            type: "similar-tracks",
+            id: message.id,
+            similar: message.tracks.map(
+              (t: { yt_id: string }) => options.similarTracks?.[t.yt_id] ?? [],
+            ),
           });
           break;
         case "collection-contains-ids":
@@ -2757,6 +2768,57 @@ async function changeResultVideo(page: Page, title: string, yt_id: string) {
   await use.click();
   await expect(dialog).toHaveCount(0);
 }
+
+test("a search result warns of similar tracks in the collection", async ({
+  page,
+}) => {
+  const { messages } = await openApp(page, {
+    searchResults,
+    similarTracks: {
+      bVideo00002: [
+        {
+          yt_id: "otherVideo1",
+          title: "Result B",
+          mix_name: "Extended Mix",
+          artists: ["Artist B"],
+          bpm: 124,
+          key: "8A",
+        },
+      ],
+    },
+  });
+  await showSearchResults(page);
+  await expect
+    .poll(
+      () => messages.find((m) => m.type === "find-similar-tracks")?.tracks,
+    )
+    .toContainEqual(
+    expect.objectContaining({
+      yt_id: "bVideo00002",
+      title: "Result B",
+      artists: ["Artist B"],
+      bp_id: 2,
+    }),
+  );
+  const label = "A similar track is in the collection";
+  const warnings = page.getByRole("button", { name: label, exact: true });
+  await expect(warnings).toHaveCount(1);
+  await expect(
+    page
+      .locator(".ag-row", { has: warnings })
+      .getByRole("button", { name: "Play Result B", exact: true }),
+  ).toBeVisible();
+  await warnings.hover();
+  const card = page.getByRole("dialog", { name: label });
+  await expect(card).toContainText("Artist B – Result B");
+  await expect(card).toContainText("Extended Mix · 124 BPM · 8A");
+  // Adding stays possible.
+  await expect(
+    page
+      .locator(".ag-row", { has: warnings })
+      .getByRole("button", { name: "Add to collection", exact: true }),
+  ).toBeVisible();
+});
 
 test("changing a search result's video leaves results sharing its old video alone", async ({
   page,

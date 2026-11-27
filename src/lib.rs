@@ -15,6 +15,7 @@ pub mod playlists;
 pub mod scraper;
 pub mod server;
 pub mod settings;
+pub mod similar;
 pub mod spotify;
 pub mod tailscale;
 pub mod tracks_file;

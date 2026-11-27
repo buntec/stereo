@@ -77,6 +77,7 @@ import { EditTrackDialog } from "./EditDialog.tsx";
 import { GridScrollButtons } from "./GridScrollButtons.tsx";
 import { scrollGridToTop, useGridScrollState } from "./useGridScrollState.ts";
 import { AudioCacheButton } from "./AudioCacheButton.tsx";
+import SimilarTracksWarning from "./SimilarTracksWarning.tsx";
 import logger from "./logger.tsx";
 import { rowProgressStyle } from "./rowProgress.ts";
 import ShazamIcon from "./ShazamIcon.tsx";
@@ -115,8 +116,9 @@ const flexWidth = (flex: number): ColDef => ({
 // Width of the controls column (thumbnail play button and two icon buttons), which is
 // fixed by its renderer's content: 104px plus the cell's horizontal padding.
 const CONTROLS_WIDTH = 136;
-// The search results' controls have a third icon button (28px plus a 4px gap).
-const SEARCH_CONTROLS_WIDTH = CONTROLS_WIDTH + 32;
+// The search results' controls have a third icon button, and room for a fourth (the
+// similar-tracks warning) on any row, each 28px plus a 4px gap.
+const SEARCH_CONTROLS_WIDTH = CONTROLS_WIDTH + 2 * 32;
 
 // Narrow screens: App.css halves the cells' horizontal padding there, so the fixed
 // columns shrink by as much, and the free-text columns may get narrower before the grid
@@ -430,6 +432,10 @@ const SearchPlayControlRenderer: React.FC<
   }, [data, context]);
 
   const exists = !!data && context.inCollection.current.has(data.yt_id);
+  const similar =
+    data?.result_id !== undefined
+      ? context.similar.current.get(data.result_id)
+      : undefined;
 
   const handleAdd = useCallback(() => {
     if (data) {
@@ -501,6 +507,8 @@ const SearchPlayControlRenderer: React.FC<
           icon={<PlusIcon />}
         />
       )}
+      {/* After Add, so the add buttons line up across rows. */}
+      {similar && <SimilarTracksWarning similar={similar} />}
     </HStack>
   );
 };
@@ -547,6 +555,8 @@ type SearchResultsGridContext = {
   // Result ids already in the collection. A stable ref, so updating it doesn't replace the
   // grid context; cells are refreshed explicitly instead.
   inCollection: RefObject<Set<string>>;
+  // Like `inCollection`: collection tracks that look like the same recording, by `result_id`.
+  similar: RefObject<Map<number, ITrack[]>>;
   dispatch: Dispatch<Action>;
   onArtistClick: (name: string) => void;
   onLabelClick: (name: string) => void;
@@ -740,6 +750,8 @@ export const SearchResultsGrid = ({
   // One batched lookup for all results instead of one request per row. Results stream in one
   // at a time, so the lookup is debounced.
   const inCollection = useRef<Set<string>>(new Set());
+  // Collection tracks like each result, by `result_id`, for results that have any.
+  const similar = useRef<Map<number, ITrack[]>>(new Map());
   const resultIds = useMemo(() => (tracks ?? []).map((t) => t.yt_id), [tracks]);
   useEffect(() => {
     if (resultIds.length === 0) return;
@@ -756,12 +768,42 @@ export const SearchResultsGrid = ({
           });
         },
       );
+      const queried = tracks ?? [];
+      requestReply(
+        {
+          type: "find-similar-tracks",
+          tracks: queried.map(
+            ({ yt_id, title, mix_name, artists, bp_id, sp_id }) => ({
+              yt_id,
+              title,
+              mix_name,
+              artists,
+              bp_id,
+              sp_id,
+            }),
+          ),
+        },
+        (msg) => {
+          if (cancelled || !("similar" in msg)) return;
+          const found = new Map<number, ITrack[]>();
+          queried.forEach((t, i) => {
+            const tracks = msg.similar[i];
+            if (t.result_id !== undefined && tracks?.length)
+              found.set(t.result_id, tracks);
+          });
+          similar.current = found;
+          gridRef.current?.api?.refreshCells({
+            columns: ["yt_id"],
+            force: true,
+          });
+        },
+      );
     }, 250);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [resultIds, lastCollectionUpdate, requestReply, gridRef]);
+  }, [tracks, resultIds, lastCollectionUpdate, requestReply, gridRef]);
 
   const [changingVideo, setChangingVideo] = useState<ITrack | null>(null);
   const changeVideo = useCallback(
@@ -781,6 +823,7 @@ export const SearchResultsGrid = ({
       requestReply,
       playId,
       inCollection,
+      similar,
       dispatch,
       onArtistClick,
       onLabelClick,

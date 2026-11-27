@@ -2333,6 +2333,19 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 .await;
         }
 
+        MsgClient::FindSimilarTracks { id, tracks } => {
+            let Some(pool) = state.pool() else {
+                reply_error(tx, id, "No collection open").await;
+                return Ok(());
+            };
+            let collection = db::get_all_tracks(pool).await?;
+            let similar = tokio::task::spawn_blocking(move || {
+                crate::similar::find_similar(&collection, &tracks)
+            })
+            .await?;
+            let _ = tx.send(MsgServer::SimilarTracks { id, similar }).await;
+        }
+
         MsgClient::GetCollectionTrack {
             id,
             yt_id,

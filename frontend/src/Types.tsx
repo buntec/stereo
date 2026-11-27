@@ -232,6 +232,14 @@ export type ClientMsg =
   | { type: "delete-collection"; path: string }
   | { type: "rename-collection"; path: string; name: string }
   | { type: "collection-contains-ids"; yt_ids: string[] }
+  // Answered with "similar-tracks", one list per track, in order.
+  | {
+      type: "find-similar-tracks";
+      tracks: Pick<
+        ITrack,
+        "yt_id" | "title" | "mix_name" | "artists" | "bp_id" | "sp_id"
+      >[];
+    }
   | { type: "get-collection-track"; yt_id: string; collection: string }
   | { type: "prepare-collection-download"; collection: string }
   // Exports `tracks` as `<name>.json`; answered with "collection-download".
@@ -491,6 +499,7 @@ export type ServerMsg =
       id: number;
       contained: string[];
     }
+  | { type: "similar-tracks"; id: number; similar: ITrack[][] }
   | {
       /** The track as stored in the collection; null if it isn't in it or that isn't open. */
       type: "collection-track";
