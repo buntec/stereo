@@ -15,7 +15,7 @@
 }:
 
 let
-  version = "0.1.80";
+  version = "0.1.81";
 
   platforms = {
     "aarch64-darwin" = "macos-aarch64";
@@ -25,10 +25,10 @@ let
   };
 
   hashes = {
-    "aarch64-darwin" = "sha256-8H+Ls3sawacohgkklufLKl+qEQnYZ7M9POu6nmt7wOA=";
-    "x86_64-darwin" = "sha256-uK4aRQoHxK15zR0zmPAkVgTYNLHPb7MWw/dedh7ReAE=";
-    "aarch64-linux" = "sha256-MNp7U62xgebPNahrnzwqhwqh4t1lxdXS54Qa+8xN0DA=";
-    "x86_64-linux" = "sha256-0/yu0zRzCt8DtOZPgZYOzfVUZ142baHA7zyqlMX8zFo=";
+    "aarch64-darwin" = "sha256-ypMDWqPi9iP91kG7BXZ28Pzq9D81ZcIMPs59GZtwUvY=";
+    "x86_64-darwin" = "sha256-w3BAESpWDEC/Q5te6Zqx8mFkdQLdZPm2FB0ingwov7Y=";
+    "aarch64-linux" = "sha256-JqU6Wp59nWlqDaXz2lE6r5xc8btkWnASTxpnv61ZjZ0=";
+    "x86_64-linux" = "sha256-qeJTKlPuRjJLe5mXaNPkQQ+53ocdso0ITRpOIsxf/68=";
   };
 
   system = stdenv.hostPlatform.system;
