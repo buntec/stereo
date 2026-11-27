@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use chrono::NaiveDate;
-use futures::{future::join_all, stream, StreamExt};
+use futures::{future::join_all, stream, Stream, StreamExt};
 use scraper::{Html, Selector};
 use tokio::sync::{mpsc, RwLock};
 use wreq::Client;
@@ -782,13 +782,28 @@ pub async fn bp_get_label_tracks(
     }
 }
 
+/// Beatport serves at most this many tracks a page, whatever `per_page` asks for.
+const BP_PAGE_SIZE: usize = 100;
+
+/// Page `page` (from 1) of the Beatport track list at `url`, newest first and back to
+/// `start_date`, and whether the page was full, so the list may go on.
 async fn bp_get_releases(
     client: &Client,
     url: &str,
-    params: &[(&str, String)],
-) -> anyhow::Result<Vec<BPTrack>> {
-    let json = bp_page(client, url, params).await?;
+    page: usize,
+    start_date: Option<NaiveDate>,
+) -> anyhow::Result<(Vec<BPTrack>, bool)> {
+    let mut params: Vec<(&str, String)> = vec![
+        ("page", page.to_string()),
+        ("per_page", BP_PAGE_SIZE.to_string()),
+    ];
+    if let Some(start) = start_date {
+        let end = chrono::Local::now().date_naive();
+        params.push(("publish_date", format!("{}:{}", start, end)));
+    }
+    let json = bp_page(client, url, &params).await?;
 
+    let mut rows = 0;
     let mut tracks = vec![];
     if let Some(queries) = json["props"]["pageProps"]["dehydratedState"]["queries"].as_array() {
         for query in queries {
@@ -800,15 +815,12 @@ async fn bp_get_releases(
                 continue;
             }
             if let Some(results) = query["state"]["data"]["results"].as_array() {
-                for item in results {
-                    if let Some(t) = parse_bp_track_from_releases(item) {
-                        tracks.push(t);
-                    }
-                }
+                rows += results.len();
+                tracks.extend(results.iter().filter_map(parse_bp_track_from_releases));
             }
         }
     }
-    Ok(tracks)
+    Ok((tracks, rows >= BP_PAGE_SIZE))
 }
 
 /// A Beatport URL with these path segments, percent-encoded. Slugs from track pages keep
@@ -822,33 +834,33 @@ fn bp_url(segments: &[&str]) -> String {
     url.into()
 }
 
+fn bp_label_tracks_url(label: &BPLabel) -> String {
+    bp_url(&["label", &label.name, &label.id.to_string(), "tracks"])
+}
+
+fn bp_artist_tracks_url(artist: &BPArtist) -> String {
+    bp_url(&["artist", &artist.name, &artist.id.to_string(), "tracks"])
+}
+
+/// The newest page of the label's tracks, back to `start_date`.
 pub async fn bp_get_label_releases(
     client: &Client,
     label: &BPLabel,
     start_date: Option<NaiveDate>,
 ) -> anyhow::Result<Vec<BPTrack>> {
-    let mut params: Vec<(&str, String)> = vec![("page", "1".into()), ("per_page", "1000".into())];
-    if let Some(start) = start_date {
-        let end = chrono::Local::now().date_naive();
-        params.push(("publish_date", format!("{}:{}", start, end)));
-    }
-    let url = bp_url(&["label", &label.name, &label.id.to_string(), "tracks"]);
-    bp_get_releases(client, &url, &params).await
+    let url = bp_label_tracks_url(label);
+    Ok(bp_get_releases(client, &url, 1, start_date).await?.0)
 }
 
+/// The newest page of the artist's tracks, back to `start_date`.
 pub async fn bp_get_artist_releases(
     client: &Client,
     artist: &BPArtist,
     start_date: Option<NaiveDate>,
 ) -> anyhow::Result<Vec<BPTrack>> {
-    let mut params: Vec<(&str, String)> = vec![("page", "1".into()), ("per_page", "1000".into())];
-    if let Some(start) = start_date {
-        let end = chrono::Local::now().date_naive();
-        params.push(("publish_date", format!("{}:{}", start, end)));
-    }
-    let url = bp_url(&["artist", &artist.name, &artist.id.to_string(), "tracks"]);
+    let url = bp_artist_tracks_url(artist);
     tracing::info!("Fetching artist releases: {url}");
-    bp_get_releases(client, &url, &params).await
+    Ok(bp_get_releases(client, &url, 1, start_date).await?.0)
 }
 
 /// Extracts the chart from a genre's top-100 page `__NEXT_DATA__` as (1-based chart position,
@@ -1042,23 +1054,32 @@ pub async fn sc_search_users(
         .collect())
 }
 
+/// Up to `limit` of the user's tracks, newest first, from `cursor` (the start if none), and the
+/// cursor of the tracks after them, if any. The cursor is the `offset` of the response's
+/// `next_href`, which isn't a count: SoundCloud ignores a numeric one.
 pub async fn sc_get_user_tracks(
     client: &Client,
     user_id: i64,
     limit: usize,
-) -> anyhow::Result<Vec<SCTrack>> {
-    let json = sc_get(
-        client,
-        &format!("/users/{user_id}/tracks"),
-        &[("limit", limit.to_string())],
-    )
-    .await?;
-    Ok(json["collection"]
+    cursor: Option<&str>,
+) -> anyhow::Result<(Vec<SCTrack>, Option<String>)> {
+    let mut params = vec![("limit", limit.to_string())];
+    params.extend(cursor.map(|c| ("offset", c.to_string())));
+    let json = sc_get(client, &format!("/users/{user_id}/tracks"), &params).await?;
+    let items = json["collection"]
         .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(parse_sc_track)
-        .collect())
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let next = json["next_href"]
+        .as_str()
+        .filter(|_| !items.is_empty())
+        .and_then(|href| url::Url::parse(href).ok())
+        .and_then(|url| {
+            url.query_pairs()
+                .find(|(k, _)| k == "offset")
+                .map(|(_, v)| v.into_owned())
+        });
+    Ok((items.iter().filter_map(parse_sc_track).collect(), next))
 }
 
 /// Up to `limit` tracks of the SoundCloud account of the artist named `name`.
@@ -1080,34 +1101,46 @@ pub async fn sc_get_label_tracks(
     sc_tracks_by_person(client, name, limit, true).await
 }
 
-/// Finds the SoundCloud account matching `name` (an artist or label both being SoundCloud
-/// "people") and returns their tracks. When `set_label` is true, every returned track's
-/// `label` is overwritten with the account's username, since this is used for label lookups
-/// where the account *is* the label regardless of what a track's own `label_name` says.
-async fn sc_tracks_by_person(
+/// The SoundCloud account of the artist or label named `name` (an artist or label both being
+/// SoundCloud "people").
+async fn sc_find_person(
     client: &Client,
     name: &str,
-    limit: usize,
-    set_label: bool,
-) -> anyhow::Result<Vec<SCTrack>> {
+    is_label: bool,
+) -> anyhow::Result<Option<SCUser>> {
     // For artists, take the first account actually named `name` rather than the top hit, which
     // may just be a similar name (searching "Luch" also returns "LUCH!Q"). Label accounts are
     // often named differently from the label itself ("Defected" for "Defected Records"), so
     // label lookups keep the top hit.
-    let users = sc_search_users(client, name, if set_label { 1 } else { 10 }).await?;
-    let user = if set_label {
+    let users = sc_search_users(client, name, if is_label { 1 } else { 10 }).await?;
+    Ok(if is_label {
         users.into_iter().next()
     } else {
         users.into_iter().find(|u| is_same_name(&u.username, name))
-    };
-    let Some(user) = user else {
+    })
+}
+
+/// For a label, the account *is* the label regardless of what a track's own `label_name`
+/// says, so every track is labeled with the account's username.
+fn sc_label_tracks(tracks: &mut [SCTrack], user: &SCUser) {
+    for track in tracks {
+        track.label = Some(user.username.clone());
+    }
+}
+
+/// The newest tracks of the account matching `name` (see [`sc_find_person`]).
+async fn sc_tracks_by_person(
+    client: &Client,
+    name: &str,
+    limit: usize,
+    is_label: bool,
+) -> anyhow::Result<Vec<SCTrack>> {
+    let Some(user) = sc_find_person(client, name, is_label).await? else {
         return Ok(vec![]);
     };
-    let mut tracks = sc_get_user_tracks(client, user.id, limit).await?;
-    if set_label {
-        for track in &mut tracks {
-            track.label = Some(user.username.clone());
-        }
+    let (mut tracks, _) = sc_get_user_tracks(client, user.id, limit, None).await?;
+    if is_label {
+        sc_label_tracks(&mut tracks, &user);
     }
     Ok(tracks)
 }
@@ -1364,25 +1397,26 @@ async fn vl_find_credit(
     Ok(None)
 }
 
-/// A track search filters by one contributor id only. Volumo credits collaborators separately,
-/// so a joint entry such as "Solomun & Stimming" has no tracks of its own to miss.
-async fn vl_get_credit_tracks(
+/// The track list filter for the Volumo label or artist named `name`, released back to
+/// `since`, or none if Volumo has no label or artist by that name. A track search filters by
+/// one contributor id only. Volumo credits collaborators separately, so a joint entry such as
+/// "Solomun & Stimming" has no tracks of its own to miss.
+async fn vl_credit_filter(
     client: &Client,
     credit: Credit,
     name: &str,
-    limit: usize,
     since: Option<NaiveDate>,
-) -> anyhow::Result<Vec<VLTrack>> {
+) -> anyhow::Result<Option<String>> {
     let Some(id) = vl_find_credit(client, credit, name).await? else {
         tracing::info!("Volumo has no {} named {name:?}", credit.noun());
-        return Ok(vec![]);
+        return Ok(None);
     };
     tracing::info!("Volumo {} tracks: {name} ({id})", credit.noun());
     let id_key = match credit {
         Credit::Label => "recordlabel_id",
         Credit::Artist => "artist_id",
     };
-    // Pre-orders end at today's release date. Volumo's "date" sort is newest first.
+    // Pre-orders end at today's release date.
     let today = chrono::Local::now().date_naive();
     let mut filter = serde_json::json!({
         id_key: id,
@@ -1392,16 +1426,28 @@ async fn vl_get_credit_tracks(
     if let Some(since) = since {
         filter["release_start_from"] = since.to_string().into();
     }
-    let filter = filter.to_string();
-    let limit_str = limit.to_string();
+    Ok(Some(filter.to_string()))
+}
+
+/// Up to `limit` tracks matching `filter` from `offset` on, newest first, and how many the
+/// response listed, released or not.
+async fn vl_tracks_page(
+    client: &Client,
+    filter: &str,
+    offset: usize,
+    limit: usize,
+) -> anyhow::Result<(usize, Vec<VLTrack>)> {
+    let (offset, limit) = (offset.to_string(), limit.to_string());
     let (resp, genres) = tokio::join!(
         client
             .get("https://volumo.com/api/v1/tracks")
             .header("Accept", "application/json")
             .query(&[
-                ("filter", filter.as_str()),
+                ("filter", filter),
+                // Newest first.
                 ("sort", "date"),
-                ("limit", limit_str.as_str()),
+                ("limit", limit.as_str()),
+                ("offset", offset.as_str()),
             ])
             .send(),
         get_vl_genres(client),
@@ -1411,11 +1457,27 @@ async fn vl_get_credit_tracks(
         tracing::warn!("Volumo genre list fetch failed: {e}");
         HashMap::new()
     });
-    Ok(vl_items(&json)?
+    let items = vl_items(&json)?;
+    let today = chrono::Local::now().date_naive();
+    let tracks = items
         .iter()
         .filter_map(|item| parse_vl_track(item, &genres))
         .filter(|t| t.release_date <= today)
-        .collect())
+        .collect();
+    Ok((items.len(), tracks))
+}
+
+async fn vl_get_credit_tracks(
+    client: &Client,
+    credit: Credit,
+    name: &str,
+    limit: usize,
+    since: Option<NaiveDate>,
+) -> anyhow::Result<Vec<VLTrack>> {
+    match vl_credit_filter(client, credit, name, since).await? {
+        Some(filter) => Ok(vl_tracks_page(client, &filter, 0, limit).await?.1),
+        None => Ok(vec![]),
+    }
 }
 
 // ── Traxsource ───────────────────────────────────────────────────────────────
@@ -1603,10 +1665,50 @@ const TX_PAGE_SIZE: usize = 100;
 /// Bounds the requests for one catalog, whatever the limit.
 const TX_MAX_PAGES: usize = 10;
 
-/// Label and artist pages are Cloudflare-challenge-protected, but the same page loaded through
-/// `builder.php`, which the site uses for in-page navigation, isn't. Pre-orders come first and
-/// can fill whole pages, so this pages on until it has `limit` released tracks, reaches
-/// `since` (the last page may reach further back) or the catalog ends.
+/// The URL of the Traxsource label's or artist's track list (see [`tx_credit_page`]), or none
+/// if a search finds no label or artist named `name`.
+async fn tx_credit_url(
+    client: &Client,
+    credit: Credit,
+    name: &str,
+) -> anyhow::Result<Option<String>> {
+    let Some(path) = tx_find_credit_path(client, credit, name).await? else {
+        tracing::info!("Traxsource has no {} named {name:?}", credit.noun());
+        return Ok(None);
+    };
+    let url = format!("https://www.traxsource.com/scripts/builder.php{path}");
+    tracing::info!("Traxsource {} tracks: {url}", credit.noun());
+    Ok(Some(url))
+}
+
+/// Page `page` (from 1) of a label's or artist's tracks, newest first: its number of rows and
+/// the released tracks among them (see [`parse_tx_page`]). Label and artist pages are
+/// Cloudflare-challenge-protected, but the same page loaded through `builder.php`, which the
+/// site uses for in-page navigation, isn't.
+async fn tx_credit_page(
+    client: &Client,
+    url: &str,
+    page: usize,
+) -> anyhow::Result<(usize, Vec<TXTrack>)> {
+    let resp = client
+        .get(url)
+        .query(&[
+            ("cn", "tracks"),
+            ("ipp", TX_PAGE_SIZE.to_string().as_str()),
+            ("ob", "r_date"),
+            ("so", "desc"),
+            ("page", page.to_string().as_str()),
+        ])
+        .header(wreq::header::COOKIE, TX_SESSION_COOKIE.as_str())
+        .send()
+        .await?;
+    Ok(parse_tx_page(&Html::parse_document(
+        &response_text(resp).await?,
+    )))
+}
+
+/// Pre-orders come first and can fill whole pages, so this pages on until it has `limit`
+/// released tracks, reaches `since` (the last page may reach further back) or the catalog ends.
 async fn tx_get_credit_tracks(
     client: &Client,
     credit: Credit,
@@ -1614,29 +1716,12 @@ async fn tx_get_credit_tracks(
     limit: usize,
     since: Option<NaiveDate>,
 ) -> anyhow::Result<Vec<TXTrack>> {
-    let Some(path) = tx_find_credit_path(client, credit, name).await? else {
-        tracing::info!("Traxsource has no {} named {name:?}", credit.noun());
+    let Some(url) = tx_credit_url(client, credit, name).await? else {
         return Ok(vec![]);
     };
-    let url = format!("https://www.traxsource.com/scripts/builder.php{path}");
-    tracing::info!("Traxsource {} tracks: {url}", credit.noun());
-    let page_size = TX_PAGE_SIZE.to_string();
     let mut tracks = vec![];
     for page in 1..=TX_MAX_PAGES {
-        let page = page.to_string();
-        let resp = client
-            .get(&url)
-            .query(&[
-                ("cn", "tracks"),
-                ("ipp", page_size.as_str()),
-                ("ob", "r_date"),
-                ("so", "desc"),
-                ("page", page.as_str()),
-            ])
-            .header(wreq::header::COOKIE, TX_SESSION_COOKIE.as_str())
-            .send()
-            .await?;
-        let (rows, page_tracks) = parse_tx_page(&Html::parse_document(&response_text(resp).await?));
+        let (rows, page_tracks) = tx_credit_page(client, &url, page).await?;
         let reached_since = since.is_some_and(|since| {
             page_tracks
                 .last()
@@ -2750,30 +2835,273 @@ pub async fn fixup_track(client: Arc<Client>, track: Track) -> anyhow::Result<Op
     }))
 }
 
-/// Round-robins result lists from all backends together so no single source hogs the front
-/// of the queue. Tracks not yet released (pre-orders) are left out.
-fn interleave(sources: Vec<Vec<RawTrack>>) -> Vec<RawTrack> {
-    let cutoff = chrono::Local::now().date_naive() + chrono::Duration::days(1);
-    let mut sources: Vec<_> = sources
-        .into_iter()
-        .map(|tracks| {
-            tracks
-                .into_iter()
-                .filter(move |t| t.release_date() <= cutoff)
-        })
-        .collect();
-    let mut out = Vec::new();
-    loop {
-        let before = out.len();
-        out.extend(sources.iter_mut().filter_map(Iterator::next));
-        if out.len() == before {
-            break;
-        }
-    }
-    out
+// ── Catalogs ─────────────────────────────────────────────────────────────────
+
+/// The page size of label and artist catalogs, which is also all Beatport serves.
+const CATALOG_PAGE_SIZE: usize = 100;
+/// How many candidates per result a catalog may supply at most. Many candidates come to
+/// nothing: about a third have no acceptable YouTube video, and more than one source can list
+/// the same track. Some sources list nearly all of a big label's catalog without a video, so
+/// paging on until the limit is reached could take thousands of YouTube searches.
+const CATALOG_CANDIDATES_PER_RESULT: usize = 3;
+
+/// The request for a page of a source's catalog of a label or artist.
+enum CatalogPage {
+    Beatport {
+        url: String,
+        page: usize,
+    },
+    Soundcloud {
+        user: SCUser,
+        is_label: bool,
+        cursor: Option<String>,
+    },
+    Volumo {
+        filter: String,
+        offset: usize,
+    },
+    Traxsource {
+        url: String,
+        page: usize,
+    },
 }
 
-/// Wraps one backend's results for `interleave`.
+impl CatalogPage {
+    /// The first page of `source`'s catalog of the label or artist `name`, or none if the source
+    /// has no such label or artist or can't list a catalog.
+    async fn first(
+        client: &Client,
+        source: TrackSource,
+        credit: Credit,
+        name: &str,
+        known_bp_tracks: &KnownBpTracks,
+    ) -> anyhow::Result<Option<Self>> {
+        Ok(match source {
+            TrackSource::Beatport => match credit {
+                Credit::Label => bp_find_label(client, name, known_bp_tracks)
+                    .await?
+                    .map(|label| bp_label_tracks_url(&label)),
+                Credit::Artist => bp_find_artist(client, name, known_bp_tracks)
+                    .await?
+                    .map(|artist| bp_artist_tracks_url(&artist)),
+            }
+            .map(|url| CatalogPage::Beatport { url, page: 1 }),
+            TrackSource::Soundcloud => {
+                let is_label = credit == Credit::Label;
+                sc_find_person(client, name, is_label)
+                    .await?
+                    .map(|user| CatalogPage::Soundcloud {
+                        user,
+                        is_label,
+                        cursor: None,
+                    })
+            }
+            TrackSource::Volumo => vl_credit_filter(client, credit, name, None)
+                .await?
+                .map(|filter| CatalogPage::Volumo { filter, offset: 0 }),
+            TrackSource::Traxsource => tx_credit_url(client, credit, name)
+                .await?
+                .map(|url| CatalogPage::Traxsource { url, page: 1 }),
+            TrackSource::Spotify | TrackSource::AppleMusic | TrackSource::Shazam => None,
+        })
+    }
+
+    /// The page's tracks, newest first, and the next page if the catalog may go on.
+    async fn fetch(self, client: &Client) -> anyhow::Result<(Vec<RawTrack>, Option<Self>)> {
+        Ok(match self {
+            CatalogPage::Beatport { url, page } => {
+                let (tracks, full) = bp_get_releases(client, &url, page, None).await?;
+                let next = full.then(|| CatalogPage::Beatport {
+                    url,
+                    page: page + 1,
+                });
+                (raw(tracks, RawTrack::Bp), next)
+            }
+            CatalogPage::Soundcloud {
+                user,
+                is_label,
+                cursor,
+            } => {
+                let (mut tracks, next) =
+                    sc_get_user_tracks(client, user.id, CATALOG_PAGE_SIZE, cursor.as_deref())
+                        .await?;
+                if is_label {
+                    sc_label_tracks(&mut tracks, &user);
+                }
+                let next = next.map(|cursor| CatalogPage::Soundcloud {
+                    user,
+                    is_label,
+                    cursor: Some(cursor),
+                });
+                (raw(tracks, RawTrack::Sc), next)
+            }
+            CatalogPage::Volumo { filter, offset } => {
+                let (rows, tracks) =
+                    vl_tracks_page(client, &filter, offset, CATALOG_PAGE_SIZE).await?;
+                let next = (rows >= CATALOG_PAGE_SIZE).then(|| CatalogPage::Volumo {
+                    filter,
+                    offset: offset + rows,
+                });
+                (raw(tracks, RawTrack::Vl), next)
+            }
+            CatalogPage::Traxsource { url, page } => {
+                let (rows, tracks) = tx_credit_page(client, &url, page).await?;
+                let next = (rows >= TX_PAGE_SIZE).then(|| CatalogPage::Traxsource {
+                    url,
+                    page: page + 1,
+                });
+                (raw(tracks, RawTrack::Tx), next)
+            }
+        })
+    }
+}
+
+/// One source's candidates for a search. A label's or artist's catalog is fetched a page at a
+/// time, as the search uses up the candidates it has: tracks without a YouTube video and
+/// tracks other sources found too don't become results, so a fixed number of candidates can
+/// fall short of the limit.
+struct Catalog {
+    source: &'static str,
+    tracks: std::vec::IntoIter<RawTrack>,
+    next: Option<CatalogPage>,
+    /// How many more pages may be fetched.
+    pages_left: usize,
+}
+
+impl Catalog {
+    /// A source's search results, which aren't paged.
+    fn fixed(source: TrackSource, tracks: Vec<RawTrack>) -> Self {
+        Catalog {
+            source: source_name(source),
+            tracks: tracks.into_iter(),
+            next: None,
+            pages_left: 0,
+        }
+    }
+
+    /// `source`'s catalog of the label or artist `name`, with its first page fetched, enough
+    /// for `limit` results (see [`CATALOG_CANDIDATES_PER_RESULT`]).
+    async fn open(
+        client: &Client,
+        source: TrackSource,
+        credit: Credit,
+        name: &str,
+        known_bp_tracks: &KnownBpTracks,
+        limit: usize,
+    ) -> anyhow::Result<Self> {
+        let mut catalog = Catalog {
+            source: source_name(source),
+            tracks: Vec::new().into_iter(),
+            next: CatalogPage::first(client, source, credit, name, known_bp_tracks).await?,
+            pages_left: (limit * CATALOG_CANDIDATES_PER_RESULT)
+                .div_ceil(CATALOG_PAGE_SIZE)
+                .max(1),
+        };
+        catalog.fetch_next(client).await?;
+        Ok(catalog)
+    }
+
+    async fn fetch_next(&mut self, client: &Client) -> anyhow::Result<()> {
+        let Some(page) = self.next.take() else {
+            return Ok(());
+        };
+        let (tracks, next) = page.fetch(client).await?;
+        self.pages_left -= 1;
+        self.tracks = tracks.into_iter();
+        self.next = next.filter(|_| self.pages_left > 0);
+        Ok(())
+    }
+
+    /// The next candidate, or none at the end of the catalog. Tracks released later than
+    /// tomorrow are skipped: they can't be on YouTube yet, and a day is left for time zones.
+    async fn next(&mut self, client: &Client) -> anyhow::Result<Option<RawTrack>> {
+        let cutoff = chrono::Local::now().date_naive() + chrono::Duration::days(1);
+        loop {
+            if let Some(track) = self.tracks.find(|t| t.release_date() <= cutoff) {
+                return Ok(Some(track));
+            }
+            if self.next.is_none() {
+                return Ok(None);
+            }
+            self.fetch_next(client).await?;
+        }
+    }
+}
+
+fn source_name(source: TrackSource) -> &'static str {
+    match source {
+        TrackSource::Beatport => "Beatport",
+        TrackSource::Soundcloud => "SoundCloud",
+        TrackSource::Volumo => "Volumo",
+        TrackSource::Traxsource => "Traxsource",
+        TrackSource::Spotify => "Spotify",
+        TrackSource::AppleMusic => "Apple Music",
+        TrackSource::Shazam => "Shazam",
+    }
+}
+
+/// Opens the catalogs of the label or artist `name` on the selected `sources` that can list one,
+/// concurrently. Sources that fail are recorded in `failures` and left out.
+async fn open_catalogs(
+    client: &Client,
+    credit: Credit,
+    name: &str,
+    sources: &[TrackSource],
+    known_bp_tracks: &KnownBpTracks,
+    limit: usize,
+    failures: &mut Vec<String>,
+) -> Vec<Catalog> {
+    let opened = join_all(
+        CATALOG_SOURCES
+            .iter()
+            .filter(|source| sources.contains(source))
+            .map(|&source| async move {
+                let catalog = Catalog::open(client, source, credit, name, known_bp_tracks, limit);
+                (source, catalog.await)
+            }),
+    )
+    .await;
+    opened
+        .into_iter()
+        .filter_map(|(source, result)| {
+            result
+                .inspect_err(|e| {
+                    let source = source_name(source);
+                    tracing::warn!("{source} {} search failed: {e}", credit.noun());
+                    failures.push(format!("{source}: {e}"));
+                })
+                .ok()
+        })
+        .collect()
+}
+
+/// The candidates of `catalogs`, taking one from each in turn so that every source is
+/// represented whatever the limit. A source whose later page fails is reported and left out.
+fn interleave<'a>(
+    client: &'a Client,
+    tx: &'a mpsc::Sender<MsgServer>,
+    catalogs: Vec<Catalog>,
+) -> impl Stream<Item = RawTrack> + 'a {
+    stream::unfold((catalogs, 0), move |(mut catalogs, mut i)| async move {
+        while !catalogs.is_empty() {
+            i %= catalogs.len();
+            match catalogs[i].next(client).await {
+                Ok(Some(track)) => return Some((track, (catalogs, i + 1))),
+                Ok(None) => {
+                    catalogs.remove(i);
+                }
+                Err(e) => {
+                    let source = catalogs.remove(i).source;
+                    tracing::warn!("{source} catalog page failed: {e}");
+                    report_source_failures(tx, &[format!("{source}: {e}")]).await;
+                }
+            }
+        }
+        None
+    })
+}
+
+/// Wraps one backend's results for a [`Catalog`].
 fn raw<T>(tracks: Vec<T>, wrap: fn(T) -> RawTrack) -> Vec<RawTrack> {
     tracks.into_iter().map(wrap).collect()
 }
@@ -2966,16 +3294,17 @@ where
     let _ = tx.send(MsgServer::SearchComplete { query_id }).await;
 }
 
-/// Resolves a YouTube match for each raw track and streams it, stopping at `limit` results.
-/// The same video found via several backends is only sent once.
+/// Resolves a YouTube match for each of the catalogs' candidates (see [`interleave`]) and
+/// streams it, stopping at `limit` results. The same video found via several backends is only
+/// sent once.
 async fn stream_raw_tracks(
     client: &Client,
     tx: &mpsc::Sender<MsgServer>,
     query_id: i64,
     limit: usize,
-    raw_tracks: Vec<RawTrack>,
+    catalogs: Vec<Catalog>,
 ) {
-    let ranked = raw_tracks.into_iter().map(|raw| (raw, None)).collect();
+    let ranked = interleave(client, tx, catalogs).map(|raw| (raw, None));
     stream_matched_tracks(client, tx, query_id, &mut HashSet::new(), limit, ranked).await;
 }
 
@@ -3103,14 +3432,14 @@ pub async fn search_fuzzy(
             &tx,
             query_id,
             limit,
-            interleave(vec![
-                raw(bp_tracks, RawTrack::Bp),
-                raw(sc_tracks, RawTrack::Sc),
-                raw(vl_tracks, RawTrack::Vl),
-                raw(tx_tracks, RawTrack::Tx),
-                raw(sp_tracks, RawTrack::Sp),
-                raw(am_tracks, RawTrack::Am),
-            ]),
+            vec![
+                Catalog::fixed(TrackSource::Beatport, raw(bp_tracks, RawTrack::Bp)),
+                Catalog::fixed(TrackSource::Soundcloud, raw(sc_tracks, RawTrack::Sc)),
+                Catalog::fixed(TrackSource::Volumo, raw(vl_tracks, RawTrack::Vl)),
+                Catalog::fixed(TrackSource::Traxsource, raw(tx_tracks, RawTrack::Tx)),
+                Catalog::fixed(TrackSource::Spotify, raw(sp_tracks, RawTrack::Sp)),
+                Catalog::fixed(TrackSource::AppleMusic, raw(am_tracks, RawTrack::Am)),
+            ],
         )
         .await;
         Ok(())
@@ -3131,56 +3460,21 @@ pub async fn search_by_label(
         if !check_catalog_sources(&tx, &sources, "search by label").await {
             return Ok(());
         }
-        let (bp_res, sc_res, vl_res, tx_res) = tokio::join!(
-            async {
-                if !sources.contains(&TrackSource::Beatport) {
-                    return Ok(vec![]);
-                }
-                bp_get_label_tracks(&client, &label_name, &known_bp_tracks).await
-            },
-            async {
-                if sources.contains(&TrackSource::Soundcloud) {
-                    sc_get_label_tracks(&client, &label_name, limit).await
-                } else {
-                    Ok(vec![])
-                }
-            },
-            async {
-                if sources.contains(&TrackSource::Volumo) {
-                    vl_get_label_tracks(&client, &label_name, limit, None).await
-                } else {
-                    Ok(vec![])
-                }
-            },
-            async {
-                if sources.contains(&TrackSource::Traxsource) {
-                    tx_get_label_tracks(&client, &label_name, limit, None).await
-                } else {
-                    Ok(vec![])
-                }
-            },
-        );
         let mut failures = Vec::new();
-        let bp_tracks = source_results(bp_res, "Beatport", "label search", &mut failures);
-        let sc_tracks = source_results(sc_res, "SoundCloud", "label search", &mut failures);
-        let vl_tracks = source_results(vl_res, "Volumo", "label search", &mut failures);
-        let tx_tracks = source_results(tx_res, "Traxsource", "label search", &mut failures);
-        report_source_failures(&tx, &failures).await;
         // Spotify and Apple Music aren't asked: their searches don't find tracks by label and
         // their results don't name one, so a text search would find only unrelated tracks.
-        stream_raw_tracks(
+        let catalogs = open_catalogs(
             &client,
-            &tx,
-            query_id,
+            Credit::Label,
+            &label_name,
+            &sources,
+            &known_bp_tracks,
             limit,
-            interleave(vec![
-                raw(bp_tracks, RawTrack::Bp),
-                raw(sc_tracks, RawTrack::Sc),
-                raw(vl_tracks, RawTrack::Vl),
-                raw(tx_tracks, RawTrack::Tx),
-            ]),
+            &mut failures,
         )
         .await;
+        report_source_failures(&tx, &failures).await;
+        stream_raw_tracks(&client, &tx, query_id, limit, catalogs).await;
         Ok(())
     })
     .await;
@@ -3196,34 +3490,17 @@ pub async fn search_by_artist(
     known_bp_tracks: KnownBpTracks,
 ) {
     run_search(&tx, query_id, "search_by_artist", || async {
-        let (bp_res, sc_res, vl_res, tx_res, sp_res, am_res) = tokio::join!(
-            async {
-                if !sources.contains(&TrackSource::Beatport) {
-                    return Ok(vec![]);
-                }
-                bp_get_artist_tracks(&client, &artist_name, &known_bp_tracks).await
-            },
-            async {
-                if sources.contains(&TrackSource::Soundcloud) {
-                    sc_get_artist_tracks(&client, &artist_name, limit).await
-                } else {
-                    Ok(vec![])
-                }
-            },
-            async {
-                if sources.contains(&TrackSource::Volumo) {
-                    vl_get_artist_tracks(&client, &artist_name, limit, None).await
-                } else {
-                    Ok(vec![])
-                }
-            },
-            async {
-                if sources.contains(&TrackSource::Traxsource) {
-                    tx_get_artist_tracks(&client, &artist_name, limit, None).await
-                } else {
-                    Ok(vec![])
-                }
-            },
+        let mut failures = Vec::new();
+        let (catalogs, sp_res, am_res) = tokio::join!(
+            open_catalogs(
+                &client,
+                Credit::Artist,
+                &artist_name,
+                &sources,
+                &known_bp_tracks,
+                limit,
+                &mut failures,
+            ),
             async {
                 // Spotify's search has no artist-catalog endpoint, so its text search results
                 // are checked for the artist below.
@@ -3249,11 +3526,6 @@ pub async fn search_by_artist(
                 }
             },
         );
-        let mut failures = Vec::new();
-        let bp_tracks = source_results(bp_res, "Beatport", "artist search", &mut failures);
-        let sc_tracks = source_results(sc_res, "SoundCloud", "artist search", &mut failures);
-        let vl_tracks = source_results(vl_res, "Volumo", "artist search", &mut failures);
-        let tx_tracks = source_results(tx_res, "Traxsource", "artist search", &mut failures);
         let mut sp_tracks = source_results(sp_res, "Spotify", "artist search", &mut failures);
         let mut am_tracks = source_results(am_res, "Apple Music", "artist search", &mut failures);
         report_source_failures(&tx, &failures).await;
@@ -3266,21 +3538,16 @@ pub async fn search_by_artist(
                 credits_artist(&t.artists, &t.track_name, mix_name, &artist_name)
             }
         });
-        stream_raw_tracks(
-            &client,
-            &tx,
-            query_id,
-            limit,
-            interleave(vec![
-                raw(bp_tracks, RawTrack::Bp),
-                raw(sc_tracks, RawTrack::Sc),
-                raw(vl_tracks, RawTrack::Vl),
-                raw(tx_tracks, RawTrack::Tx),
-                raw(sp_tracks, RawTrack::Sp),
-                raw(am_tracks, RawTrack::Am),
-            ]),
-        )
-        .await;
+        let mut catalogs = catalogs;
+        catalogs.push(Catalog::fixed(
+            TrackSource::Spotify,
+            raw(sp_tracks, RawTrack::Sp),
+        ));
+        catalogs.push(Catalog::fixed(
+            TrackSource::AppleMusic,
+            raw(am_tracks, RawTrack::Am),
+        ));
+        stream_raw_tracks(&client, &tx, query_id, limit, catalogs).await;
         Ok(())
     })
     .await;
@@ -3445,14 +3712,15 @@ async fn stream_matched_tracks(
     query_id: i64,
     seen: &mut HashSet<String>,
     limit: usize,
-    raw_tracks: Vec<(RawTrack, Option<usize>)>,
+    raw_tracks: impl Stream<Item = (RawTrack, Option<usize>)>,
 ) {
-    let mut matches = stream::iter(raw_tracks)
+    let matches = raw_tracks
         .map(|(raw, chart_position)| async move {
             let vid = find_best_match(client, &raw).await;
             (raw, chart_position, vid)
         })
         .buffered(MATCH_CONCURRENCY);
+    let mut matches = std::pin::pin!(matches);
 
     let mut count = 0;
     while let Some((raw, chart_position, vid)) = matches.next().await {
@@ -3563,7 +3831,7 @@ pub async fn search_new_releases(
         let mut raw_tracks: Vec<RawTrack> = per_name.into_iter().flatten().collect();
         raw_tracks.sort_by_key(|t| std::cmp::Reverse(t.release_date()));
 
-        let ranked = raw_tracks.into_iter().map(|raw| (raw, None)).collect();
+        let ranked = stream::iter(raw_tracks.into_iter().map(|raw| (raw, None)));
         let mut seen = existing_yt_ids;
         stream_matched_tracks(&client, &tx, query_id, &mut seen, limit, ranked).await;
         Ok(())
@@ -3584,10 +3852,11 @@ pub async fn search_beatport_top100(
 ) {
     run_search(&tx, query_id, "search_beatport_top100", || async {
         let chart = bp_get_genre_top100(&client, genre_id).await?;
-        let ranked = chart
-            .into_iter()
-            .map(|(position, track)| (RawTrack::Bp(track), Some(position)))
-            .collect();
+        let ranked = stream::iter(
+            chart
+                .into_iter()
+                .map(|(position, track)| (RawTrack::Bp(track), Some(position))),
+        );
         stream_matched_tracks(&client, &tx, query_id, &mut HashSet::new(), limit, ranked).await;
         Ok(())
     })
@@ -3604,10 +3873,11 @@ pub async fn search_traxsource_top100(
 ) {
     run_search(&tx, query_id, "search_traxsource_top100", || async {
         let chart = tx_get_top100(&client).await?;
-        let ranked = chart
-            .into_iter()
-            .map(|(position, track)| (RawTrack::Tx(track), Some(position)))
-            .collect();
+        let ranked = stream::iter(
+            chart
+                .into_iter()
+                .map(|(position, track)| (RawTrack::Tx(track), Some(position))),
+        );
         stream_matched_tracks(&client, &tx, query_id, &mut HashSet::new(), limit, ranked).await;
         Ok(())
     })
