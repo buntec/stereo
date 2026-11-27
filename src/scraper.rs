@@ -2356,7 +2356,8 @@ struct MatchScore {
     version: VersionMatch,
     candidate_mix: Option<String>,
     specific_version_expected: bool,
-    strong_version_match: bool,
+    /// The matched version credits a remixer, which stands in for the artist.
+    credited_version_match: bool,
     disqualified: bool,
 }
 
@@ -2367,7 +2368,7 @@ impl MatchScore {
             && (!self.specific_version_expected || self.version == VersionMatch::Match)
             && self.title >= MIN_TITLE_SCORE
             && (self.artist >= MIN_ARTIST_SCORE
-                || (self.strong_version_match && self.title >= 0.80))
+                || (self.credited_version_match && self.title >= 0.80))
             && self.total >= MIN_MATCH_SCORE
     }
 }
@@ -2497,6 +2498,11 @@ fn match_score(raw: &RawTrack, candidate: &YTVideo) -> MatchScore {
     );
 
     let strong_version_match = expected_mix.is_some() && version == VersionMatch::Match;
+    // A generic version such as "Extended Mix" says nothing about who made the upload.
+    let credited_version_match = strong_version_match
+        && expected_mix
+            .as_deref()
+            .is_some_and(|m| !mix_credits(m).is_empty());
     let version_score = match version {
         VersionMatch::Match if strong_version_match => 0.25,
         VersionMatch::Match => 0.15,
@@ -2529,7 +2535,7 @@ fn match_score(raw: &RawTrack, candidate: &YTVideo) -> MatchScore {
         version,
         candidate_mix,
         specific_version_expected,
-        strong_version_match,
+        credited_version_match,
         disqualified,
     }
 }
@@ -4068,6 +4074,24 @@ mod remix_match_tests {
         let raw = RawTrack::Bp(bp_track("Just Like Magic", "Original Mix"));
         let wrong = video_from("Wrong Artist - Just Like Magic", "Wrong Artist");
         assert!(choose_best_match(&raw, vec![wrong]).is_none());
+    }
+
+    #[test]
+    fn rejects_generic_version_by_another_artist() {
+        // Naarly's "BORDERLINE (Extended Mix)" and "good time.. (Extended Mix)" matched these.
+        let raw = RawTrack::Bp(bp_track("BORDERLINE", "Extended Mix"));
+        let wrong = video_from("Borderline (Extended Mix)", "Brooke Lee - Topic");
+        assert!(choose_best_match(&raw, vec![wrong]).is_none());
+        let raw = RawTrack::Bp(bp_track("good time..", "Extended Mix"));
+        let wrong = video_from("Good Time (Extended Mix)", "Release - Topic");
+        assert!(choose_best_match(&raw, vec![wrong]).is_none());
+    }
+
+    #[test]
+    fn accepts_remix_credit_without_the_artist() {
+        let raw = RawTrack::Bp(bp_track("Just Like Magic", "Someone Remix"));
+        let label_upload = video_from("Just Like Magic (Someone Remix)", "Some Label");
+        assert!(choose_best_match(&raw, vec![label_upload]).is_some());
     }
 
     #[test]
