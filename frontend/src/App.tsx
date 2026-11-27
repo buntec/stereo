@@ -1280,7 +1280,7 @@ function App() {
         dispatch({
           type: "notification",
           message:
-            "Saved sign-in no longer valid. Scan a new code, or open Stereo's link with its token.",
+            "Saved sign-in no longer valid. Enter or scan a new sign-in code, or open Stereo's link with its token.",
           kind: "error",
         });
         return;

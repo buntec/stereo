@@ -69,7 +69,8 @@ function PairingQr({
   requestReply: RequestReply;
 }) {
   const [code, setCode] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  // Why the last code couldn't be created, e.g. too many pending.
+  const [failed, setFailed] = useState<string | null>(null);
   // Bumped for a new code before the current one is due for renewal: a scan uses it up, and
   // the popover can't tell, so one meant for typing would otherwise be refused.
   const [renewals, setRenewals] = useState(0);
@@ -81,10 +82,14 @@ function PairingQr({
         if (disposed) return;
         if (r.type === "pairing-code" && "code" in r) {
           setCode(r.code);
-          setFailed(false);
+          setFailed(null);
           timer = setTimeout(issue, r.expires_in * 750);
         } else {
-          setFailed(true);
+          setFailed(
+            "message" in r && typeof r.message === "string"
+              ? r.message
+              : "the backend didn't answer",
+          );
         }
       });
     issue();
@@ -104,7 +109,7 @@ function PairingQr({
   if (failed)
     return (
       <VStack gap={1} hAlign="center">
-        <Text type="supporting">Could not create a sign-in code.</Text>
+        <Text type="supporting">Could not create a sign-in code: {failed}</Text>
         {renew}
       </VStack>
     );

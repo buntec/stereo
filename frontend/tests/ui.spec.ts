@@ -187,6 +187,15 @@ async function openApp(
           break;
         case "create-pairing-code":
           pairingCodes += 1;
+          if (pairingCodes > 16) {
+            send({
+              type: "error-reply",
+              id: message.id,
+              message:
+                "too many pending pairing codes; try again in a few minutes",
+            });
+            break;
+          }
           send({
             type: "pairing-code",
             id: message.id,
@@ -2777,6 +2786,9 @@ test(
     await expect(signIn).toBeDisabled();
     // Typed in lower case, with a separator and with an O and an I for 0 and 1.
     await input.fill("abcde-fghoi");
+    await expect(signIn).toBeEnabled();
+    // A pasted sign-in link gives its code.
+    await input.fill("https://stereo.example.ts.net/#stereo-pair=ABCDEFGH01");
     await signIn.click();
     await expect
       .poll(offered, { timeout: 10_000 })
@@ -2830,6 +2842,13 @@ test("the Tailnet menu shows the code to type and replaces it on request", async
   await page.getByRole("button", { name: "Get a new code" }).click();
   await expect(code).not.toHaveText(first!);
   await expect(code).toHaveText(/^ABCDE-FGH\d\d$/);
+  // Past the backend's limit of pending codes, the menu says why.
+  for (let i = 0; i < 16; i++) {
+    await page.getByRole("button", { name: "Get a new code" }).click();
+  }
+  await expect(
+    page.getByText(/Could not create a sign-in code: too many pending/),
+  ).toBeVisible();
 });
 
 test("losing the sign-in while search results show asks for a code", async ({

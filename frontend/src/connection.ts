@@ -20,9 +20,10 @@ export const isConnectionMessage = (message: string) =>
   message.startsWith(UNREACHABLE) || message.startsWith(LOST);
 
 /** A pairing code as typed: Crockford's base32 (`PAIRING_ALPHABET` in tailscale.rs), case and
- * separators ignored, the letters it leaves out read as the digits they look like. */
+ * separators ignored, the letters it leaves out read as the digits they look like. A pasted
+ * sign-in link (the QR code's) gives its code. */
 export const normalizePairingCode = (typed: string) =>
-  typed
+  (typed.match(/stereo-pair=([^&\s]*)/)?.[1] ?? typed)
     .toUpperCase()
     .replace(/[^0-9A-Z]/g, "")
     .replace(/O/g, "0")
