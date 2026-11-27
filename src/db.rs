@@ -373,8 +373,39 @@ pub async fn inc_play_count(
     .rows_affected())
 }
 
-pub async fn get_all_tracks(pool: &SqlitePool) -> anyhow::Result<Vec<Track>> {
-    let rows = sqlx::query("SELECT * FROM tracks").fetch_all(pool).await?;
+/// What `similar::find_similar` compares of every track, without the rest of each row.
+pub async fn get_track_identities(
+    pool: &SqlitePool,
+) -> anyhow::Result<Vec<crate::similar::TrackIdentity>> {
+    let rows = sqlx::query("SELECT yt_id, title, mix_name, artists, bp_id, sp_id FROM tracks")
+        .fetch_all(pool)
+        .await?;
+    rows.iter()
+        .map(|r| {
+            let artists: Option<String> = r.try_get("artists")?;
+            Ok(crate::similar::TrackIdentity {
+                yt_id: r.try_get("yt_id")?,
+                title: r.try_get("title")?,
+                mix_name: r.try_get("mix_name")?,
+                artists: artists
+                    .and_then(|a| serde_json::from_str(&a).ok())
+                    .unwrap_or_default(),
+                bp_id: r.try_get("bp_id")?,
+                sp_id: r.try_get("sp_id")?,
+            })
+        })
+        .collect()
+}
+
+/// The tracks with `yt_ids` that are in the collection, in no particular order.
+pub async fn get_tracks_by_ids(pool: &SqlitePool, yt_ids: &[String]) -> anyhow::Result<Vec<Track>> {
+    if yt_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let rows = sqlx::query("SELECT * FROM tracks WHERE yt_id IN (SELECT value FROM json_each(?))")
+        .bind(serde_json::to_string(yt_ids)?)
+        .fetch_all(pool)
+        .await?;
     rows.iter().map(Track::from_db_row).collect()
 }
 

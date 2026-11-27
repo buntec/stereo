@@ -217,7 +217,8 @@ struct SessionState {
     repo_sync_task: Option<tokio::task::JoinHandle<()>>,
     search_task: Option<tokio::task::JoinHandle<()>>,
     health_check_task: Option<tokio::task::JoinHandle<()>>,
-    similar_tracks_task: Option<tokio::task::JoinHandle<()>>,
+    /// The running `FindSimilarTracks` lookup and its request id.
+    similar_tracks_task: Option<(i64, tokio::task::JoinHandle<()>)>,
     youtube_playlist_task: Option<tokio::task::JoinHandle<()>>,
     fixup_task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -619,7 +620,7 @@ async fn handle_socket(mut socket: WebSocket, settings: Arc<Settings>, paired: O
     for task in [
         state.search_task.take(),
         state.health_check_task.take(),
-        state.similar_tracks_task.take(),
+        state.similar_tracks_task.take().map(|(_, task)| task),
         state.youtube_playlist_task.take(),
         state.fixup_task.take(),
     ]
@@ -2342,8 +2343,19 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
         } => {
             // A new lookup supersedes the last: the client sends one as results stream in and
             // only wants the latest.
-            if let Some(task) = state.similar_tracks_task.take() {
+            if let Some((old_id, task)) = state
+                .similar_tracks_task
+                .take()
+                .filter(|(_, task)| !task.is_finished())
+            {
                 task.abort();
+                // Answered all the same, so the client doesn't keep waiting for it.
+                let _ = tx
+                    .send(MsgServer::SimilarTracks {
+                        id: old_id,
+                        similar: vec![],
+                    })
+                    .await;
             }
             let pool = match state.pool() {
                 Some(pool) if is_open_collection(state, &collection) => pool.clone(),
@@ -2361,28 +2373,48 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             let tx = tx.clone();
             // Off the session loop, which would otherwise hold up every other message while
             // the whole collection is read and compared.
-            state.similar_tracks_task = Some(tokio::spawn(async move {
-                let similar = async {
-                    let collection = db::get_all_tracks(&pool).await?;
-                    let cancel = crate::similar::Cancel::default();
-                    let flag = cancel.flag();
-                    // Aborting this task drops `cancel`, which stops the blocking matcher.
-                    let similar = tokio::task::spawn_blocking(move || {
-                        crate::similar::find_similar(&collection, &tracks, &flag)
-                    })
-                    .await?;
-                    drop(cancel);
-                    anyhow::Ok(similar)
-                }
-                .await;
-                match similar {
-                    Ok(Some(similar)) => {
-                        let _ = tx.send(MsgServer::SimilarTracks { id, similar }).await;
+            state.similar_tracks_task = Some((
+                id,
+                tokio::spawn(async move {
+                    let similar = async {
+                        // Only the compared fields of every track, and whole rows for matches.
+                        let collection = db::get_track_identities(&pool).await?;
+                        let cancel = crate::similar::Cancel::default();
+                        let flag = cancel.flag();
+                        // Aborting this task drops `cancel`, which stops the blocking matcher.
+                        let ids = tokio::task::spawn_blocking(move || {
+                            crate::similar::find_similar(&collection, &tracks, &flag)
+                        })
+                        .await?;
+                        drop(cancel);
+                        let Some(ids) = ids else {
+                            return anyhow::Ok(None);
+                        };
+                        let mut wanted: Vec<String> = ids.iter().flatten().cloned().collect();
+                        wanted.sort_unstable();
+                        wanted.dedup();
+                        let by_id: HashMap<String, Track> = db::get_tracks_by_ids(&pool, &wanted)
+                            .await?
+                            .into_iter()
+                            .map(|t| (t.yt_id.clone(), t))
+                            .collect();
+                        // A track deleted in between is left out.
+                        let similar = ids
+                            .into_iter()
+                            .map(|ids| ids.iter().filter_map(|id| by_id.get(id).cloned()).collect())
+                            .collect();
+                        anyhow::Ok(Some(similar))
                     }
-                    Ok(None) => {}
-                    Err(e) => reply_error(&tx, id, &format!("{e:#}")).await,
-                }
-            }));
+                    .await;
+                    match similar {
+                        Ok(Some(similar)) => {
+                            let _ = tx.send(MsgServer::SimilarTracks { id, similar }).await;
+                        }
+                        Ok(None) => {}
+                        Err(e) => reply_error(&tx, id, &format!("{e:#}")).await,
+                    }
+                }),
+            ));
         }
 
         MsgClient::GetCollectionTrack {

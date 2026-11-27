@@ -1417,6 +1417,20 @@ test("metadata editing groups identifiers and explains invalid required fields",
   ).toBeDisabled();
 });
 
+test("Tab moves between the edit dialog's fields", async ({ page }) => {
+  await openApp(page);
+  await page
+    .getByRole("button", { name: "Options for Example track 1", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: /^Title/ }).focus();
+  await page.keyboard.press("Tab");
+  await expect(
+    dialog.getByRole("textbox", { name: "Artists", exact: true }),
+  ).toBeFocused();
+});
+
 test("a validation reply for an abandoned edit doesn't enable saving after reopening", async ({
   page,
 }) => {

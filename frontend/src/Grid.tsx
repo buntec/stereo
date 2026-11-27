@@ -124,9 +124,18 @@ function tabWithinCell({ event }: SuppressKeyboardEventParams): boolean {
   const target = event.target as HTMLElement;
   const cell = target.closest(".ag-cell");
   if (!cell) return false;
+  // A dialog rendered within the cell (the row's edit dialog) is left to the browser and its
+  // focus trap: the grid would otherwise move Tab out of it to the next cell.
+  const dialog = target.closest("dialog");
+  if (dialog && cell.contains(dialog)) return true;
   const buttons = Array.from(
     cell.querySelectorAll<HTMLElement>("button, a[href]"),
-  ).filter((el) => el.tabIndex >= 0 && el.getClientRects().length > 0);
+  ).filter(
+    (el) =>
+      el.tabIndex >= 0 &&
+      el.getClientRects().length > 0 &&
+      !el.closest("dialog"),
+  );
   const at = buttons.indexOf(target);
   const next = event.shiftKey ? (at < 0 ? -1 : at - 1) : at + 1;
   if (next < 0 || next >= buttons.length) return false;

@@ -14,7 +14,6 @@ use std::sync::{Arc, LazyLock};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::models::Track;
 use crate::utils::normalize_for_match;
 
 /// How much of a search result the comparison needs.
@@ -71,7 +70,8 @@ static MIX_SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 static ARTIST_SEP_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\s*(?:,|&|\band\b|\bx\b|\bvs\.?|\bfeat\.?|\bft\.?|\bfeaturing\b)\s*").unwrap()
+    Regex::new(r"(?i)\s*(?:,|&|\band\b|\bx\b|\bvs\b\.?|\bfeat\b\.?|\bft\b\.?|\bfeaturing\b)\s*")
+        .unwrap()
 });
 
 /// Lowercase words without punctuation, in their order.
@@ -151,7 +151,7 @@ fn artist_names(artists: &[String]) -> HashSet<String> {
 }
 
 struct Candidate<'a> {
-    track: &'a Track,
+    track: &'a TrackIdentity,
     title: String,
     mix: String,
 }
@@ -172,13 +172,13 @@ impl Drop for Cancel {
     }
 }
 
-/// For each of `queries`, the tracks in `collection` that seem to be the same recording, other
-/// than the one with its own YouTube id. `None` if `cancelled` was set before it finished.
+/// For each of `queries`, the YouTube ids of the tracks in `collection` that seem to be the same
+/// recording, other than its own. `None` if `cancelled` was set before it finished.
 pub fn find_similar(
-    collection: &[Track],
+    collection: &[TrackIdentity],
     queries: &[TrackIdentity],
     cancelled: &AtomicBool,
-) -> Option<Vec<Vec<Track>>> {
+) -> Option<Vec<Vec<String>>> {
     let candidates: Vec<Candidate> = collection
         .iter()
         .map(|track| {
@@ -221,7 +221,8 @@ pub fn find_similar(
                 .into_iter()
                 .chain(sp.and_then(|sp| by_sp.get(sp)))
                 .flatten();
-            for &i in by_id {
+            // A title that was all mix would equal any other such title.
+            for &i in by_id.filter(|_| !title.is_empty()) {
                 let c = &candidates[i];
                 if strsim::normalized_levenshtein(&title, &c.title) >= ID_TITLE_SIMILARITY
                     && mixes_compatible(&mix, &c.mix)
@@ -249,7 +250,7 @@ pub fn find_similar(
                 found
                     .into_iter()
                     .take(MAX_SIMILAR)
-                    .map(|i| candidates[i].track.clone())
+                    .map(|i| candidates[i].track.yt_id.clone())
                     .collect(),
             )
         })
@@ -260,8 +261,8 @@ pub fn find_similar(
 mod tests {
     use super::*;
 
-    fn track(yt_id: &str, artists: &[&str], title: &str, mix: Option<&str>) -> Track {
-        Track {
+    fn track(yt_id: &str, artists: &[&str], title: &str, mix: Option<&str>) -> TrackIdentity {
+        TrackIdentity {
             yt_id: yt_id.into(),
             title: title.into(),
             mix_name: mix.map(Into::into),
@@ -280,13 +281,10 @@ mod tests {
         }
     }
 
-    fn ids(collection: &[Track], q: TrackIdentity) -> Vec<String> {
+    fn ids(collection: &[TrackIdentity], q: TrackIdentity) -> Vec<String> {
         find_similar(collection, &[q], &AtomicBool::new(false))
             .unwrap()
             .remove(0)
-            .into_iter()
-            .map(|t| t.yt_id)
-            .collect()
     }
 
     #[test]
@@ -310,6 +308,14 @@ mod tests {
     fn matches_a_shared_artist_in_a_combined_credit() {
         let c = [track("a", &["Bicep & Hammer"], "Glue", None)];
         assert_eq!(ids(&c, query(&["Bicep"], "Glue", None)), ["a"]);
+    }
+
+    #[test]
+    fn splits_featuring_credits_but_not_names_starting_alike() {
+        let c = [track("a", &["Artist featuring Singer"], "Track", None)];
+        assert_eq!(ids(&c, query(&["Singer"], "Track", None)), ["a"]);
+        let c = [track("a", &["Featurecast"], "Track", None)];
+        assert!(ids(&c, query(&["urecast"], "Track", None)).is_empty());
     }
 
     #[test]
@@ -373,6 +379,15 @@ mod tests {
         let mut q = query(&["Artist"], "Track (Other Remix)", None);
         q.bp_id = Some(42);
         assert_eq!(ids(&[original, remix], q), ["b"]);
+    }
+
+    #[test]
+    fn a_shared_catalog_id_needs_a_title() {
+        let mut t = track("a", &["Artist"], "(Original Mix)", None);
+        t.bp_id = Some(42);
+        let mut q = query(&["Artist"], "[Extended Mix]", None);
+        q.bp_id = Some(42);
+        assert!(ids(&[t], q).is_empty());
     }
 
     #[test]
