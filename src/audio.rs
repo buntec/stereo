@@ -424,13 +424,18 @@ impl AudioCache {
     async fn download(&self, id: &str) -> anyhow::Result<PathBuf> {
         let mut deadline = None;
         let mut delays = RETRY_DELAYS.iter();
+        // The failure being retried, which stands if the retry can't start in time.
+        let mut retrying: Option<anyhow::Error> = None;
         loop {
             let acquire = self.downloads.acquire();
-            let permit = match deadline {
-                None => acquire.await?,
-                Some(deadline) => tokio::time::timeout_at(deadline, acquire)
-                    .await
-                    .context("yt-dlp timed out")??,
+            let permit = match (deadline, retrying.take()) {
+                (Some(deadline), Some(error)) => {
+                    match tokio::time::timeout_at(deadline, acquire).await {
+                        Ok(permit) => permit?,
+                        Err(_) => return Err(error),
+                    }
+                }
+                _ => acquire.await?,
             };
             // A download that finished just before this one was registered, or by another process.
             if let Some(path) = self.cached(id).await {
@@ -449,7 +454,9 @@ impl AudioCache {
                         return Err(e);
                     };
                     tracing::info!("Audio download of {id} failed, retrying: {e:#}");
+                    self.report(id, AudioDownloadStatus::Queued, None, None);
                     tokio::time::sleep(*delay).await;
+                    retrying = Some(e);
                 }
                 result => return result,
             }
