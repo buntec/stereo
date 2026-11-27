@@ -67,7 +67,7 @@ const FAILURE_TTL: Duration = Duration::from_secs(300);
 const TRANSIENT_FAILURE_TTL: Duration = Duration::from_secs(30);
 /// Waits before retrying a download that failed transiently, one per retry.
 const RETRY_DELAYS: [Duration; 2] = if cfg!(test) {
-    [Duration::from_millis(10), Duration::from_millis(10)]
+    [Duration::from_millis(200), Duration::from_millis(200)]
 } else {
     [Duration::from_secs(2), Duration::from_secs(5)]
 };
@@ -246,6 +246,9 @@ fn is_transient(error: &anyhow::Error) -> bool {
         "Connection refused",
         "Read timed out",
         "IncompleteRead",
+        // A truncated transfer, e.g. "6 bytes read, 4090 more expected".
+        "more expected",
+        "Remote end closed connection",
     ];
     let message = format!("{error:#}");
     message.starts_with("yt-dlp failed:") && TRANSIENT.iter().any(|t| message.contains(t))
@@ -415,18 +418,34 @@ impl AudioCache {
         download.await
     }
 
-    /// Downloads a track, retrying failures that may well go away.
+    /// Downloads a track, retrying failures that may well go away. The attempts and the waits
+    /// between them share one [`DOWNLOAD_TIMEOUT`], and each attempt takes a download slot of its
+    /// own, so a track waiting to retry doesn't hold one up for others.
     async fn download(&self, id: &str) -> anyhow::Result<PathBuf> {
-        let _permit = self.downloads.acquire().await?;
-        // A download that finished just before this one was registered.
-        if let Some(path) = self.cached(id).await {
-            return Ok(path);
-        }
+        let mut deadline = None;
         let mut delays = RETRY_DELAYS.iter();
         loop {
-            match self.download_once(id).await {
+            let acquire = self.downloads.acquire();
+            let permit = match deadline {
+                None => acquire.await?,
+                Some(deadline) => tokio::time::timeout_at(deadline, acquire)
+                    .await
+                    .context("yt-dlp timed out")??,
+            };
+            // A download that finished just before this one was registered, or by another process.
+            if let Some(path) = self.cached(id).await {
+                return Ok(path);
+            }
+            let deadline =
+                *deadline.get_or_insert_with(|| tokio::time::Instant::now() + DOWNLOAD_TIMEOUT);
+            let result = self.download_once(id, deadline).await;
+            drop(permit);
+            match result {
                 Err(e) if is_transient(&e) => {
-                    let Some(delay) = delays.next() else {
+                    let Some(delay) = delays
+                        .next()
+                        .filter(|d| tokio::time::Instant::now() + **d < deadline)
+                    else {
                         return Err(e);
                     };
                     tracing::info!("Audio download of {id} failed, retrying: {e:#}");
@@ -437,7 +456,12 @@ impl AudioCache {
         }
     }
 
-    async fn download_once(&self, id: &str) -> anyhow::Result<PathBuf> {
+    /// Runs yt-dlp once, until `deadline` at the latest.
+    async fn download_once(
+        &self,
+        id: &str,
+        deadline: tokio::time::Instant,
+    ) -> anyhow::Result<PathBuf> {
         // Before the transfer starts, yt-dlp spends a few seconds extracting the stream URL.
         self.report(id, AudioDownloadStatus::Preparing, None, None);
         let started = Instant::now();
@@ -486,7 +510,7 @@ impl AudioCache {
             let _ = stderr_pipe.read_to_end(&mut buf).await;
             buf
         };
-        let (_, stderr, status) = tokio::time::timeout(DOWNLOAD_TIMEOUT, async {
+        let (_, stderr, status) = tokio::time::timeout_at(deadline, async {
             tokio::join!(progress, stderr, child.wait())
         })
         .await
@@ -1026,6 +1050,63 @@ exit 1"#,
         assert_eq!(runs.lines().count(), 3, "gives up after two retries");
         let (expires, _) = cache.failures.lock().unwrap()["xxxxxxxxxxx"].clone();
         assert!(expires <= Instant::now() + TRANSIENT_FAILURE_TTL);
+    }
+
+    #[test]
+    fn recognizes_transient_failures() {
+        let failed = |m: &str| anyhow::anyhow!("yt-dlp failed: {m}");
+        // As printed by yt-dlp 2026.10.26.
+        for message in [
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            "ERROR: 6 bytes read, 4090 more expected. Giving up after 10 retries",
+            "ERROR: unable to download video data: Remote end closed connection without response",
+        ] {
+            assert!(is_transient(&failed(message)), "{message}");
+        }
+        for message in [
+            "ERROR: [youtube] dQw4w9WgXcQ: Video unavailable. This video is not available",
+            "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm your age.",
+        ] {
+            assert!(!is_transient(&failed(message)), "{message}");
+        }
+        assert!(!is_transient(&anyhow::anyhow!("yt-dlp timed out")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn retries_wait_without_a_download_slot() {
+        let tools = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let yt_dlp = fake_yt_dlp(
+            tools.path(),
+            &format!(
+                r#"case "$*" in *failfail*)
+  echo "ERROR: unable to download video data: HTTP Error 403: Forbidden" >&2
+  exit 1;;
+esac
+{WRITE_OUTPUT}"#
+            ),
+        );
+        let cache = Arc::new(
+            AudioCache::new(cache_dir.path().to_path_buf(), u64::MAX, yt_dlp)
+                .await
+                .unwrap(),
+        );
+        let failing: Vec<_> = (0..MAX_CONCURRENT_DOWNLOADS)
+            .map(|i| {
+                let cache = cache.clone();
+                tokio::spawn(async move { cache.get(&format!("failfail{i:03}")).await })
+            })
+            .collect();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cache.get("goodgoodgoo").await.unwrap();
+        assert!(
+            failing.iter().all(|t| !t.is_finished()),
+            "a healthy download doesn't wait for the retries of failing ones"
+        );
+        for task in failing {
+            task.await.unwrap().unwrap_err();
+        }
     }
 
     #[cfg(unix)]
