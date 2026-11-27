@@ -8,16 +8,16 @@ import {
 const services: PlaylistService[] = ["spotify", "youtube"];
 
 /** The error of a playlist's export to a service, if its last sync failed:
-    the live one from this session, else the saved one unless a sync is running.
-    An export that is turned off has none, even if it failed before. */
+    the live one from this session, else the saved one unless a sync has since
+    started or succeeded. An export that is turned off has none. */
 export function exportError(
   p: IPlaylist,
   service: PlaylistService,
   live: PlaylistSyncStatus | undefined,
 ): string | null {
   if (!p[service]) return null;
-  if (live?.state === "failed") return live.error ?? "Sync failed";
-  if (live?.state === "running") return null;
+  if (live?.state === "failed") return live.error || "Sync failed";
+  if (live?.state === "running" || live?.state === "synced") return null;
   return p[`${service}_status`]?.error ?? null;
 }
 

@@ -952,8 +952,22 @@ const reducer = (state: State, action: Action): State => {
     case "clear-youtube-fixup-result":
       return { ...state, youtube_fixup_tracks: undefined };
 
-    case "playlists":
-      return { ...state, dynamic_playlists: action.playlists };
+    case "playlists": {
+      // Forget the sync status of exports that are gone, so that one turned
+      // back on doesn't show the old one's failure.
+      const live = Object.entries(state.playlist_sync);
+      const kept = live.filter(([, s]) =>
+        action.playlists.some((p) => p.id === s.playlist_id && p[s.service]),
+      );
+      return {
+        ...state,
+        dynamic_playlists: action.playlists,
+        playlist_sync:
+          kept.length === live.length
+            ? state.playlist_sync
+            : Object.fromEntries(kept),
+      };
+    }
 
     case "clear-playlists":
       return { ...state, dynamic_playlists: undefined, playlist_sync: {} };
