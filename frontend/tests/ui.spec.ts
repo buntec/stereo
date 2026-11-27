@@ -130,6 +130,7 @@ async function openApp(
         body: wav.subarray(start, end + 1),
       });
     });
+  let pairingCodes = 0;
   await page.routeWebSocket("**/ws", (ws) => {
     socket = ws;
     const send = (message: unknown) => ws.send(JSON.stringify(message));
@@ -183,6 +184,24 @@ async function openApp(
         }
         case "get-spotify-session":
           send({ type: "spotify-session", id: message.id, connected: true });
+          break;
+        case "create-pairing-code":
+          pairingCodes += 1;
+          if (pairingCodes > 16) {
+            send({
+              type: "error-reply",
+              id: message.id,
+              message:
+                "too many pending pairing codes; try again in a few minutes",
+            });
+            break;
+          }
+          send({
+            type: "pairing-code",
+            id: message.id,
+            code: `ABCDEFGH${String(pairingCodes).padStart(2, "0")}`,
+            expires_in: 120,
+          });
           break;
         case "get-youtube-session":
           send({
@@ -2707,25 +2726,80 @@ test("a pairing code survives a failed connection and is traded for the token", 
   await sockets[1].close();
   const auth = `stereo.auth.${Buffer.from("tailnet-token").toString("hex")}`;
   await expect.poll(offered, { timeout: 10_000 }).toEqual([pair, pair, [auth]]);
-  await expect(toastText(page, /Sign-in code expired/)).toHaveCount(0);
+  await expect(page.getByText(/That code didn't work/)).toHaveCount(0);
 });
 
-test("a rejected pairing code is explained and not offered again", async ({
-  page,
-}) => {
-  await page.routeWebSocket("**/ws", (ws) => {
-    ws.close({ code: 4401, reason: "Invalid or expired pairing code" });
-  });
-  const offered = await recordWsProtocols(page);
-  await page.goto(`/#stereo-pair=${pairingCode}`);
-  await expect(toastText(page, /Sign-in code expired/)).toBeVisible();
-  // Reconnects keep going, without the code.
-  await expect
-    .poll(async () => ((await offered()) as unknown[]).slice(0, 2), {
-      timeout: 10_000,
-    })
-    .toEqual([[`stereo.pair.${pairingCode}`], null]);
-});
+test(
+  "a rejected pairing code is explained and not offered again",
+  {
+    tag: "@webkit",
+  },
+  async ({ page }) => {
+    let attempts = 0;
+    await page.routeWebSocket("**/ws", (ws) => {
+      // The code is turned down, and then the page, without one.
+      if (attempts++ === 0)
+        ws.close({ code: 4401, reason: "Invalid or expired pairing code" });
+      else ws.close({ code: 4402, reason: "Sign-in required" });
+    });
+    const offered = await recordWsProtocols(page);
+    await page.goto(`/#stereo-pair=${pairingCode}`);
+    await expect(page.getByText(/That code didn't work/).first()).toBeVisible();
+    await expect(
+      page.getByRole("textbox", { name: "Sign-in code" }),
+    ).toBeVisible();
+    // Reconnects keep going, without the code, and keep the explanation.
+    await expect
+      .poll(async () => ((await offered()) as unknown[]).slice(0, 3), {
+        timeout: 10_000,
+      })
+      .toEqual([[`stereo.pair.${pairingCode}`], null, null]);
+    await expect(page.getByText(/That code didn't work/).first()).toBeVisible();
+    await expect(toastText(page, /Can't reach Stereo/)).toHaveCount(0);
+  },
+);
+
+test(
+  "a page without a sign-in asks for a code and trades it for the token",
+  {
+    tag: "@webkit",
+  },
+  async ({ page }) => {
+    const sockets: WebSocketRoute[] = [];
+    await page.routeWebSocket("**/ws", (ws) => {
+      sockets.push(ws);
+      if (sockets.length === 1)
+        return void ws.close({ code: 4402, reason: "Sign-in required" });
+      ws.send(
+        JSON.stringify([
+          { type: "backend-info", version: "test", home_dir: "/audit" },
+          { type: "auth-token", token: "tailnet-token" },
+          { type: "repos", repos: [] },
+        ]),
+      );
+    });
+    const offered = await recordWsProtocols(page);
+    await page.goto("/");
+    const input = page.getByRole("textbox", { name: "Sign-in code" });
+    const signIn = page.getByRole("button", { name: "Sign in", exact: true });
+    await input.fill("abcde-fgh");
+    await expect(signIn).toBeDisabled();
+    // Typed in lower case, with a separator and with an O and an I for 0 and 1.
+    await input.fill("abcde-fghoi");
+    await expect(signIn).toBeEnabled();
+    // A pasted sign-in link gives its code.
+    await input.fill("https://stereo.example.ts.net/#stereo-pair=ABCDEFGH01");
+    await signIn.click();
+    await expect
+      .poll(offered, { timeout: 10_000 })
+      .toEqual([null, ["stereo.pair.ABCDEFGH01"]]);
+    await expect(input).toHaveCount(0);
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("stereo-ws-token")))
+      .toBe("tailnet-token");
+    await expect(toastText(page, /Can't reach Stereo/)).toHaveCount(0);
+  },
+);
 
 test("a rejected saved token is forgotten and explained", async ({ page }) => {
   await page.addInitScript(() => {
@@ -2750,6 +2824,51 @@ test("a rejected saved token is forgotten and explained", async ({ page }) => {
       timeout: 10_000,
     })
     .toEqual([[auth], null]);
+});
+
+test("the Tailnet menu shows the code to type and replaces it on request", async ({
+  page,
+}) => {
+  const { send } = await openApp(page);
+  send({
+    type: "tailscale",
+    status: { state: "serving", url: "https://stereo.example.ts.net" },
+  });
+  await page.getByRole("button", { name: "Tailnet", exact: true }).click();
+  const code = page.getByLabel("Sign-in code");
+  await expect(code).toHaveText(/^ABCDE-FGH\d\d$/);
+  const first = await code.textContent();
+  // A scan uses the code up, which the menu can't tell.
+  await page.getByRole("button", { name: "Get a new code" }).click();
+  await expect(code).not.toHaveText(first!);
+  await expect(code).toHaveText(/^ABCDE-FGH\d\d$/);
+  // Past the backend's limit of pending codes, the menu says why.
+  for (let i = 0; i < 16; i++) {
+    await page.getByRole("button", { name: "Get a new code" }).click();
+  }
+  await expect(
+    page.getByText(/Could not create a sign-in code: too many pending/),
+  ).toBeVisible();
+});
+
+test("losing the sign-in while search results show asks for a code", async ({
+  page,
+}) => {
+  const { disconnect } = await openApp(page, { searchResults });
+  await showSearchResults(page);
+  // The saved token is rejected (and forgotten), and the next attempt has none.
+  let attempts = 0;
+  await page.routeWebSocket("**/ws", (ws) => {
+    if (attempts++ === 0) ws.close({ code: 4403, reason: "Invalid token" });
+    else ws.close({ code: 4402, reason: "Sign-in required" });
+  });
+  await disconnect();
+  await expect(page.getByRole("textbox", { name: "Sign-in code" })).toBeVisible(
+    { timeout: 10_000 },
+  );
+  await expect(
+    page.getByRole("button", { name: "Play Result D", exact: true }),
+  ).toHaveCount(0);
 });
 
 const searchResults = [

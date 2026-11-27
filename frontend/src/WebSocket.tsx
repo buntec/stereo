@@ -37,11 +37,27 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
     new Map(),
   );
   const idRef = useRef<number>(0);
+  // Connects now rather than after the retry delay, e.g. once the protocols to offer change.
+  const reconnectNow = useRef<() => void>(() => {});
 
   useEffect(() => {
     let isUnmounted = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let retryNow = false;
+    reconnectNow.current = () => {
+      if (isUnmounted) return;
+      if (retry !== undefined) {
+        clearTimeout(retry);
+        connect();
+      } else {
+        // The current attempt is still under way: retry as soon as it fails.
+        retryNow = true;
+      }
+    };
 
     function connect() {
+      retry = undefined;
+      retryNow = false;
       ws.current = new WebSocket(url, protocols());
       ready.current = false;
 
@@ -116,17 +132,17 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
         onClose(event);
         if (!isUnmounted) {
           logger.info("Attempting to reconnect WebSocket...");
-          setTimeout(() => connect(), 3000);
+          retry = setTimeout(() => connect(), retryNow ? 0 : 3000);
         }
       };
     }
 
     // if we connect immediately, the first attempt fails (for the dev server)
-    const t = setTimeout(() => connect(), 500);
+    retry = setTimeout(() => connect(), 500);
 
     return () => {
       isUnmounted = true;
-      clearTimeout(t);
+      clearTimeout(retry);
       if (heartbeatInterval.current) {
         clearInterval(heartbeatInterval.current);
       }
@@ -180,5 +196,7 @@ export function useWebSocket<TMsgI, TMsgO extends BaseMessage>(
     [sendMsg],
   );
 
-  return { sendMsg, requestReply, isReady };
+  const reconnect = useCallback(() => reconnectNow.current(), []);
+
+  return { sendMsg, requestReply, isReady, reconnect };
 }

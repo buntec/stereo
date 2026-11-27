@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type SVGProps } from "react";
 import { encode } from "uqr";
+import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Popover } from "@astryxdesign/core/Popover";
 import { HStack, VStack } from "@astryxdesign/core/Stack";
@@ -7,6 +8,7 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
 import { CheckIcon, CopyIcon } from "@radix-ui/react-icons";
 import type { RequestReply, TailscaleStatus } from "./Types.tsx";
+import { formatPairingCode } from "./connection.ts";
 
 // Tailscale's nine-dot mark. Sized in em: WebKit collapses an unsized SVG flex item to 0x0.
 function TailscaleGlyph(props: SVGProps<SVGSVGElement>) {
@@ -67,7 +69,11 @@ function PairingQr({
   requestReply: RequestReply;
 }) {
   const [code, setCode] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+  // Why the last code couldn't be created, e.g. too many pending.
+  const [failed, setFailed] = useState<string | null>(null);
+  // Bumped for a new code before the current one is due for renewal: a scan uses it up, and
+  // the popover can't tell, so one meant for typing would otherwise be refused.
+  const [renewals, setRenewals] = useState(0);
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -76,10 +82,14 @@ function PairingQr({
         if (disposed) return;
         if (r.type === "pairing-code" && "code" in r) {
           setCode(r.code);
-          setFailed(false);
+          setFailed(null);
           timer = setTimeout(issue, r.expires_in * 750);
         } else {
-          setFailed(true);
+          setFailed(
+            "message" in r && typeof r.message === "string"
+              ? r.message
+              : "the backend didn't answer",
+          );
         }
       });
     issue();
@@ -87,16 +97,38 @@ function PairingQr({
       disposed = true;
       clearTimeout(timer);
     };
-  }, [requestReply]);
+  }, [requestReply, renewals]);
+  const renew = (
+    <Button
+      label="Get a new code"
+      variant="secondary"
+      size="sm"
+      onClick={() => setRenewals((n) => n + 1)}
+    />
+  );
   if (failed)
-    return <Text type="supporting">Could not create a sign-in code.</Text>;
+    return (
+      <VStack gap={1} hAlign="center">
+        <Text type="supporting">Could not create a sign-in code: {failed}</Text>
+        {renew}
+      </VStack>
+    );
   if (!code) return <svg className="tailscale-qr" aria-hidden />;
   return (
     <VStack gap={1} hAlign="center">
       <QrCode text={`${url}/#stereo-pair=${code}`} />
       <Text type="supporting">
-        Scan on a device in your tailnet. Each code works once.
+        Scan on a device in your tailnet, or enter this code where Stereo asks
+        for one, e.g. in a Home Screen web app:
       </Text>
+      <Text type="code" weight="bold" aria-label="Sign-in code">
+        {formatPairingCode(code)}
+      </Text>
+      <Text type="supporting">
+        Each code works once, for two minutes. Get a new one after scanning this
+        one.
+      </Text>
+      {renew}
     </VStack>
   );
 }

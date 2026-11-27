@@ -47,6 +47,11 @@ const STATUS_EVERY: u32 = 10;
 /// How long a pairing code stays valid, and how many may be pending at once.
 pub const PAIRING_TTL: Duration = Duration::from_secs(120);
 const MAX_PAIRING_CODES: usize = 16;
+/// Pairing codes are typed on a phone when there's no QR code to scan (a Home Screen web app has
+/// its own storage, and the camera opens links in Safari): Crockford's base32, which leaves out
+/// I, L, O and U, so ten characters (50 bits) suffice for a code that works once, for two minutes.
+const PAIRING_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const PAIRING_CODE_LEN: usize = 10;
 
 const TOKEN_FILE: &str = "tailnet-token";
 /// The leases, one file per tailnet port.
@@ -562,7 +567,14 @@ impl Tailscale {
         if codes.len() >= MAX_PAIRING_CODES {
             return Err("too many pending pairing codes; try again in a few minutes".into());
         }
-        let code = uuid::Uuid::new_v4().simple().to_string();
+        // 5 bits from each of a v4 UUID's random bytes, skipping those with its version (6) and
+        // variant (8) bits.
+        let random = uuid::Uuid::new_v4();
+        let code: String = (random.as_bytes().iter().enumerate())
+            .filter(|(i, _)| *i != 6 && *i != 8)
+            .take(PAIRING_CODE_LEN)
+            .map(|(_, byte)| PAIRING_ALPHABET[usize::from(byte & 31)] as char)
+            .collect();
         codes.insert(code.clone(), now + PAIRING_TTL);
         Ok(code)
     }
@@ -771,10 +783,13 @@ mod tests {
             "t".into(),
         );
         let code = tailscale.create_code().unwrap();
+        assert_eq!(code.len(), PAIRING_CODE_LEN);
+        assert!(code.bytes().all(|c| PAIRING_ALPHABET.contains(&c)));
+        assert_ne!(tailscale.create_code().unwrap(), code);
         assert!(!tailscale.redeem_code("nope"));
         assert!(tailscale.redeem_code(&code));
         assert!(!tailscale.redeem_code(&code));
-        for _ in 0..MAX_PAIRING_CODES {
+        for _ in 1..MAX_PAIRING_CODES {
             tailscale.create_code().unwrap();
         }
         assert!(tailscale.create_code().is_err());

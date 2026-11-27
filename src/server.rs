@@ -335,11 +335,9 @@ fn tailnet_ws_handler(
     } else if let Some(auth) = websocket_offered_protocol(headers, AUTH_PROTOCOL) {
         return reject(ws, Some(auth), TOKEN_REJECTED);
     } else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            "WebSocket authentication required",
-        )
-            .into_response();
+        // Closed with a code rather than refused with a 401, for the page to ask for a pairing
+        // code: a Home Screen web app on iOS starts without the token Safari keeps.
+        return reject(ws, None, SIGN_IN_REQUIRED);
     };
     with_message_limits(ws.protocols([protocol]))
         .on_upgrade(move |socket| handle_socket(socket, settings, paired))
@@ -359,11 +357,14 @@ const MAX_MESSAGE_SIZE: usize = 64 << 20;
 const AUTH_PROTOCOL: &str = "stereo.auth.";
 const PAIRING_PROTOCOL: &str = "stereo.pair.";
 
-/// The close codes for a pairing code that is invalid, expired or used, and for a token that is
-/// not (or no longer) the backend's. Browsers can't read the status of a failed handshake, so a
-/// rejection is told apart from an unreachable server (after which the client offers the same
-/// again) by an upgrade closed with one of these. `App.tsx` matches them.
+/// The close codes for a pairing code that is invalid, expired or used, for a token that is not
+/// (or no longer) the backend's, and for a tailnet connection that offers neither. Browsers can't
+/// read the status of a failed handshake, so a rejection is told apart from an unreachable server
+/// (after which the client offers the same again) by an upgrade closed with one of these.
+/// `App.tsx` matches them. The main listener answers a missing token with a 401, which the desktop
+/// launcher checks for.
 const PAIRING_REJECTED: u16 = 4401;
+const SIGN_IN_REQUIRED: u16 = 4402;
 const TOKEN_REJECTED: u16 = 4403;
 
 /// Upgrade, selecting the `protocol` offered, only to close with `code`.
@@ -379,6 +380,7 @@ fn reject(ws: WebSocketUpgrade, protocol: Option<String>, code: u16) -> axum::re
 async fn close_with(mut socket: WebSocket, code: u16) {
     let reason = match code {
         PAIRING_REJECTED => "Invalid or expired pairing code",
+        SIGN_IN_REQUIRED => "Sign-in required",
         _ => "Invalid token",
     };
     let close = Message::Close(Some(CloseFrame {
@@ -3629,7 +3631,9 @@ mod tests {
         // Local origins aren't trusted here, even with the token: anyone on the tailnet can send them.
         let local = format!("http://127.0.0.1:{port}");
         assert_eq!(handshake(port, &local, Some(&auth)).await.err(), Some(403));
-        assert_eq!(handshake(port, origin, None).await.err(), Some(401));
+        // Neither: the upgrade is closed with a code asking the page for a pairing code.
+        let socket = handshake(port, origin, None).await.unwrap();
+        expect_close(socket, SIGN_IN_REQUIRED).await;
         // A wrong token: the upgrade is closed with a code saying so, for the client to forget it.
         let socket = handshake(port, origin, Some("stereo.auth.00"))
             .await

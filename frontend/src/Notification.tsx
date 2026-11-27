@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useToast, type ToastDismissFn } from "@astryxdesign/core/Toast";
 import type { AppNotification } from "./Types";
+import { isConnectionMessage } from "./connection.ts";
 
 type NotificationProps = {
   notifications: AppNotification[];
@@ -22,7 +23,7 @@ export default function Notification({
       // React StrictMode replays effects; each queued event is shown only once.
       if (notification.id <= shown.current) continue;
       shown.current = notification.id;
-      const isConnection = notification.message.startsWith("WebSocket");
+      const isConnection = isConnectionMessage(notification.message);
       const dismiss = toast({
         body: notification.message,
         type:

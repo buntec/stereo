@@ -136,6 +136,8 @@ import { DEFAULT_BACKGROUND_PULSE } from "./SettingsMenu.tsx";
 import SpeakerStack from "./SpeakerStack.tsx";
 import DiscoBall from "./DiscoBall.tsx";
 import Notification from "./Notification.tsx";
+import { connectionLostMessage, isConnectionMessage } from "./connection.ts";
+import PairingSignIn from "./PairingSignIn.tsx";
 import Title from "./Title.tsx";
 import { useKeyboardActions } from "./Keyboard.tsx";
 import NowPlayingMenu from "./NowPlayingMenu.tsx";
@@ -159,9 +161,10 @@ const wsTokenFromFragment = urlFragment.get("stereo-token");
 // on every attempt until the token arrives or the backend rejects it, so a connection that fails
 // for another reason (network, backend restarting) doesn't lose it.
 let pairingCode = urlFragment.get("stereo-pair");
-/** The close codes of a rejected pairing code and token (`PAIRING_REJECTED`/`TOKEN_REJECTED` in
- * `server.rs`). */
+/** The close codes of a rejected pairing code, a tailnet connection with no sign-in and a rejected
+ * token (`PAIRING_REJECTED`/`SIGN_IN_REQUIRED`/`TOKEN_REJECTED` in `server.rs`). */
 const PAIRING_REJECTED = 4401;
+const SIGN_IN_REQUIRED = 4402;
 const TOKEN_REJECTED = 4403;
 if (wsTokenFromFragment || pairingCode) {
   window.history.replaceState(
@@ -435,9 +438,6 @@ const PLAYLIST_AUTO_SYNC_CHECK_MS = 5 * 60 * 1000;
 const NO_SEARCH_SOURCES_MESSAGE = "Choose a source in Search options";
 const NO_LABEL_SOURCES_MESSAGE =
   "Spotify and Apple Music can't search by label. Choose another source in Search options";
-
-const isConnectionClosedMessage = (message: string) =>
-  message.startsWith("WebSocket connection closed");
 
 const reducer = (state: State, action: Action): State => {
   switch (action.type) {
@@ -753,14 +753,14 @@ const reducer = (state: State, action: Action): State => {
       // this drops one that has not been shown yet.
       if (
         !state.notification_queue.some((item) =>
-          isConnectionClosedMessage(item.message),
+          isConnectionMessage(item.message),
         )
       )
         return state;
       return {
         ...state,
         notification_queue: state.notification_queue.filter(
-          (item) => !isConnectionClosedMessage(item.message),
+          (item) => !isConnectionMessage(item.message),
         ),
       };
 
@@ -1242,15 +1242,17 @@ function App() {
     [dispatch],
   );
 
-  const wsOnError = useCallback(
-    () =>
-      dispatch({
-        type: "notification",
-        message: "Connection error",
-        kind: "error",
-      }),
-    [dispatch],
-  );
+  // Not shown: a close, explained in wsOnClose, follows every error.
+  const wsOnError = useCallback(() => {}, []);
+
+  // Set while the backend turns this page away for want of a sign-in (`SIGN_IN_REQUIRED`), with
+  // why the last attempt failed and whether a typed pairing code is being tried.
+  const [signIn, setSignIn] = useState<{
+    error?: string;
+    isPending: boolean;
+  } | null>(null);
+  // Whether a connection was ever ready, to tell a lost connection from one never made.
+  const wasConnected = useRef(false);
 
   // The repo selected on the current connection. The server forgets it when the socket drops,
   // so it is reset on close and re-sent once the new connection lists its repos.
@@ -1262,11 +1264,15 @@ function App() {
       dispatch({ type: "repos", repos: [] });
       if (pairingCode && ev.code === PAIRING_REJECTED) {
         pairingCode = null;
-        dispatch({
-          type: "notification",
-          message: "Sign-in code expired or already used. Scan a new one.",
-          kind: "error",
+        setSignIn({
+          error:
+            "That code didn't work. It may be mistyped, expired (codes last two minutes) or already used, e.g. by scanning its QR code. Choose Get a new code in the Tailscale menu and enter that one.",
+          isPending: false,
         });
+        return;
+      }
+      if (ev.code === SIGN_IN_REQUIRED) {
+        setSignIn((prev) => ({ error: prev?.error, isPending: false }));
         return;
       }
       if (currentWsToken() && ev.code === TOKEN_REJECTED) {
@@ -1274,16 +1280,14 @@ function App() {
         dispatch({
           type: "notification",
           message:
-            "Saved sign-in no longer valid. Scan a new code, or open Stereo's link with its token.",
+            "Saved sign-in no longer valid. Enter or scan a new sign-in code, or open Stereo's link with its token.",
           kind: "error",
         });
         return;
       }
       dispatch({
         type: "notification",
-        message: ev.reason
-          ? `WebSocket connection closed: ${ev.reason} (code ${ev.code})`
-          : `WebSocket connection closed (code ${ev.code})`,
+        message: connectionLostMessage(wasConnected.current, ev.reason),
         kind: "warn",
       });
     },
@@ -1291,6 +1295,8 @@ function App() {
   );
 
   const wsOnOpen = useCallback(() => {
+    wasConnected.current = true;
+    setSignIn(null);
     dispatch({ type: "dismiss-connection-closed-notification" });
   }, [dispatch]);
 
@@ -1298,6 +1304,7 @@ function App() {
     sendMsg,
     requestReply,
     isReady: backendReady,
+    reconnect,
   } = useWebSocket<ServerMsg, ClientMsg>(
     wsUrl,
     wsProtocols,
@@ -2995,90 +3002,102 @@ function App() {
     visibleTrackCount > 0 &&
     trackSelection.selectionCount < visibleTrackCount;
 
-  const collectionBody = isSearchGridActive ? (
-    <SearchResultsGrid
-      isCompact={narrow}
-      // Chart results get different columns and default sort; remounting applies them.
-      key={state.search_is_chart ? "chart" : "search"}
-      isChart={state.search_is_chart}
-      isSearching={state.search_busy}
-      onExitSearch={handleExitSearch}
-      gridRef={searchGridRef}
-      currentId={state.current_id}
-      currentResultId={playingResultId}
-      playId={playId}
-      requestReply={requestReply}
-      dispatch={dispatch}
-      tracks={state.search_results}
-      lastCollectionUpdate={state.collection_last_update}
-      collection={openCollectionPath}
-      onArtistClick={handleArtistClick}
-      onLabelClick={handleLabelClick}
-      addTrack={addSearchResultTrack}
-      downloadAudio={downloadAudio}
-      onShowCurrent={centerGridAroundCurrentTrack}
-    />
-  ) : !backendReady ? (
-    <HStack height="100%" hAlign="center" vAlign="center">
-      <Spinner label="Connecting to your collection…" />
-    </HStack>
-  ) : state.collections?.length === 0 ? (
-    <EmptyState
-      title="Create your first collection"
-      actions={
-        <Button
-          label="Create collection"
-          variant="primary"
-          onClick={() => setCreateCollectionOpen(true)}
-        />
-      }
-    />
-  ) : !state.collection ? (
-    <HStack height="100%" hAlign="center" vAlign="center">
-      <Spinner label="Opening collection…" />
-    </HStack>
-  ) : state.collection.size === 0 ? (
-    <EmptyState
-      title="Your collection is empty"
-      actions={
-        <HStack gap={2} wrap="wrap">
+  // Sign-in comes first: without it nothing else can load, search results included.
+  const collectionBody =
+    !backendReady && signIn ? (
+      <PairingSignIn
+        error={signIn.error}
+        isPending={signIn.isPending}
+        onSubmit={(code) => {
+          pairingCode = code;
+          setSignIn({ isPending: true });
+          reconnect();
+        }}
+      />
+    ) : isSearchGridActive ? (
+      <SearchResultsGrid
+        isCompact={narrow}
+        // Chart results get different columns and default sort; remounting applies them.
+        key={state.search_is_chart ? "chart" : "search"}
+        isChart={state.search_is_chart}
+        isSearching={state.search_busy}
+        onExitSearch={handleExitSearch}
+        gridRef={searchGridRef}
+        currentId={state.current_id}
+        currentResultId={playingResultId}
+        playId={playId}
+        requestReply={requestReply}
+        dispatch={dispatch}
+        tracks={state.search_results}
+        lastCollectionUpdate={state.collection_last_update}
+        collection={openCollectionPath}
+        onArtistClick={handleArtistClick}
+        onLabelClick={handleLabelClick}
+        addTrack={addSearchResultTrack}
+        downloadAudio={downloadAudio}
+        onShowCurrent={centerGridAroundCurrentTrack}
+      />
+    ) : !backendReady ? (
+      <HStack height="100%" hAlign="center" vAlign="center">
+        <Spinner label="Connecting to your collection…" />
+      </HStack>
+    ) : state.collections?.length === 0 ? (
+      <EmptyState
+        title="Create your first collection"
+        actions={
           <Button
-            label="Search for music"
+            label="Create collection"
             variant="primary"
-            onClick={() =>
-              document
-                .querySelector<HTMLInputElement>(".search-box input")
-                ?.focus()
-            }
+            onClick={() => setCreateCollectionOpen(true)}
           />
-          {importMenu()}
-        </HStack>
-      }
-    />
-  ) : (
-    <TracksGrid
-      isCompact={narrow}
-      gridRef={gridRef}
-      currentId={state.current_id}
-      playId={playIdForGrid}
-      updateRating={updateRating}
-      requestReply={requestReply}
-      sendMsg={sendMsg}
-      setGridReady={setGridReady}
-      loadInitialState={currentGridState}
-      onStateUpdate={onTrackGridStateUpdate}
-      onRowCountChange={setFilteredRowCount}
-      onSelectionChanged={trackSelection.onSelectionChanged}
-      onRowsLoaded={trackSelection.selectLoadedRows}
-      onFilterChanged={trackSelection.onFilterChanged}
-      onSelectAll={trackSelection.selectAll}
-      onArtistClick={handleArtistClick}
-      onLabelClick={handleLabelClick}
-      onShazamSimilar={handleShazamSimilar}
-      onShowCurrent={centerGridAroundCurrentTrack}
-      downloadAudio={downloadAudio}
-    />
-  );
+        }
+      />
+    ) : !state.collection ? (
+      <HStack height="100%" hAlign="center" vAlign="center">
+        <Spinner label="Opening collection…" />
+      </HStack>
+    ) : state.collection.size === 0 ? (
+      <EmptyState
+        title="Your collection is empty"
+        actions={
+          <HStack gap={2} wrap="wrap">
+            <Button
+              label="Search for music"
+              variant="primary"
+              onClick={() =>
+                document
+                  .querySelector<HTMLInputElement>(".search-box input")
+                  ?.focus()
+              }
+            />
+            {importMenu()}
+          </HStack>
+        }
+      />
+    ) : (
+      <TracksGrid
+        isCompact={narrow}
+        gridRef={gridRef}
+        currentId={state.current_id}
+        playId={playIdForGrid}
+        updateRating={updateRating}
+        requestReply={requestReply}
+        sendMsg={sendMsg}
+        setGridReady={setGridReady}
+        loadInitialState={currentGridState}
+        onStateUpdate={onTrackGridStateUpdate}
+        onRowCountChange={setFilteredRowCount}
+        onSelectionChanged={trackSelection.onSelectionChanged}
+        onRowsLoaded={trackSelection.selectLoadedRows}
+        onFilterChanged={trackSelection.onFilterChanged}
+        onSelectAll={trackSelection.selectAll}
+        onArtistClick={handleArtistClick}
+        onLabelClick={handleLabelClick}
+        onShazamSimilar={handleShazamSimilar}
+        onShowCurrent={centerGridAroundCurrentTrack}
+        downloadAudio={downloadAudio}
+      />
+    );
 
   const nowPlayingMenu = state.track_info && (
     <NowPlayingMenu
