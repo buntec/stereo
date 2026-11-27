@@ -148,7 +148,7 @@ import { useTrackSelection } from "./TrackSelection.ts";
 import PlaylistMenu from "./PlaylistMenu.tsx";
 import SavePlaylistDialog from "./SavePlaylistDialog.tsx";
 import PlaylistsDialog from "./PlaylistsDialog.tsx";
-import { sameView } from "./playlists.ts";
+import { hasExportError, sameView } from "./playlists.ts";
 import { currentWsToken, forgetWsToken, rememberWsToken } from "./wsToken.ts";
 
 const wsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
@@ -2532,15 +2532,8 @@ function App() {
   );
   const isPlaylistModified =
     !!activePlaylist && !sameView(activePlaylist, currentView);
-  const hasPlaylistSyncErrors = playlists.some(
-    (p) =>
-      !!p.spotify_status?.error ||
-      !!p.youtube_status?.error ||
-      (["spotify", "youtube"] as const).some(
-        (service) =>
-          state.playlist_sync[playlistSyncKey(p.id, service)]?.state ===
-          "failed",
-      ),
+  const hasPlaylistSyncErrors = playlists.some((p) =>
+    hasExportError(p, state.playlist_sync),
   );
 
   const applyPlaylist = useCallback(

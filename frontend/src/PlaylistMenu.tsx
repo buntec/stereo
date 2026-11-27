@@ -117,7 +117,10 @@ function PlaylistMenu({
         label="Manage playlists…"
         description={hasSyncErrors ? "A playlist failed to sync" : undefined}
         endContent={
-          hasSyncErrors && <StatusDot variant="error" label="Sync failed" />
+          // The description carries the error for screen readers.
+          hasSyncErrors && (
+            <StatusDot variant="error" label="Sync failed" aria-hidden />
+          )
         }
         isDisabled={playlists.length === 0}
         onClick={onManage}

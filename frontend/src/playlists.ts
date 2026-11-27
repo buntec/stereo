@@ -1,4 +1,34 @@
-import type { IPlaylist } from "./Types.tsx";
+import {
+  playlistSyncKey,
+  type IPlaylist,
+  type PlaylistService,
+  type PlaylistSyncStatus,
+} from "./Types.tsx";
+
+const services: PlaylistService[] = ["spotify", "youtube"];
+
+/** The error of a playlist's export to a service, if its last sync failed:
+    the live one from this session, else the saved one unless a sync is running.
+    An export that is turned off has none, even if it failed before. */
+export function exportError(
+  p: IPlaylist,
+  service: PlaylistService,
+  live: PlaylistSyncStatus | undefined,
+): string | null {
+  if (!p[service]) return null;
+  if (live?.state === "failed") return live.error ?? "Sync failed";
+  if (live?.state === "running") return null;
+  return p[`${service}_status`]?.error ?? null;
+}
+
+/** Whether any of a playlist's exports failed its last sync. */
+export const hasExportError = (
+  p: IPlaylist,
+  syncStatus: Record<string, PlaylistSyncStatus>,
+) =>
+  services.some(
+    (s) => exportError(p, s, syncStatus[playlistSyncKey(p.id, s)]) !== null,
+  );
 
 /** What a playlist's view shows, in words. */
 export function describeView(p: IPlaylist): string {
