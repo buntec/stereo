@@ -416,6 +416,7 @@ export type ServerMsg =
       result_ids?: (number | undefined)[];
     }
   | { type: "play-id"; id: string }
+  | { type: "resume-track"; id: string }
   | { type: "play-next-track" }
   | { type: "play-prev-track" }
   | { type: "tracks"; tracks: ITrack[] }

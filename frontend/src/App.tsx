@@ -291,6 +291,11 @@ type State = {
    * first of a new playlist, so that loading the page doesn't start playback.
    */
   current_autoplay: boolean;
+  /**
+   * A row asked to play `id`, which may be the current track, paused or ended: a new object
+   * per request, resumed by an effect once the queue it plays on is in place.
+   */
+  resume_request?: { id: string };
   player_id?: string;
   playlist: string[];
   /** Set while the playlist is a queue of search results: each entry's `result_id`. */
@@ -485,6 +490,9 @@ const reducer = (state: State, action: Action): State => {
         current_autoplay: true,
       };
     }
+
+    case "resume-track":
+      return { ...state, resume_request: { id: action.id } };
 
     case "play-next-track": {
       const i = nextIndex(state);
@@ -1305,33 +1313,37 @@ function App() {
     setFilteredRowCount(undefined);
   }
 
+  /** Replaces the queue with the grid's rows, then calls `then` (also if that failed). */
   const updatePlaylist = useCallback(
-    (shuffle: boolean) => {
-      if (gridReady && gridRef.current?.api) {
-        const api = gridRef.current.api;
-        const filterModel = api.getState().filter?.filterModel;
-        const sortModel = api.getState().sort?.sortModel;
-        requestReply(
-          {
-            type: "get-rows",
-            startRow: 0,
-            endRow: 10000,
-            filterModel,
-            sortModel,
-          },
-          function (msg: ServerMsg | { type: string }) {
-            if ("rows" in msg) {
-              let ids = msg.rows.map((t: ITrack) => t.yt_id);
-              if (shuffle) {
-                ids = shuffleArray(ids);
-              }
-              dispatch({ type: "set-playlist", ids });
-            } else {
-              logger.warn("failed to get rows");
-            }
-          },
-        );
+    (shuffle: boolean, then?: () => void) => {
+      if (!gridReady || !gridRef.current?.api) {
+        then?.();
+        return;
       }
+      const api = gridRef.current.api;
+      const filterModel = api.getState().filter?.filterModel;
+      const sortModel = api.getState().sort?.sortModel;
+      requestReply(
+        {
+          type: "get-rows",
+          startRow: 0,
+          endRow: 10000,
+          filterModel,
+          sortModel,
+        },
+        function (msg: ServerMsg | { type: string }) {
+          if ("rows" in msg) {
+            let ids = msg.rows.map((t: ITrack) => t.yt_id);
+            if (shuffle) {
+              ids = shuffleArray(ids);
+            }
+            dispatch({ type: "set-playlist", ids });
+          } else {
+            logger.warn("failed to get rows");
+          }
+          then?.();
+        },
+      );
     },
     [requestReply, gridReady],
   );
@@ -1425,32 +1437,30 @@ function App() {
 
   // A row's play button. Asking for the current track again changes no state, so the
   // effect that loads tracks doesn't run: resume it here if it's paused or has ended.
-  const resumeIfCurrent = useCallback(
-    (id: string) => {
-      if (playback?.currentId() !== id) return;
-      const status = playback.status();
-      if (status === "paused" || status === "ended") playback.play();
-    },
-    [playback],
-  );
+  // After `queueRef`'s effect, so that the track advances within the row's queue (a
+  // collection row's arrives in a reply, and a resumed track can end before it).
+  const resumeRequest = state.resume_request;
+  useEffect(() => {
+    if (!resumeRequest || playback?.currentId() !== resumeRequest.id) return;
+    const status = playback.status();
+    if (status === "paused" || status === "ended") playback.play();
+  }, [resumeRequest, playback]);
 
-  const playId = useCallback(
-    (id: string) => {
-      dispatch({ type: "play-id", id });
-      resumeIfCurrent(id);
-    },
-    [resumeIfCurrent],
-  );
+  const playId = useCallback((id: string) => {
+    dispatch({ type: "play-id", id });
+    dispatch({ type: "resume-track", id });
+  }, []);
 
   // Used by the main tracks grid: sets current track and ensures the playlist
   // reflects the current filter+sort order before the next track auto-advances.
   const playIdForGrid = useCallback(
     (id: string) => {
       dispatch({ type: "play-id", id });
-      resumeIfCurrent(id);
-      updatePlaylist(settings.shufflePlay);
+      updatePlaylist(settings.shufflePlay, () =>
+        dispatch({ type: "resume-track", id }),
+      );
     },
-    [resumeIfCurrent, updatePlaylist, settings.shufflePlay],
+    [updatePlaylist, settings.shufflePlay],
   );
 
   // Auto-select repo when list first arrives (or changes)
