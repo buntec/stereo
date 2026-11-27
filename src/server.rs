@@ -755,6 +755,12 @@ async fn reply_error(tx: &mpsc::Sender<MsgServer>, id: i64, message: &str) {
         .await;
 }
 
+/// A search message's result limit, which the protocol sends signed, within what a search
+/// returns at most.
+fn search_limit(limit: i64) -> usize {
+    usize::try_from(limit).map_or(0, |limit| limit.min(scraper::SEARCH_MAX_LIMIT))
+}
+
 async fn notify(tx: &mpsc::Sender<MsgServer>, msg: &str, kind: &str) {
     let _ = tx
         .send(MsgServer::Notification {
@@ -2530,7 +2536,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             if !query.is_empty() {
                 let tx2 = tx.clone();
                 let c = client.clone();
-                let limit = limit as usize;
+                let limit = search_limit(limit);
                 let known_bp_tracks = match kind {
                     SearchKind::Fuzzy => Default::default(),
                     SearchKind::ByLabel | SearchKind::ByArtist => known_bp_tracks(state).await,
@@ -2607,7 +2613,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                         scraper::NewReleasesQuery {
                             query_id,
                             days,
-                            limit: limit as usize,
+                            limit: search_limit(limit),
                             artists,
                             labels,
                             existing_yt_ids,
@@ -2638,7 +2644,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 tx2,
                 track,
                 query_id,
-                limit.max(0) as usize,
+                search_limit(limit),
             ));
             state.search_task = Some(handle);
         }
@@ -2656,7 +2662,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 tx.clone(),
                 genre_id,
                 query_id,
-                limit.max(0) as usize,
+                search_limit(limit),
             ));
             state.search_task = Some(handle);
         }
@@ -2669,7 +2675,7 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
                 client.clone(),
                 tx.clone(),
                 query_id,
-                limit.max(0) as usize,
+                search_limit(limit),
             ));
             state.search_task = Some(handle);
         }
@@ -3350,6 +3356,14 @@ mod websocket_security_tests {
             dev: false,
             tailscale: false,
         }
+    }
+
+    #[test]
+    fn search_limit_stays_within_bounds() {
+        assert_eq!(search_limit(25), 25);
+        assert_eq!(search_limit(-1), 0);
+        assert_eq!(search_limit(i64::MIN), 0);
+        assert_eq!(search_limit(i64::MAX), scraper::SEARCH_MAX_LIMIT);
     }
 
     #[test]
