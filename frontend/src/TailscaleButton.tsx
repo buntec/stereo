@@ -7,6 +7,7 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
 import { CheckIcon, CopyIcon } from "@radix-ui/react-icons";
 import type { RequestReply, TailscaleStatus } from "./Types.tsx";
+import { formatPairingCode } from "./connection.ts";
 
 // Tailscale's nine-dot mark. Sized in em: WebKit collapses an unsized SVG flex item to 0x0.
 function TailscaleGlyph(props: SVGProps<SVGSVGElement>) {
@@ -95,8 +96,13 @@ function PairingQr({
     <VStack gap={1} hAlign="center">
       <QrCode text={`${url}/#stereo-pair=${code}`} />
       <Text type="supporting">
-        Scan on a device in your tailnet. Each code works once.
+        Scan on a device in your tailnet, or enter this code where Stereo asks
+        for one, e.g. in a Home Screen web app:
       </Text>
+      <Text type="code" weight="bold" aria-label="Sign-in code">
+        {formatPairingCode(code)}
+      </Text>
+      <Text type="supporting">Each code works once, for two minutes.</Text>
     </VStack>
   );
 }

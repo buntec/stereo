@@ -2707,24 +2707,68 @@ test("a pairing code survives a failed connection and is traded for the token", 
   await sockets[1].close();
   const auth = `stereo.auth.${Buffer.from("tailnet-token").toString("hex")}`;
   await expect.poll(offered, { timeout: 10_000 }).toEqual([pair, pair, [auth]]);
-  await expect(toastText(page, /Sign-in code expired/)).toHaveCount(0);
+  await expect(page.getByText(/That code didn't work/)).toHaveCount(0);
 });
 
 test("a rejected pairing code is explained and not offered again", async ({
   page,
 }) => {
+  let attempts = 0;
   await page.routeWebSocket("**/ws", (ws) => {
-    ws.close({ code: 4401, reason: "Invalid or expired pairing code" });
+    // The code is turned down, and then the page, without one.
+    if (attempts++ === 0)
+      ws.close({ code: 4401, reason: "Invalid or expired pairing code" });
+    else ws.close({ code: 4402, reason: "Sign-in required" });
   });
   const offered = await recordWsProtocols(page);
   await page.goto(`/#stereo-pair=${pairingCode}`);
-  await expect(toastText(page, /Sign-in code expired/)).toBeVisible();
-  // Reconnects keep going, without the code.
+  await expect(page.getByText(/That code didn't work/).first()).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Sign-in code" }),
+  ).toBeVisible();
+  // Reconnects keep going, without the code, and keep the explanation.
   await expect
-    .poll(async () => ((await offered()) as unknown[]).slice(0, 2), {
+    .poll(async () => ((await offered()) as unknown[]).slice(0, 3), {
       timeout: 10_000,
     })
-    .toEqual([[`stereo.pair.${pairingCode}`], null]);
+    .toEqual([[`stereo.pair.${pairingCode}`], null, null]);
+  await expect(page.getByText(/That code didn't work/).first()).toBeVisible();
+  await expect(toastText(page, /Can't reach Stereo/)).toHaveCount(0);
+});
+
+test("a page without a sign-in asks for a code and trades it for the token", async ({
+  page,
+}) => {
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket("**/ws", (ws) => {
+    sockets.push(ws);
+    if (sockets.length === 1)
+      return void ws.close({ code: 4402, reason: "Sign-in required" });
+    ws.send(
+      JSON.stringify([
+        { type: "backend-info", version: "test", home_dir: "/audit" },
+        { type: "auth-token", token: "tailnet-token" },
+        { type: "repos", repos: [] },
+      ]),
+    );
+  });
+  const offered = await recordWsProtocols(page);
+  await page.goto("/");
+  const input = page.getByRole("textbox", { name: "Sign-in code" });
+  const signIn = page.getByRole("button", { name: "Sign in", exact: true });
+  await input.fill("abcde-fgh");
+  await expect(signIn).toBeDisabled();
+  // Typed in lower case, with a separator and with an O and an I for 0 and 1.
+  await input.fill("abcde-fghoi");
+  await signIn.click();
+  await expect
+    .poll(offered, { timeout: 10_000 })
+    .toEqual([null, ["stereo.pair.ABCDEFGH01"]]);
+  await expect(input).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("stereo-ws-token")))
+    .toBe("tailnet-token");
+  await expect(toastText(page, /Can't reach Stereo/)).toHaveCount(0);
 });
 
 test("a rejected saved token is forgotten and explained", async ({ page }) => {
