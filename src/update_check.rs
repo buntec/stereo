@@ -290,12 +290,18 @@ async fn run(
         for request in waiting.drain(..) {
             let _ = request.send(());
         }
-        tokio::select! {
-            () = sleep_until(next_check) => {}
-            Some(request) = requests.recv() => {
-                waiting.push(request);
-                if is_recent(last_check, Utc::now()) {
-                    continue;
+        // Until it's time to check, or a request comes in that isn't answered by the last check
+        // (which leaves the published status as it is).
+        loop {
+            tokio::select! {
+                () = sleep_until(next_check) => break,
+                Some(request) = requests.recv() => {
+                    if is_recent(last_check, Utc::now()) {
+                        let _ = request.send(());
+                    } else {
+                        waiting.push(request);
+                        break;
+                    }
                 }
             }
         }

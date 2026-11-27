@@ -979,6 +979,23 @@ mod tests {
         });
         assert_eq!(error["status"]["state"], "error");
         assert_eq!(error["status"]["message"], "GitHub replied 403");
+
+        let request: MsgClient = serde_json::from_value(serde_json::json!({
+            "type": "check-for-updates", "id": 7,
+        }))
+        .unwrap();
+        assert_eq!(request.request_id(), Some(7));
+        let reply = serde_json::to_value(MsgServer::UpdateCheckReply {
+            id: 7,
+            status: UpdateStatus::Error {
+                message: "GitHub replied 403".into(),
+                checked_at,
+            },
+        })
+        .unwrap();
+        assert_eq!(reply["type"], "update-check-reply");
+        assert_eq!(reply["id"], 7);
+        assert_eq!(reply["status"]["state"], "error");
     }
 
     #[test]
