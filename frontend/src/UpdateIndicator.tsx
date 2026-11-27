@@ -1,10 +1,10 @@
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 import { useHoverCard } from "@astryxdesign/core/HoverCard";
 import { Button } from "@astryxdesign/core/Button";
 import { Icon } from "@astryxdesign/core/Icon";
 import { Link } from "@astryxdesign/core/Link";
 import { Text } from "@astryxdesign/core/Text";
-import { VStack } from "@astryxdesign/core/Stack";
+import { HStack, VStack } from "@astryxdesign/core/Stack";
 import { CircleArrowUp } from "lucide-react";
 import type { UpdateStatus } from "./Types.tsx";
 import { timeAgo } from "./Utils.tsx";
@@ -26,14 +26,30 @@ const ago = (iso: string) => timeAgo(Date.parse(iso));
  * Tooltip, since the card holds a link and a tap on touch screens must open it.
  * The hook rather than the HoverCard component, for its `show()`: pressing the
  * button (Enter, Space, a click) opens the card too, as a button should. A
- * controlled `isOpen` can't do that, since a held `false` also blocks hover. */
+ * controlled `isOpen` can't do that, since a held `false` also blocks hover.
+ * "Check now" asks the backend to check right away rather than wait for the
+ * daily check. */
 function UpdateIndicator({
   version,
   status,
+  checkForUpdates,
 }: {
   version: string;
   status: UpdateStatus;
+  /** `done` gets an error message if the check couldn't be made. */
+  checkForUpdates: (done: (error?: string) => void) => void;
 }) {
+  const [checking, setChecking] = useState(false);
+  // A failed request; a failed check is reported in `status` instead.
+  const [checkError, setCheckError] = useState<string>();
+  const checkNow = () => {
+    setChecking(true);
+    setCheckError(undefined);
+    checkForUpdates((error) => {
+      setChecking(false);
+      setCheckError(error);
+    });
+  };
   // "Checked … ago" is computed on render, and nothing else re-renders this
   // while a tab stays open for hours, so render again on every opening.
   const [, refresh] = useReducer((n: number) => n + 1, 0);
@@ -135,9 +151,23 @@ function UpdateIndicator({
               {line}
             </Text>
           ))}
-          <Link href={url} type="supporting" isExternalLink>
-            {linkText}
-          </Link>
+          {checkError && (
+            <Text type="supporting" color="secondary">
+              Couldn't check: {checkError}
+            </Text>
+          )}
+          <HStack gap={2} vAlign="center" hAlign="between">
+            <Link href={url} type="supporting" isExternalLink>
+              {linkText}
+            </Link>
+            <Button
+              label="Check now"
+              variant="secondary"
+              size="sm"
+              isLoading={checking}
+              onClick={checkNow}
+            />
+          </HStack>
         </VStack>,
       )}
     </>

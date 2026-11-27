@@ -2280,6 +2280,19 @@ async fn handle_msg(state: &mut SessionState, ctx: &Ctx<'_>, msg: MsgClient) -> 
             audio::download_in_background(&yt_id)?;
         }
 
+        MsgClient::CheckForUpdates { id } => {
+            // Spawned, since the check waits on GitHub.
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                match update_check::check_now().await {
+                    Ok(status) => {
+                        let _ = tx.send(MsgServer::UpdateCheckReply { id, status }).await;
+                    }
+                    Err(e) => reply_error(&tx, id, &format!("{e:#}")).await,
+                }
+            });
+        }
+
         MsgClient::CreatePairingCode { id } => {
             let code = tailscale::create_pairing_code().map_err(anyhow::Error::msg)?;
             let _ = tx

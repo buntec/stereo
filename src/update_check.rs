@@ -1,7 +1,8 @@
 //! Checks GitHub once a day for a newer release, for the icon beside the version number.
 //!
 //! The last result is saved in the data dir's `update_check.json`, so restarts don't check again
-//! within the day, and is compared with the running version each time it's loaded.
+//! within the day, and is compared with the running version each time it's loaded. The version
+//! card's "Check now" asks for a check sooner (`check_now`).
 
 use std::{
     path::{Path, PathBuf},
@@ -11,7 +12,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
 
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/buntec/stereo/releases/latest";
 const CHECK_FILE: &str = "update_check.json";
@@ -23,9 +24,20 @@ const MAX_WAIT: Duration = Duration::from_secs(5 * 60);
 /// How old a result must be before a failed refresh casts doubt on it. Checks run daily, so a
 /// single failure, say right after waking before the network is up, leaves a fresh one standing.
 const STALE_AFTER: Duration = Duration::from_secs(2 * 24 * 60 * 60);
+/// How soon after the last check a requested one just returns its result. GitHub allows 60
+/// unauthenticated requests an hour per IP, which repeated clicks shouldn't use up.
+const MIN_REQUESTED_INTERVAL: Duration = Duration::from_secs(60);
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
-static STATUS: OnceLock<watch::Sender<Option<UpdateStatus>>> = OnceLock::new();
+/// A requested check, answered once its result is published.
+type CheckRequest = oneshot::Sender<()>;
+
+struct Checker {
+    status: watch::Sender<Option<UpdateStatus>>,
+    requests: mpsc::Sender<CheckRequest>,
+}
+
+static CHECKER: OnceLock<Checker> = OnceLock::new();
 
 /// The newest published release (GitHub's latest skips drafts and pre-releases).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,7 +252,21 @@ async fn save(path: &Path, check: &SavedCheck) {
     }
 }
 
-async fn run(path: PathBuf, status: watch::Sender<Option<UpdateStatus>>) {
+/// Whether a check at `last` is too recent at `now` for a requested one to fetch again. A
+/// time in the future doesn't count, so a wrong clock can't block requests.
+fn is_recent(last: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+    last.is_some_and(|last| {
+        (now - last)
+            .to_std()
+            .is_ok_and(|age| age < MIN_REQUESTED_INTERVAL)
+    })
+}
+
+async fn run(
+    path: PathBuf,
+    status: watch::Sender<Option<UpdateStatus>>,
+    mut requests: mpsc::Receiver<CheckRequest>,
+) {
     let client = match crate::scraper::create_client() {
         Ok(client) => client,
         Err(e) => {
@@ -251,12 +277,30 @@ async fn run(path: PathBuf, status: watch::Sender<Option<UpdateStatus>>) {
     let mut saved = load(&path).await;
     let mut failure: Option<RefreshError> = None;
     let mut next_check = first_check(saved.as_ref(), Utc::now());
+    let mut last_check = saved.as_ref().map(|check| check.checked_at);
+    let mut waiting: Vec<CheckRequest> = Vec::new();
     loop {
         if let Some(current) = status_of(saved.as_ref(), failure.as_ref()) {
             status.send_replace(Some(current));
         }
-        sleep_until(next_check).await;
+        // Requests that came in during the check are answered by its result.
+        while let Ok(request) = requests.try_recv() {
+            waiting.push(request);
+        }
+        for request in waiting.drain(..) {
+            let _ = request.send(());
+        }
+        tokio::select! {
+            () = sleep_until(next_check) => {}
+            Some(request) = requests.recv() => {
+                waiting.push(request);
+                if is_recent(last_check, Utc::now()) {
+                    continue;
+                }
+            }
+        }
         let checked_at = Utc::now();
+        last_check = Some(checked_at);
         match fetch_latest(&client).await {
             Ok(latest) => {
                 let check = SavedCheck { latest, checked_at };
@@ -281,14 +325,41 @@ async fn run(path: PathBuf, status: watch::Sender<Option<UpdateStatus>>) {
 /// Starts the daily check in the background.
 pub fn spawn(home: &Path) {
     let status = watch::Sender::new(None);
-    if STATUS.set(status.clone()).is_ok() {
-        tokio::spawn(run(home.join(CHECK_FILE), status));
+    let (requests, requests_rx) = mpsc::channel(16);
+    let checker = Checker {
+        status: status.clone(),
+        requests,
+    };
+    if CHECKER.set(checker).is_ok() {
+        tokio::spawn(run(home.join(CHECK_FILE), status, requests_rx));
     }
 }
 
 /// The current status and its changes, if checks run.
 pub fn subscribe() -> Option<watch::Receiver<Option<UpdateStatus>>> {
-    STATUS.get().map(watch::Sender::subscribe)
+    CHECKER.get().map(|checker| checker.status.subscribe())
+}
+
+/// Checks now, unless the last check was within the minute, and returns the status after it.
+pub async fn check_now() -> anyhow::Result<UpdateStatus> {
+    let checker = CHECKER
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("update checks are off"))?;
+    let (done, done_rx) = oneshot::channel();
+    // Both fail if checks stopped, e.g. because no HTTP client could be created.
+    checker
+        .requests
+        .send(done)
+        .await
+        .map_err(|_| anyhow::anyhow!("update checks are off"))?;
+    done_rx
+        .await
+        .map_err(|_| anyhow::anyhow!("update checks are off"))?;
+    checker
+        .status
+        .borrow()
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("no update check has run"))
 }
 
 #[cfg(test)]
@@ -334,6 +405,15 @@ mod tests {
         assert_eq!(next_wait(now, now), None);
         // After a long sleep the deadline has passed: check right away.
         assert_eq!(next_wait(now, now + CHECK_INTERVAL), None);
+    }
+
+    #[test]
+    fn requested_checks_are_throttled() {
+        let now: DateTime<Utc> = "2026-11-23T06:00:00Z".parse().unwrap();
+        assert!(!is_recent(None, now));
+        assert!(is_recent(Some(now - Duration::from_secs(10)), now));
+        assert!(!is_recent(Some(now - MIN_REQUESTED_INTERVAL), now));
+        assert!(!is_recent(Some(now + Duration::from_secs(10)), now));
     }
 
     #[test]

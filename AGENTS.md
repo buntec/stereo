@@ -113,7 +113,9 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
   into a warning). Versions it can't compare and URLs other than the repo's release
   pages are refused, from the API and the file alike. Waits are measured by the wall
   clock in steps of at most five minutes, since Tokio's timers stop while the system
-  sleeps. `UpdateIndicator.tsx` shows it as an icon beside the version number. Its
+  sleeps. The card's "Check now" sends `CheckForUpdates`, which wakes the loop (at most
+  one fetch a minute, for GitHub's rate limit) and is answered with the status after it.
+  `UpdateIndicator.tsx` shows it as an icon beside the version number. Its
   card opens on hover, focus, a tap or a press of the button (`useHoverCard`'s
   `show()`; a controlled HoverCard's `false` would block hover).
 - **`health.rs`** powers the manual search diagnostics in `HealthCheckButton.tsx`.

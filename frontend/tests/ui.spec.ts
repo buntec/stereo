@@ -3588,6 +3588,49 @@ test("the version shows whether a newer release is out", async ({ page }) => {
   ).toContainText("GitHub replied 403 Forbidden");
 });
 
+test("the version card checks for updates on request", async ({ page }) => {
+  const { messages, send } = await openApp(page);
+  send({
+    type: "update-check",
+    status: {
+      state: "up-to-date",
+      latest: { ...updateRelease, version: "0.1.0" },
+      checked_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    },
+  });
+  await page.getByRole("button", { name: "Stereo is up to date" }).click();
+  const card = page.getByRole("dialog", { name: "Stereo is up to date" });
+  const checkNow = card.getByRole("button", { name: "Check now" });
+  await checkNow.click();
+  const requests = () =>
+    messages.filter((message) => message.type === "check-for-updates");
+  await expect.poll(() => requests().length).toBe(1);
+  await expect(checkNow).toHaveAttribute("aria-busy", "true");
+
+  send({
+    type: "error-reply",
+    id: requests()[0].id,
+    message: "update checks are off",
+  });
+  await expect(card).toContainText("Couldn't check: update checks are off");
+  await expect(checkNow).not.toHaveAttribute("aria-busy", "true");
+
+  await checkNow.click();
+  await expect.poll(() => requests().length).toBe(2);
+  send({
+    type: "update-check-reply",
+    id: requests()[1].id,
+    status: {
+      state: "available",
+      latest: updateRelease,
+      checked_at: new Date().toISOString(),
+    },
+  });
+  await expect(
+    page.getByRole("button", { name: "vtest, Stereo v0.2.0 is available" }),
+  ).toBeVisible();
+});
+
 test(
   "the update details open from the keyboard",
   { tag: "@webkit" },

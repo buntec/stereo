@@ -64,6 +64,11 @@ pub enum MsgServer {
     UpdateCheck {
         status: crate::update_check::UpdateStatus,
     },
+    /// Reply to `CheckForUpdates`: the status after the check.
+    UpdateCheckReply {
+        id: i64,
+        status: crate::update_check::UpdateStatus,
+    },
     /// Reply to `CreatePairingCode`: a single-use code that signs a browser on the tailnet in,
     /// valid for `expires_in` seconds.
     PairingCode {
@@ -698,6 +703,11 @@ pub enum MsgClient {
         id: i64,
         yt_ids: Vec<String>,
     },
+    /// Checks for a newer release now (`MsgServer::UpdateCheckReply`), unless the last check
+    /// was within the minute; every session also gets the result as `MsgServer::UpdateCheck`.
+    CheckForUpdates {
+        id: i64,
+    },
     /// Asks for a pairing code (`MsgServer::PairingCode`), with `--tailscale` only.
     CreatePairingCode {
         id: i64,
@@ -885,6 +895,7 @@ impl MsgClient {
             | Self::ImportCollection { id, .. }
             | Self::GetWaveform { id, .. }
             | Self::CreatePairingCode { id }
+            | Self::CheckForUpdates { id }
             | Self::GetNewReleasesCandidates { id }
             | Self::RunHealthCheck { id }
             | Self::CreateYtAnonPlaylist { id, .. }
