@@ -1045,7 +1045,20 @@ esac
         // Once the first has crashed, its route is taken over.
         drop(first);
         let restarted = cli.tailscale(9005, 9003);
-        assert!(restarted.attempt().await.unwrap().is_some());
+        // A process spawned by another test briefly shares every open file, the first one's lease
+        // included (macOS closes the spawned process's copies only once it starts running).
+        let mut taken_over = restarted.attempt().await;
+        for _ in 0..100 {
+            if !taken_over
+                .as_ref()
+                .is_err_and(|e| e.contains("another stereo"))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            taken_over = restarted.attempt().await;
+        }
+        assert!(taken_over.unwrap().is_some());
         assert_eq!(
             cli.routes(),
             [
