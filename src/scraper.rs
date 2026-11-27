@@ -1,11 +1,11 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, LazyLock},
 };
 
 use anyhow::Context;
 use chrono::NaiveDate;
-use futures::{future::join_all, stream, Stream, StreamExt};
+use futures::{future::join_all, stream, FutureExt, Stream, StreamExt};
 use scraper::{Html, Selector};
 use tokio::sync::{mpsc, RwLock};
 use wreq::Client;
@@ -2844,6 +2844,15 @@ const CATALOG_PAGE_SIZE: usize = 100;
 /// the same track. Some sources list nearly all of a big label's catalog without a video, so
 /// paging on until the limit is reached could take thousands of YouTube searches.
 const CATALOG_CANDIDATES_PER_RESULT: usize = 3;
+/// How many pages a catalog may fetch beyond those its candidates fill: pre-orders, which
+/// are left out, can fill whole pages.
+const CATALOG_EXTRA_PAGES: usize = 10;
+/// A catalog starts fetching its next page once it has no more candidates than this left, so
+/// that the page is usually there before they run out.
+const CATALOG_REFILL_THRESHOLD: usize = MATCH_CONCURRENCY;
+
+/// A page's tracks and the next page, if the catalog may go on.
+type CatalogPageResult = anyhow::Result<(Vec<RawTrack>, Option<CatalogPage>)>;
 
 /// The request for a page of a source's catalog of a label or artist.
 enum CatalogPage {
@@ -2864,6 +2873,9 @@ enum CatalogPage {
         url: String,
         page: usize,
     },
+    /// A page given by a test.
+    #[cfg(test)]
+    Fixture(futures::future::BoxFuture<'static, CatalogPageResult>),
 }
 
 impl CatalogPage {
@@ -2907,7 +2919,8 @@ impl CatalogPage {
     }
 
     /// The page's tracks, newest first, and the next page if the catalog may go on.
-    async fn fetch(self, client: &Client) -> anyhow::Result<(Vec<RawTrack>, Option<Self>)> {
+    async fn fetch(self, client: Arc<Client>) -> CatalogPageResult {
+        let client = client.as_ref();
         Ok(match self {
             CatalogPage::Beatport { url, page } => {
                 let (tracks, full) = bp_get_releases(client, &url, page, None).await?;
@@ -2952,6 +2965,8 @@ impl CatalogPage {
                 });
                 (raw(tracks, RawTrack::Tx), next)
             }
+            #[cfg(test)]
+            CatalogPage::Fixture(page) => page.await?,
         })
     }
 }
@@ -2959,72 +2974,121 @@ impl CatalogPage {
 /// One source's candidates for a search. A label's or artist's catalog is fetched a page at a
 /// time, as the search uses up the candidates it has: tracks without a YouTube video and
 /// tracks other sources found too don't become results, so a fixed number of candidates can
-/// fall short of the limit.
+/// fall short of the limit. Later pages are fetched in a task of their own (see
+/// [`interleave`]), which is aborted with the catalog.
 struct Catalog {
     source: &'static str,
-    tracks: std::vec::IntoIter<RawTrack>,
+    tracks: VecDeque<RawTrack>,
     next: Option<CatalogPage>,
+    refill: Option<tokio::task::JoinHandle<CatalogPageResult>>,
+    /// How many more candidates pages may add.
+    candidates_left: usize,
     /// How many more pages may be fetched.
     pages_left: usize,
 }
 
+impl Drop for Catalog {
+    fn drop(&mut self) {
+        if let Some(refill) = &self.refill {
+            refill.abort();
+        }
+    }
+}
+
 impl Catalog {
-    /// A source's search results, which aren't paged.
-    fn fixed(source: TrackSource, tracks: Vec<RawTrack>) -> Self {
+    /// An empty catalog with a budget for `limit` results (see
+    /// [`CATALOG_CANDIDATES_PER_RESULT`] and [`CATALOG_EXTRA_PAGES`]).
+    fn new(source: &'static str, limit: usize) -> Self {
+        let candidates = limit.saturating_mul(CATALOG_CANDIDATES_PER_RESULT).max(1);
         Catalog {
-            source: source_name(source),
-            tracks: tracks.into_iter(),
+            source,
+            tracks: VecDeque::new(),
             next: None,
-            pages_left: 0,
+            refill: None,
+            candidates_left: candidates,
+            pages_left: candidates.div_ceil(CATALOG_PAGE_SIZE) + CATALOG_EXTRA_PAGES,
         }
     }
 
-    /// `source`'s catalog of the label or artist `name`, with its first page fetched, enough
-    /// for `limit` results (see [`CATALOG_CANDIDATES_PER_RESULT`]).
+    /// A source's search results, which aren't paged.
+    fn fixed(source: TrackSource, tracks: Vec<RawTrack>) -> Self {
+        let mut catalog = Catalog::new(source_name(source), tracks.len());
+        catalog.add_page(tracks, None);
+        catalog
+    }
+
+    /// `source`'s catalog of the label or artist `name`, with a budget for `limit` results.
     async fn open(
-        client: &Client,
+        client: &Arc<Client>,
         source: TrackSource,
         credit: Credit,
         name: &str,
         known_bp_tracks: &KnownBpTracks,
         limit: usize,
     ) -> anyhow::Result<Self> {
-        let mut catalog = Catalog {
-            source: source_name(source),
-            tracks: Vec::new().into_iter(),
-            next: CatalogPage::first(client, source, credit, name, known_bp_tracks).await?,
-            pages_left: (limit * CATALOG_CANDIDATES_PER_RESULT)
-                .div_ceil(CATALOG_PAGE_SIZE)
-                .max(1),
-        };
-        catalog.fetch_next(client).await?;
+        let first = CatalogPage::first(client, source, credit, name, known_bp_tracks).await?;
+        Catalog::start(client, source_name(source), first, limit).await
+    }
+
+    /// A catalog starting at `first`, which is fetched before the search begins, along with
+    /// the other sources' first pages, so that a source that fails outright is reported up
+    /// front.
+    async fn start(
+        client: &Arc<Client>,
+        source: &'static str,
+        first: Option<CatalogPage>,
+        limit: usize,
+    ) -> anyhow::Result<Self> {
+        let mut catalog = Catalog::new(source, limit);
+        if let Some(page) = first {
+            catalog.pages_left -= 1;
+            let (tracks, next) = page.fetch(Arc::clone(client)).await?;
+            catalog.add_page(tracks, next);
+        }
         Ok(catalog)
     }
 
-    async fn fetch_next(&mut self, client: &Client) -> anyhow::Result<()> {
-        let Some(page) = self.next.take() else {
-            return Ok(());
-        };
-        let (tracks, next) = page.fetch(client).await?;
-        self.pages_left -= 1;
-        self.tracks = tracks.into_iter();
-        self.next = next.filter(|_| self.pages_left > 0);
+    /// Adds a page's candidates, within the budget. Tracks released later than tomorrow are
+    /// left out and don't count: they can't be on YouTube yet, and a day is left for time
+    /// zones.
+    fn add_page(&mut self, tracks: Vec<RawTrack>, next: Option<CatalogPage>) {
+        let cutoff = chrono::Local::now().date_naive() + chrono::Duration::days(1);
+        let before = self.tracks.len();
+        self.tracks.extend(
+            tracks
+                .into_iter()
+                .filter(|t| t.release_date() <= cutoff)
+                .take(self.candidates_left),
+        );
+        self.candidates_left -= self.tracks.len() - before;
+        self.next = next.filter(|_| self.candidates_left > 0 && self.pages_left > 0);
+    }
+
+    /// Starts fetching the next page if the catalog is running out of candidates.
+    fn start_refill(&mut self, client: &Arc<Client>) {
+        if self.refill.is_some() || self.tracks.len() > CATALOG_REFILL_THRESHOLD {
+            return;
+        }
+        if let Some(page) = self.next.take() {
+            self.pages_left -= 1;
+            self.refill = Some(tokio::spawn(page.fetch(Arc::clone(client))));
+        }
+    }
+
+    /// Adds the page a refill fetched. After a failed page the catalog ends with the
+    /// candidates it has.
+    fn finish_refill(
+        &mut self,
+        fetched: Result<CatalogPageResult, tokio::task::JoinError>,
+    ) -> anyhow::Result<()> {
+        self.refill = None;
+        let (tracks, next) = fetched.context("page fetch failed")??;
+        self.add_page(tracks, next);
         Ok(())
     }
 
-    /// The next candidate, or none at the end of the catalog. Tracks released later than
-    /// tomorrow are skipped: they can't be on YouTube yet, and a day is left for time zones.
-    async fn next(&mut self, client: &Client) -> anyhow::Result<Option<RawTrack>> {
-        let cutoff = chrono::Local::now().date_naive() + chrono::Duration::days(1);
-        loop {
-            if let Some(track) = self.tracks.find(|t| t.release_date() <= cutoff) {
-                return Ok(Some(track));
-            }
-            if self.next.is_none() {
-                return Ok(None);
-            }
-            self.fetch_next(client).await?;
-        }
+    fn is_done(&self) -> bool {
+        self.tracks.is_empty() && self.refill.is_none() && self.next.is_none()
     }
 }
 
@@ -3043,7 +3107,7 @@ fn source_name(source: TrackSource) -> &'static str {
 /// Opens the catalogs of the label or artist `name` on the selected `sources` that can list one,
 /// concurrently. Sources that fail are recorded in `failures` and left out.
 async fn open_catalogs(
-    client: &Client,
+    client: &Arc<Client>,
     credit: Credit,
     name: &str,
     sources: &[TrackSource],
@@ -3075,29 +3139,64 @@ async fn open_catalogs(
         .collect()
 }
 
+async fn report_catalog_failure(tx: &mpsc::Sender<MsgServer>, source: &str, e: anyhow::Error) {
+    tracing::warn!("{source} catalog page failed: {e:#}");
+    report_source_failures(tx, &[format!("{source}: {e:#}")]).await;
+}
+
 /// The candidates of `catalogs`, taking one from each in turn so that every source is
-/// represented whatever the limit. A source whose later page fails is reported and left out.
+/// represented whatever the limit. Sources waiting for their next page are passed over while
+/// others have candidates, so a slow page holds up the search only once every source is
+/// waiting. A source whose later page fails is reported and ends with the candidates it has.
 fn interleave<'a>(
-    client: &'a Client,
+    client: &'a Arc<Client>,
     tx: &'a mpsc::Sender<MsgServer>,
     catalogs: Vec<Catalog>,
 ) -> impl Stream<Item = RawTrack> + 'a {
     stream::unfold((catalogs, 0), move |(mut catalogs, mut i)| async move {
-        while !catalogs.is_empty() {
-            i %= catalogs.len();
-            match catalogs[i].next(client).await {
-                Ok(Some(track)) => return Some((track, (catalogs, i + 1))),
-                Ok(None) => {
-                    catalogs.remove(i);
+        loop {
+            // Take in finished pages, start the pages that are due and drop finished sources.
+            let mut j = 0;
+            while j < catalogs.len() {
+                let catalog = &mut catalogs[j];
+                if let Some(refill) = catalog.refill.as_mut().filter(|r| r.is_finished()) {
+                    let fetched = refill.await;
+                    if let Err(e) = catalog.finish_refill(fetched) {
+                        report_catalog_failure(tx, catalog.source, e).await;
+                    }
                 }
-                Err(e) => {
-                    let source = catalogs.remove(i).source;
-                    tracing::warn!("{source} catalog page failed: {e}");
-                    report_source_failures(tx, &[format!("{source}: {e}")]).await;
+                catalog.start_refill(client);
+                if catalog.is_done() {
+                    catalogs.remove(j);
+                    if j < i {
+                        i -= 1;
+                    }
+                } else {
+                    j += 1;
                 }
             }
+            if catalogs.is_empty() {
+                return None;
+            }
+
+            let n = catalogs.len();
+            for step in 0..n {
+                let j = (i + step) % n;
+                if let Some(track) = catalogs[j].tracks.pop_front() {
+                    return Some((track, (catalogs, j + 1)));
+                }
+            }
+
+            // Every source is waiting for a page.
+            let refills = catalogs.iter_mut().enumerate().filter_map(|(j, catalog)| {
+                let refill = catalog.refill.as_mut()?;
+                Some(async move { (j, refill.await) }.boxed())
+            });
+            let ((j, fetched), _, _) = futures::future::select_all(refills).await;
+            if let Err(e) = catalogs[j].finish_refill(fetched) {
+                report_catalog_failure(tx, catalogs[j].source, e).await;
+            }
         }
-        None
     })
 }
 
@@ -3298,7 +3397,7 @@ where
 /// streams it, stopping at `limit` results. The same video found via several backends is only
 /// sent once.
 async fn stream_raw_tracks(
-    client: &Client,
+    client: &Arc<Client>,
     tx: &mpsc::Sender<MsgServer>,
     query_id: i64,
     limit: usize,
@@ -3757,8 +3856,9 @@ async fn stream_matched_tracks(
 // gets a wider budget.
 const NEW_RELEASES_CONCURRENCY: usize = 8;
 const MATCH_CONCURRENCY: usize = 12;
-// Safety cap regardless of what the client asks for, since every result costs a YouTube search.
-const NEW_RELEASES_MAX_LIMIT: usize = 1000;
+/// The most results a search returns, whatever the client asks for, since every result costs
+/// a YouTube search. It's the client's largest option.
+pub const SEARCH_MAX_LIMIT: usize = 1000;
 
 /// Parameters for [`search_new_releases`], grouped to keep the function signature manageable.
 pub struct NewReleasesQuery {
@@ -3791,7 +3891,7 @@ pub async fn search_new_releases(
         sources,
         known_bp_tracks,
     } = q;
-    let limit = limit.min(NEW_RELEASES_MAX_LIMIT);
+    let limit = limit.min(SEARCH_MAX_LIMIT);
     run_search(&tx, query_id, "search_new_releases", || async {
         let cutoff = chrono::Local::now().date_naive() - chrono::Duration::days(days);
         let names: Vec<(String, bool)> = artists
@@ -4668,5 +4768,152 @@ mod shazam_tests {
     #[test]
     fn parses_limit_zero_without_html_work() {
         assert!(parse_shazam_similar_tracks("<div>", 0).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use std::{
+        ops::Range,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    use super::*;
+
+    fn track(id: i64, release_date: NaiveDate) -> RawTrack {
+        RawTrack::Tx(TXTrack {
+            artists: vec!["Artist".into()],
+            label: "Label".into(),
+            release_date,
+            track_id: id,
+            track_name: format!("Track {id}"),
+            mix_name: String::new(),
+            bpm: None,
+            key: None,
+            genre: None,
+        })
+    }
+
+    fn released(ids: Range<i64>) -> Vec<RawTrack> {
+        let date = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        ids.map(|id| track(id, date)).collect()
+    }
+
+    fn pre_orders(ids: Range<i64>) -> Vec<RawTrack> {
+        let date = chrono::Local::now().date_naive() + chrono::Duration::days(30);
+        ids.map(|id| track(id, date)).collect()
+    }
+
+    fn page(tracks: Vec<RawTrack>, next: Option<CatalogPage>) -> CatalogPage {
+        CatalogPage::Fixture(async move { Ok((tracks, next)) }.boxed())
+    }
+
+    /// Pages of `size` tracks without end, counting the pages fetched in `fetched`.
+    fn endless(
+        n: i64,
+        size: i64,
+        tracks: fn(Range<i64>) -> Vec<RawTrack>,
+        fetched: Arc<AtomicUsize>,
+    ) -> CatalogPage {
+        CatalogPage::Fixture(
+            async move {
+                fetched.fetch_add(1, Ordering::SeqCst);
+                let next = endless(n + 1, size, tracks, Arc::clone(&fetched));
+                Ok((tracks(n * size..(n + 1) * size), Some(next)))
+            }
+            .boxed(),
+        )
+    }
+
+    fn client() -> Arc<Client> {
+        Arc::new(create_client().unwrap())
+    }
+
+    async fn start(client: &Arc<Client>, first: CatalogPage, limit: usize) -> Catalog {
+        Catalog::start(client, "Traxsource", Some(first), limit)
+            .await
+            .unwrap()
+    }
+
+    fn id(track: RawTrack) -> i64 {
+        match track {
+            RawTrack::Tx(t) => t.track_id,
+            _ => unreachable!(),
+        }
+    }
+
+    async fn collect(client: &Arc<Client>, catalogs: Vec<Catalog>) -> Vec<i64> {
+        let (tx, _rx) = mpsc::channel(10);
+        interleave(client, &tx, catalogs).map(id).collect().await
+    }
+
+    #[tokio::test]
+    async fn pages_past_pre_orders() {
+        let client = client();
+        let second = page(released(100..130), None);
+        let catalog = start(&client, page(pre_orders(0..100), Some(second)), 10).await;
+        assert_eq!(
+            collect(&client, vec![catalog]).await,
+            (100..130).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_at_candidate_budget() {
+        let client = client();
+        let fetched = Arc::new(AtomicUsize::new(0));
+        let catalog = start(&client, endless(0, 20, released, fetched), 10).await;
+        assert_eq!(
+            collect(&client, vec![catalog]).await,
+            (0..30).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn stops_at_page_cap() {
+        let client = client();
+        let fetched = Arc::new(AtomicUsize::new(0));
+        let catalog = start(
+            &client,
+            endless(0, 100, pre_orders, Arc::clone(&fetched)),
+            10,
+        )
+        .await;
+        assert!(collect(&client, vec![catalog]).await.is_empty());
+        assert_eq!(fetched.load(Ordering::SeqCst), 1 + CATALOG_EXTRA_PAGES);
+    }
+
+    #[tokio::test]
+    async fn passes_over_a_source_waiting_for_a_page() {
+        let client = client();
+        let stalled = CatalogPage::Fixture(futures::future::pending().boxed());
+        let waiting = start(&client, page(vec![], Some(stalled)), 10).await;
+        let ready = Catalog::fixed(TrackSource::Traxsource, released(0..5));
+        let (tx, _rx) = mpsc::channel(10);
+        let tracks = interleave(&client, &tx, vec![waiting, ready])
+            .map(id)
+            .take(5);
+        let ids: Vec<i64> =
+            tokio::time::timeout(std::time::Duration::from_secs(5), tracks.collect())
+                .await
+                .expect("waited for the stalled page");
+        assert_eq!(ids, (0..5).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn keeps_candidates_after_a_failed_page() {
+        let client = client();
+        let failing = CatalogPage::Fixture(async { Err(anyhow::anyhow!("HTTP 500")) }.boxed());
+        let catalog = start(&client, page(released(0..5), Some(failing)), 10).await;
+        let (tx, mut rx) = mpsc::channel(10);
+        let ids: Vec<i64> = interleave(&client, &tx, vec![catalog])
+            .map(id)
+            .collect()
+            .await;
+        assert_eq!(ids, (0..5).collect::<Vec<_>>());
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(MsgServer::Notification { message, .. }) if message.contains("HTTP 500")
+        ));
     }
 }
