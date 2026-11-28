@@ -23,12 +23,14 @@ const describe = (track: ITrack) =>
     .filter(Boolean)
     .join(" · ");
 
-/** The words for a result's version, as in "No video names the Extended Mix". */
-const versionName = (track: ITrack) =>
-  track.mix_name?.trim() ? `the ${track.mix_name.trim()}` : "this version";
+/** Why a result's video may be another version of the track than its own. */
+const versionWarning = (track: ITrack) =>
+  track.mix_name?.trim()
+    ? `This video may not be the ${track.mix_name.trim()}`
+    : "This video may be another version";
 
 /** Warns about a search result: that its video may be another version of the track (no video
- * was found that names its version, so the backend settled for one that doesn't), or that the
+ * was found that is clearly its version, so the backend settled for one that may not be), or that the
  * collection has what looks like the same track, usually under another YouTube video, which a
  * card lists. One icon for both, so that a row doesn't show two of them. A hover card rather
  * than a tooltip, for the list; through the hook so that pressing or tapping the button opens
@@ -40,15 +42,13 @@ function SearchResultWarning({
   track: ITrack;
   similar?: ITrack[];
 }) {
-  const versionWarning = track.version_unconfirmed
-    ? `No video names ${versionName(track)}: this one may be another version`
-    : undefined;
+  const version = track.version_unconfirmed ? versionWarning(track) : undefined;
   const similarLabel = !similar?.length
     ? undefined
     : similar.length === 1
       ? "A similar track is in the collection"
       : `${similar.length} similar tracks are in the collection`;
-  const label = [versionWarning, similarLabel].filter(Boolean).join(". ");
+  const label = [version, similarLabel].filter(Boolean).join(". ");
   const {
     ref: triggerRef,
     isOpen,
@@ -72,9 +72,9 @@ function SearchResultWarning({
       />
       {renderHoverCard(
         <VStack gap={2}>
-          {versionWarning && (
+          {version && (
             <Text as="p" type="body">
-              {versionWarning}. Change the video if you find the right one.
+              {version}. Change the video if you find the right one.
             </Text>
           )}
           {similar?.length ? (

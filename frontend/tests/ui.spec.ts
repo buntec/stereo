@@ -239,12 +239,19 @@ async function openApp(
           );
           break;
         case "search":
+          // Streamed one at a time, as the backend does, with the result's fields beside
+          // its track.
           send([
-            {
-              type: "search-results",
-              query_id: message.query_id,
-              tracks: options.searchResults ?? [],
-            },
+            ...(options.searchResults ?? []).map(
+              ({ source, chart_position, version_unconfirmed, ...track }) => ({
+                type: "search-result",
+                query_id: message.query_id,
+                track,
+                source: source ?? "beatport",
+                chart_position,
+                version_unconfirmed,
+              }),
+            ),
             { type: "search-complete", query_id: message.query_id },
           ]);
           break;
@@ -2966,7 +2973,7 @@ test("a search result warns that its video may be another version", async ({
   page,
 }) => {
   const versionLabel =
-    "No video names the Extended Mix: this one may be another version";
+    "This video may not be the Extended Mix";
   await openApp(page, {
     searchResults: [
       {
@@ -2995,7 +3002,7 @@ test("a search result warns that its video may be another version", async ({
   });
   await expect(
     rowB.getByRole("button", {
-      name: `No video names this version: this one may be another version. ${similarLabel}`,
+      name: `This video may be another version. ${similarLabel}`,
       exact: true,
     }),
   ).toHaveCount(1);

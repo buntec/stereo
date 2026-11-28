@@ -207,7 +207,8 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
   recording under another video, which `SearchResultWarning.tsx` lists beside Add.
   The same icon warns of a result whose `version_unconfirmed` video may be another
   version: `find_best_match` settles for one that names no version or another cut
-  of the same mix (`VersionMatch::OtherCut`) when none names the expected one.
+  of the same mix (`VersionMatch::OtherCut`) when none names the expected one, and
+  `MatchOrder` holds such results back briefly so a confirmed result can claim the video.
   `ChangeVideoDialog.tsx` searches YouTube via `search-youtube-videos` or looks up
   a pasted link. The `set-search-result-video` action replaces the match in
   client state and in a queue playing from the results. Multiple results can
