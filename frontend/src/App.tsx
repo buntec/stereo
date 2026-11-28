@@ -1895,12 +1895,12 @@ function App() {
   // Clears filters and restores the default sort, but keeps the columns'
   // visibility, order and widths.
   const resetFiltersAndSort = useCallback(
-    (event: React.MouseEvent<HTMLElement>) => {
+    (event?: React.MouseEvent<HTMLElement>) => {
       const api = gridRef.current?.api;
       if (!api) return;
       // The button goes away with the filters and sort, so keyboard focus moves to
       // the View menu beside it rather than falling to the page.
-      if (document.activeElement === event.currentTarget)
+      if (event && document.activeElement === event.currentTarget)
         document
           .querySelector<HTMLElement>(".collection-toolbar .columns-menu")
           ?.focus();
@@ -3505,6 +3505,10 @@ function App() {
                             hasSyncErrors={hasPlaylistSyncErrors}
                             canSave={!!state.collection}
                             onSelect={applyPlaylist}
+                            onSelectNone={() => {
+                              setActivePlaylistId(undefined);
+                              resetFiltersAndSort();
+                            }}
                             onSaveAs={() => setSavePlaylistOpen(true)}
                             onSaveChanges={() => {
                               if (activePlaylist) {
@@ -3597,7 +3601,11 @@ function App() {
                                 narrow ? "Reset filters and sorting" : undefined
                               }
                               variant="ghost"
-                              onClick={resetFiltersAndSort}
+                              onClick={(event) => {
+                                // A reset view is the whole collection, not a modified playlist.
+                                setActivePlaylistId(undefined);
+                                resetFiltersAndSort(event);
+                              }}
                             />
                           )}
                         {state.collection && state.collection.size > 0 && (

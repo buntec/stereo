@@ -2972,8 +2972,7 @@ test("a search result warns of similar tracks in the collection", async ({
 test("a search result warns that its video may be another version", async ({
   page,
 }) => {
-  const versionLabel =
-    "This video may not be the Extended Mix";
+  const versionLabel = "This video may not be the Extended Mix";
   await openApp(page, {
     searchResults: [
       {
@@ -3541,6 +3540,52 @@ test("importing a collection leaves the open playlist", async ({ page }) => {
   send({ type: "collection-imported", id, path: "/audit/Warm-up sets.db" });
   await expect(dialog).toHaveCount(0);
   // The backend has opened the imported collection, which the playlist doesn't show.
+  await expect(
+    page.getByRole("button", { name: "Playlists", exact: true }),
+  ).toBeVisible();
+});
+
+test("a playlist can be left for no playlist", async ({ page }) => {
+  const { send } = await openApp(page);
+  send({
+    type: "playlists",
+    playlists: [
+      {
+        id: "p1",
+        name: "Warmup",
+        collection: "/audit/collection.db",
+        filter_model: {},
+        sort_model: [{ colId: "title", sort: "asc" }],
+        limit: null,
+        spotify: null,
+        youtube: null,
+        updated_at: 1,
+        spotify_status: null,
+        youtube_status: null,
+      },
+    ],
+  });
+  const titleHeader = page.locator('.ag-header-cell[col-id="title"]');
+  const openWarmup = async () => {
+    await page.getByRole("button", { name: "Playlists", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: /Warmup/ }).click();
+    await expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+  };
+
+  await openWarmup();
+  await page.getByRole("button", { name: "Warmup", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /No playlist/ }).click();
+  await expect(
+    page.getByRole("button", { name: "Playlists", exact: true }),
+  ).toBeVisible();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "none");
+
+  // Resetting the view leaves the playlist rather than modifying it.
+  await openWarmup();
+  await page
+    .getByRole("button", { name: "Reset filters and sorting", exact: true })
+    .click();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "none");
   await expect(
     page.getByRole("button", { name: "Playlists", exact: true }),
   ).toBeVisible();
