@@ -1220,8 +1220,18 @@ export const TracksGrid = ({
         ? [{ colId: c.field, flex: c.initialFlex }]
         : [],
     );
+    // A saved state overrides the columns' `initialSort`, so one without a sort (as a
+    // reset leaves it while the grid isn't mounted) takes theirs.
+    const sort = initialState.sort ?? {
+      sortModel: colDefs.flatMap((c) =>
+        c.field && (c.initialSort === "asc" || c.initialSort === "desc")
+          ? [{ colId: c.field, sort: c.initialSort }]
+          : [],
+      ),
+    };
     return {
       ...initialState,
+      sort,
       columnSizing: { columnSizingModel: [...saved, ...flexDefaults] },
     };
   }, [initialState, colDefs]);

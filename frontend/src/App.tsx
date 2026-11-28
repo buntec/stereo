@@ -1897,7 +1897,18 @@ function App() {
   const resetFiltersAndSort = useCallback(
     (event?: React.MouseEvent<HTMLElement>) => {
       const api = gridRef.current?.api;
-      if (!api) return;
+      if (!api) {
+        // Without a grid (e.g. an empty collection), reset the state it will mount
+        // with, keeping the columns' layout: without a sort it takes their default.
+        const rest = { ...gridState.current };
+        delete rest.filter;
+        delete rest.sort;
+        gridState.current = rest;
+        saveGridState(rest);
+        setGridView({});
+        setIsGridDefaultView(true);
+        return;
+      }
       // The button goes away with the filters and sort, so keyboard focus moves to
       // the View menu beside it rather than falling to the page.
       if (event && document.activeElement === event.currentTarget)

@@ -26,7 +26,7 @@ type PlaylistMenuProps = {
   hasSyncErrors: boolean;
   canSave: boolean;
   onSelect: (playlist: IPlaylist) => void;
-  /** Leaves the active playlist for the collection's unfiltered tracks. */
+  /** Leaves any active playlist and resets filters and sorting. */
   onSelectNone: () => void;
   onSaveAs: () => void;
   onSaveChanges: () => void;
@@ -83,7 +83,7 @@ function PlaylistMenu({
             value={active?.id ?? NO_PLAYLIST}
             onChange={(id) => {
               if (id === NO_PLAYLIST) {
-                if (active) onSelectNone();
+                onSelectNone();
                 return;
               }
               const playlist = playlists.find((p) => p.id === id);
