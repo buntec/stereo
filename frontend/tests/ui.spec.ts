@@ -1638,6 +1638,24 @@ test("resetting filters and sorting keeps the displayed columns", async ({
   await expect(clear).toHaveCount(0);
 });
 
+test("an unsorted view stays unsorted back from a search", async ({ page }) => {
+  await openApp(page, { searchResults: [] });
+  const release = page.locator('.ag-header-cell[col-id="release_date"]');
+  await expect(release).toHaveAttribute("aria-sort", "descending");
+  await release.getByText("Release", { exact: true }).click();
+  await expect(release).toHaveAttribute("aria-sort", "none");
+
+  await page.getByRole("textbox", { name: /Search query/ }).fill("results");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Exit search", exact: true }).click();
+  await expect(
+    page
+      .locator('.ag-row[row-index="0"]')
+      .getByText("Example track", { exact: false }),
+  ).toBeVisible();
+  await expect(release).toHaveAttribute("aria-sort", "none");
+});
+
 test("a sort restored from the last session can be reset", async ({ page }) => {
   await page.addInitScript(() => {
     if (localStorage.getItem("stereo_app_grid_state_v2")) return;
@@ -2972,8 +2990,7 @@ test("a search result warns of similar tracks in the collection", async ({
 test("a search result warns that its video may be another version", async ({
   page,
 }) => {
-  const versionLabel =
-    "This video may not be the Extended Mix";
+  const versionLabel = "This video may not be the Extended Mix";
   await openApp(page, {
     searchResults: [
       {
@@ -3544,6 +3561,130 @@ test("importing a collection leaves the open playlist", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Playlists", exact: true }),
   ).toBeVisible();
+});
+
+test("a playlist can be left for no playlist", async ({ page }) => {
+  const { send } = await openApp(page);
+  send({
+    type: "playlists",
+    playlists: [
+      {
+        id: "p1",
+        name: "Warmup",
+        collection: "/audit/collection.db",
+        filter_model: {},
+        sort_model: [{ colId: "title", sort: "asc" }],
+        limit: null,
+        spotify: null,
+        youtube: null,
+        updated_at: 1,
+        spotify_status: null,
+        youtube_status: null,
+      },
+    ],
+  });
+  const titleHeader = page.locator('.ag-header-cell[col-id="title"]');
+  const openWarmup = async () => {
+    await page.getByRole("button", { name: "Playlists", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: /Warmup/ }).click();
+    await expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+  };
+
+  await openWarmup();
+  await page.getByRole("button", { name: "Warmup", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /No playlist/ }).click();
+  await expect(
+    page.getByRole("button", { name: "Playlists", exact: true }),
+  ).toBeVisible();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "none");
+
+  // Resetting the view leaves the playlist rather than modifying it.
+  await openWarmup();
+  await page
+    .getByRole("button", { name: "Reset filters and sorting", exact: true })
+    .click();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "none");
+  await expect(
+    page.getByRole("button", { name: "Playlists", exact: true }),
+  ).toBeVisible();
+});
+
+test("leaving a playlist on an empty collection resets its view", async ({
+  page,
+}) => {
+  const { send, tracks, collection } = await openApp(page, { empty: true });
+  send({
+    type: "playlists",
+    playlists: [
+      {
+        id: "p1",
+        name: "Warmup",
+        collection: "/audit/collection.db",
+        filter_model: {
+          title: { filterType: "text", type: "contains", filter: "nothing" },
+        },
+        sort_model: [{ colId: "title", sort: "asc" }],
+        limit: null,
+        spotify: null,
+        youtube: null,
+        updated_at: 1,
+        spotify_status: null,
+        youtube_status: null,
+      },
+    ],
+  });
+  await page.getByRole("button", { name: "Playlists", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /Warmup/ }).click();
+  await page.getByRole("button", { name: "Warmup", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /No playlist/ }).click();
+  await expect(
+    page.getByRole("button", { name: "Playlists", exact: true }),
+  ).toBeVisible();
+
+  // Tracks arrive: the grid mounts with the collection's default view.
+  tracks.push(...structuredClone(exampleTracks));
+  collection.size = tracks.length;
+  send({ type: "collection-info", collection });
+  await expect(
+    page
+      .locator('.ag-row[row-index="0"]')
+      .getByText("Example track 1", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.ag-header-cell[col-id="title"]')).toHaveAttribute(
+    "aria-sort",
+    "none",
+  );
+  await expect(
+    page.getByRole("button", { name: "Reset filters and sorting" }),
+  ).toHaveCount(0);
+});
+
+test("no playlist resets a filtered view", async ({ page }) => {
+  const { send } = await openApp(page);
+  send({
+    type: "playlists",
+    playlists: [
+      {
+        id: "p1",
+        name: "Warmup",
+        collection: "/audit/collection.db",
+        filter_model: {},
+        sort_model: [],
+        limit: null,
+        spotify: null,
+        youtube: null,
+        updated_at: 1,
+        spotify_status: null,
+        youtube_status: null,
+      },
+    ],
+  });
+  const titleHeader = page.locator('.ag-header-cell[col-id="title"]');
+  await titleHeader.getByText("Title", { exact: true }).click();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+  await page.getByRole("button", { name: "Playlists", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /No playlist/ }).click();
+  await expect(titleHeader).toHaveAttribute("aria-sort", "none");
 });
 
 test("cancelling while the file is read doesn't import it @webkit", async ({

@@ -216,7 +216,7 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
   tied to its index (`current_index`, `queueIndex`). `GridScrollButtons.tsx`
   shows controls for the playing track and top of the grid, also bound to
   `c` and `t`. `useGridScrollState.ts` governs when the controls appear.
-- **Dynamic playlists** — `PlaylistMenu` (collection toolbar) opens/saves views and shows when the grid differs from the active one ("modified"); `PlaylistsDialog` edits a playlist and its Spotify/YouTube exports. Opening a playlist switches the collection and applies its filter/sort to the grid (and to the saved grid state, for when the grid isn't mounted).
+- **Dynamic playlists** — `PlaylistMenu` (collection toolbar) opens/saves views and shows when the grid differs from the active one ("modified"); "No playlist" and "Reset filters and sorting" leave the active playlist for the default view; `PlaylistsDialog` edits a playlist and its Spotify/YouTube exports. Opening a playlist switches the collection and applies its filter/sort to the grid (and to the saved grid state, for when the grid isn't mounted).
 - **Theme** — `theme.ts`: Astryx's Neutral theme (`@astryxdesign/theme-neutral`) plus a few component overrides. Neutral names the Figtree font without loading it; it's self-hosted with Fontsource (`@fontsource-variable/figtree`), which registers it as `"Figtree Variable"`, so the theme's font stacks name that first.
 - **Navigation.** `NavBarControls` groups account connections, Tailscale pairing,
   health checks, theme and settings. `CollectionSelector` handles collections and

@@ -1142,7 +1142,7 @@ export const TracksGrid = ({
       field: "release_date",
       headerName: "Release",
       sortable: true,
-      initialSort: "desc",
+      initialSort: "desc", // App.tsx's TRACKS_DEFAULT_SORT
       filter: "agDateColumnFilter",
       ...fixedWidth(130),
     },

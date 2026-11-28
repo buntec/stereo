@@ -26,11 +26,16 @@ type PlaylistMenuProps = {
   hasSyncErrors: boolean;
   canSave: boolean;
   onSelect: (playlist: IPlaylist) => void;
+  /** Leaves any active playlist and resets filters and sorting. */
+  onSelectNone: () => void;
   onSaveAs: () => void;
   onSaveChanges: () => void;
   onRevert: () => void;
   onManage: () => void;
 };
+
+// Playlist ids are UUIDs, so they can't clash with this.
+const NO_PLAYLIST = "";
 
 /** Opens, saves and manages dynamic playlists: saved views of a collection. */
 function PlaylistMenu({
@@ -40,6 +45,7 @@ function PlaylistMenu({
   hasSyncErrors,
   canSave,
   onSelect,
+  onSelectNone,
   onSaveAs,
   onSaveChanges,
   onRevert,
@@ -74,12 +80,21 @@ function PlaylistMenu({
           <MenuHeading>Playlists</MenuHeading>
           <DropdownMenuRadioGroup
             label="Playlists"
-            value={active?.id}
+            value={active?.id ?? NO_PLAYLIST}
             onChange={(id) => {
+              if (id === NO_PLAYLIST) {
+                onSelectNone();
+                return;
+              }
               const playlist = playlists.find((p) => p.id === id);
               if (playlist) onSelect(playlist);
             }}
           >
+            <DropdownMenuRadioItem
+              value={NO_PLAYLIST}
+              label="No playlist"
+              description="All tracks, unfiltered"
+            />
             {playlists.map((p) => (
               <DropdownMenuRadioItem
                 key={p.id}
