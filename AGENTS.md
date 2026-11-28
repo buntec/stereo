@@ -204,7 +204,10 @@ The CLI provides `version` and macOS launchd commands `install`, `uninstall` and
   `get-row-index`. `SearchResultsGrid` uses client-side rows and checks membership
   in the open collection with a batched `collection-contains-ids` request.
   `find-similar-tracks` (`similar.rs`) finds collection tracks that look like the same
-  recording under another video, which `SimilarTracksWarning.tsx` lists beside Add.
+  recording under another video, which `SearchResultWarning.tsx` lists beside Add.
+  The same icon warns of a result whose `version_unconfirmed` video may be another
+  version: `find_best_match` settles for one that names no version or another cut
+  of the same mix (`VersionMatch::OtherCut`) when none names the expected one.
   `ChangeVideoDialog.tsx` searches YouTube via `search-youtube-videos` or looks up
   a pasted link. The `set-search-result-video` action replaces the match in
   client state and in a queue playing from the results. Multiple results can

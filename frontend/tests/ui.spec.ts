@@ -2962,6 +2962,48 @@ test("a search result warns of similar tracks in the collection", async ({
   ).toBeVisible();
 });
 
+test("a search result warns that its video may be another version", async ({
+  page,
+}) => {
+  const versionLabel =
+    "No video names the Extended Mix: this one may be another version";
+  await openApp(page, {
+    searchResults: [
+      {
+        ...searchResults[0],
+        mix_name: "Extended Mix",
+        version_unconfirmed: true,
+      },
+      { ...searchResults[1], version_unconfirmed: true },
+      ...searchResults.slice(2),
+    ],
+    similarTracks: similarToResultB,
+  });
+  await showSearchResults(page);
+  const warning = page.getByRole("button", {
+    name: versionLabel,
+    exact: true,
+  });
+  await expect(warning).toHaveCount(1);
+  await warning.hover();
+  await expect(page.getByRole("dialog", { name: versionLabel })).toContainText(
+    "Change the video if you find the right one.",
+  );
+  // One icon for both warnings.
+  const rowB = page.locator(".ag-row", {
+    has: page.getByRole("button", { name: "Play Result B", exact: true }),
+  });
+  await expect(
+    rowB.getByRole("button", {
+      name: `No video names this version: this one may be another version. ${similarLabel}`,
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  // A video the user picked is the one they want.
+  await changeResultVideo(page, "Result A", "aVideo99999");
+  await expect(warning).toHaveCount(0);
+});
+
 test("Tab reaches a search result's similar-tracks warning", async ({
   page,
 }) => {

@@ -2302,19 +2302,25 @@ fn extract_mix_tag(title: &str) -> Option<String> {
 }
 
 /// The last bracketed group of a lowercase title that names a mix, as in "track (someone remix)".
+/// Groups may nest, as in "(stein (us) remix)".
 fn bracketed_mix_tag(lower: &str) -> Option<String> {
     let mut result = None;
-    for (open, close) in [('(', ')'), ('[', ']')] {
-        let mut rest = lower;
-        while let Some(start) = rest.find(open) {
-            let Some(end) = rest[start..].find(close) else {
-                break;
-            };
-            let inner = rest[start + 1..start + end].trim();
-            if MIX_KEYWORDS.iter().any(|k| inner.contains(k)) {
-                result = Some(inner.to_string());
+    let mut opened = vec![];
+    for (i, c) in lower.char_indices() {
+        match c {
+            '(' | '[' => opened.push(i),
+            ')' | ']' => {
+                let Some(start) = opened.pop() else {
+                    continue;
+                };
+                if opened.is_empty() {
+                    let inner = lower[start + 1..i].trim();
+                    if MIX_KEYWORDS.iter().any(|k| inner.contains(k)) {
+                        result = Some(inner.to_string());
+                    }
+                }
             }
-            rest = &rest[start + end + 1..];
+            _ => {}
         }
     }
     result
@@ -2382,6 +2388,18 @@ impl RawTrack {
             RawTrack::Sp(t) => extract_mix_tag(&t.track_name),
             RawTrack::Am(t) => t.mix_name.clone().filter(|m| !is_original_mix(m)),
             RawTrack::Sz(t) => extract_mix_tag(&t.title),
+        }
+    }
+
+    /// A version tag in the track's name besides its mix field, as in Beatport's "Don't Touch
+    /// (STEIN (US) Remix)" with the mix "Extended Mix". Sources without a mix field have their
+    /// tag in `expected_mix` already.
+    fn title_mix(&self) -> Option<String> {
+        match self {
+            RawTrack::Bp(_) | RawTrack::Vl(_) | RawTrack::Tx(_) | RawTrack::Am(_) => {
+                bracketed_mix_tag(&self.expected_title().to_lowercase())
+            }
+            RawTrack::Sc(_) | RawTrack::Sp(_) | RawTrack::Sz(_) => None,
         }
     }
 
@@ -2456,8 +2474,23 @@ const YT_CANDIDATE_LIMIT: usize = 12;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VersionMatch {
     Match,
+    /// The video doesn't say which version it is.
     Unknown,
+    /// The video names another cut of the same mix, such as a "Radio Edit" of an "Extended Mix".
+    OtherCut,
     Contradiction,
+}
+
+/// Words of a version tag that name a cut rather than a remix or another recording.
+const CUT_WORDS: &[&str] = &[
+    "extended", "club", "radio", "original", "short", "long", "full", "12", "12inch", "inch",
+    "album", "single", "clean", "explicit", "dirty", "mix", "edit", "version",
+];
+
+/// Whether a version tag, such as "Extended Mix" or "Radio Edit", names only a cut.
+fn is_cut(tag: &str) -> bool {
+    let words = match_tokens(tag);
+    !words.is_empty() && words.iter().all(|w| CUT_WORDS.contains(&w.as_str()))
 }
 
 #[derive(Clone, Debug)]
@@ -2467,7 +2500,6 @@ struct MatchScore {
     artist: f64,
     version: VersionMatch,
     candidate_mix: Option<String>,
-    specific_version_expected: bool,
     /// The matched version credits a remixer, which stands in for the artist.
     credited_version_match: bool,
     disqualified: bool,
@@ -2475,9 +2507,14 @@ struct MatchScore {
 
 impl MatchScore {
     fn acceptable(&self) -> bool {
+        self.version == VersionMatch::Match && self.acceptable_in_another_version()
+    }
+
+    /// Whether the video is the track, though perhaps in another cut than the one expected,
+    /// for when no video is confirmed to be that cut.
+    fn acceptable_in_another_version(&self) -> bool {
         !self.disqualified
             && self.version != VersionMatch::Contradiction
-            && (!self.specific_version_expected || self.version == VersionMatch::Match)
             && self.title >= MIN_TITLE_SCORE
             && (self.artist >= MIN_ARTIST_SCORE
                 || (self.credited_version_match && self.title >= 0.80))
@@ -2535,7 +2572,33 @@ fn title_similarity(expected: &str, candidate: &str) -> f64 {
     0.75 * token_recall(expected, candidate) + 0.25 * segment_similarity
 }
 
+/// How a video's version tag `candidate` compares with the expected mix, which includes the
+/// tag in the track's name, `title_mix`. A video naming only the latter, such as "Don't Touch
+/// (STEIN (US) Remix)" for its "Extended Mix", doesn't say which of the remix's versions it is.
 fn version_match(
+    expected: Option<&str>,
+    title_mix: Option<&str>,
+    candidate: Option<&str>,
+    full_title: &str,
+) -> VersionMatch {
+    let Some(title_mix) = title_mix else {
+        return mix_version_match(expected, candidate, full_title);
+    };
+    let combined = match expected {
+        Some(mix) => format!("{title_mix} {mix}"),
+        None => title_mix.to_string(),
+    };
+    match mix_version_match(Some(&combined), candidate, full_title) {
+        VersionMatch::Contradiction
+            if candidate.is_some_and(|c| token_recall(title_mix, c) >= 0.8) =>
+        {
+            VersionMatch::Unknown
+        }
+        version => version,
+    }
+}
+
+fn mix_version_match(
     expected: Option<&str>,
     candidate: Option<&str>,
     full_title: &str,
@@ -2544,6 +2607,7 @@ fn version_match(
         None => match candidate {
             None => VersionMatch::Match,
             Some(tag) if is_original_mix(tag) => VersionMatch::Match,
+            Some(tag) if is_cut(tag) => VersionMatch::OtherCut,
             Some(_) => VersionMatch::Contradiction,
         },
         Some(expected) => {
@@ -2554,6 +2618,7 @@ fn version_match(
                 {
                     VersionMatch::Match
                 }
+                Some(candidate) if is_cut(expected) && is_cut(candidate) => VersionMatch::OtherCut,
                 Some(_) => VersionMatch::Contradiction,
                 None if full_contains_mix => VersionMatch::Match,
                 None => VersionMatch::Unknown,
@@ -2602,17 +2667,19 @@ fn match_score(raw: &RawTrack, candidate: &YTVideo) -> MatchScore {
         .fold(0.0, f64::max);
     let candidate_mix = extract_mix_tag(&candidate.title);
     let expected_mix = raw.expected_mix();
-    let specific_version_expected = expected_mix.is_some();
+    let title_mix = raw.title_mix();
+    let specific_version_expected = expected_mix.is_some() || title_mix.is_some();
     let version = version_match(
         expected_mix.as_deref(),
+        title_mix.as_deref(),
         candidate_mix.as_deref(),
         &candidate.title,
     );
 
-    let strong_version_match = expected_mix.is_some() && version == VersionMatch::Match;
+    let strong_version_match = specific_version_expected && version == VersionMatch::Match;
     // A generic version such as "Extended Mix" says nothing about who made the upload.
     let credited_version_match = strong_version_match
-        && raw.isolated_mix().is_some_and(|m| {
+        && raw.isolated_mix().into_iter().chain(title_mix).any(|m| {
             // A year, as in "2024 Remix", names no one either.
             mix_credits(&m)
                 .iter()
@@ -2621,7 +2688,11 @@ fn match_score(raw: &RawTrack, candidate: &YTVideo) -> MatchScore {
     let version_score = match version {
         VersionMatch::Match if strong_version_match => 0.25,
         VersionMatch::Match => 0.15,
-        VersionMatch::Unknown => -0.10,
+        // Only acceptable when no video is confirmed to be the version, so these only rank
+        // the guesses, preferring a video that might be the version over one that names
+        // another cut.
+        VersionMatch::Unknown => 0.0,
+        VersionMatch::OtherCut => -0.05,
         VersionMatch::Contradiction => -0.40,
     };
     let topic_bonus = if candidate.channel.to_lowercase().ends_with(" - topic") {
@@ -2649,7 +2720,6 @@ fn match_score(raw: &RawTrack, candidate: &YTVideo) -> MatchScore {
         artist,
         version,
         candidate_mix,
-        specific_version_expected,
         credited_version_match,
         disqualified,
     }
@@ -2690,23 +2760,55 @@ fn choose_best_match(raw: &RawTrack, candidates: Vec<YTVideo>) -> Option<YTVideo
     Some(best.clone())
 }
 
+/// The best of the videos that are the track, though perhaps not in the expected version, for
+/// when none is confirmed to be it. Ties between versions don't matter: either is a guess.
+fn choose_match_in_another_version(raw: &RawTrack, candidates: Vec<YTVideo>) -> Option<YTVideo> {
+    candidates
+        .into_iter()
+        .map(|candidate| (match_score(raw, &candidate), candidate))
+        .filter(|(score, _)| score.acceptable_in_another_version())
+        .max_by(|(a, _), (b, _)| a.total.total_cmp(&b.total))
+        .map(|(_, candidate)| candidate)
+}
+
+/// A track's YouTube video.
+pub(crate) struct YTMatch {
+    pub video: YTVideo,
+    /// The video may be another version of the track than the expected one, such as the radio
+    /// edit of an extended mix: none was found that names it.
+    pub version_unconfirmed: bool,
+}
+
 /// Fetches a broad candidate set, then retries with the label only when the cleaner
-/// artist/title query did not yield a confident match.
-async fn find_best_match(client: &Client, raw: &RawTrack) -> Option<YTVideo> {
+/// artist/title query did not yield a confident match. Failing that, settles for a video that
+/// may be another version.
+async fn find_best_match(client: &Client, raw: &RawTrack) -> Option<YTMatch> {
+    let confirmed = |video| YTMatch {
+        video,
+        version_unconfirmed: false,
+    };
     let q = raw.yt_query();
-    let candidates = yt_search_simple(client, &q, YT_CANDIDATE_LIMIT)
+    let mut candidates = yt_search_simple(client, &q, YT_CANDIDATE_LIMIT)
         .await
         .unwrap_or_default();
-    if let Some(best) = choose_best_match(raw, candidates) {
-        return Some(best);
+    if let Some(best) = choose_best_match(raw, candidates.clone()) {
+        return Some(confirmed(best));
     }
 
-    let label = raw.expected_label()?;
-    let fallback_q = format!("{q} {label}");
-    let candidates = yt_search_simple(client, &fallback_q, YT_CANDIDATE_LIMIT)
-        .await
-        .unwrap_or_default();
-    choose_best_match(raw, candidates)
+    if let Some(label) = raw.expected_label() {
+        let fallback_q = format!("{q} {label}");
+        let more = yt_search_simple(client, &fallback_q, YT_CANDIDATE_LIMIT)
+            .await
+            .unwrap_or_default();
+        if let Some(best) = choose_best_match(raw, more.clone()) {
+            return Some(confirmed(best));
+        }
+        candidates.extend(more);
+    }
+    choose_match_in_another_version(raw, candidates).map(|video| YTMatch {
+        video,
+        version_unconfirmed: true,
+    })
 }
 
 /// Scores how well a raw track matches a title/artists/mix triple, higher is better. Used by
@@ -3407,14 +3509,18 @@ async fn stream_raw_tracks(
     stream_matched_tracks(client, tx, query_id, &mut HashSet::new(), limit, ranked).await;
 }
 
-async fn resolve_shazam_track(client: Arc<Client>, candidate: ShazamTrack) -> Option<Track> {
+async fn resolve_shazam_track(
+    client: Arc<Client>,
+    candidate: ShazamTrack,
+) -> Option<(Track, bool)> {
     let raw = RawTrack::Sz(candidate);
-    let video = find_best_match(&client, &raw).await?;
-    let base = raw.into_track(video.id);
-    match fixup_track(client, base.clone()).await {
-        Ok(Some(track)) => Some(track),
-        Ok(None) | Err(_) => Some(base),
-    }
+    let found = find_best_match(&client, &raw).await?;
+    let base = raw.into_track(found.video.id);
+    let track = match fixup_track(client, base.clone()).await {
+        Ok(Some(track)) => track,
+        Ok(None) | Err(_) => base,
+    };
+    Some((track, found.version_unconfirmed))
 }
 
 /// Fetches Shazam recommendations, resolves each to a playable YouTube video, and enriches the
@@ -3434,7 +3540,7 @@ pub async fn search_shazam_similar(
         let mut count = 0;
 
         while let Some(result) = resolved.next().await {
-            let Some(track) = result else {
+            let Some((track, version_unconfirmed)) = result else {
                 continue;
             };
             if tx
@@ -3443,6 +3549,7 @@ pub async fn search_shazam_similar(
                     track,
                     source: TrackSource::Shazam,
                     chart_position: None,
+                    version_unconfirmed,
                 })
                 .await
                 .is_err()
@@ -3823,20 +3930,25 @@ async fn stream_matched_tracks(
 
     let mut count = 0;
     while let Some((raw, chart_position, vid)) = matches.next().await {
-        let Some(vid) = vid else {
+        let Some(YTMatch {
+            video,
+            version_unconfirmed,
+        }) = vid
+        else {
             continue;
         };
-        if !seen.insert(vid.id.clone()) {
+        if !seen.insert(video.id.clone()) {
             continue;
         }
         let source = raw.source();
-        let track = raw.into_track(vid.id);
+        let track = raw.into_track(video.id);
         if tx
             .send(MsgServer::SearchResult {
                 query_id,
                 track,
                 source,
                 chart_position,
+                version_unconfirmed,
             })
             .await
             .is_err()
@@ -4566,6 +4678,76 @@ mod remix_match_tests {
     }
 
     #[test]
+    fn matches_a_version_of_a_remix_named_in_the_title() {
+        let mut track = bp_track("Don't Touch (STEIN (US) Remix)", "Extended Mix");
+        track.artists = vec!["Berin".to_string(), "STEIN (US)".to_string()];
+        let raw = RawTrack::Bp(track);
+        let extended = video_from(
+            "BERIN – Don't Touch (STEIN (US) Extended Remix) [Klub Record]",
+            "Power Station",
+        );
+        assert!(choose_best_match(&raw, vec![extended]).is_some());
+        // The remix in another version, perhaps its radio edit.
+        let remix = video_from("BERIN - DON'T TOUCH (STEIN (US) REMIX)", "KLUB RECORD");
+        assert_eq!(match_score(&raw, &remix).version, VersionMatch::Unknown);
+        assert!(choose_best_match(&raw, vec![remix]).is_none());
+        let other = video_from("Berin - Don't Touch (Someone Remix)", "Berin - Topic");
+        assert_eq!(
+            match_score(&raw, &other).version,
+            VersionMatch::Contradiction
+        );
+
+        let raw = RawTrack::Bp(bp_track("Just Like Magic (Someone Remix)", "Original Mix"));
+        let remix = video("Aquarius Heaven - Just Like Magic (Someone Remix)");
+        assert!(choose_best_match(&raw, vec![remix]).is_some());
+        let original = video("Aquarius Heaven - Just Like Magic");
+        assert!(choose_best_match(&raw, vec![original]).is_none());
+    }
+
+    #[test]
+    fn settles_for_another_cut_of_the_expected_mix() {
+        let raw = RawTrack::Bp(bp_track("Just Like Magic", "Extended Mix"));
+        for title in [
+            "Aquarius Heaven - Just Like Magic",
+            "Aquarius Heaven - Just Like Magic (Radio Edit)",
+        ] {
+            let candidates = vec![video(title)];
+            assert!(
+                choose_best_match(&raw, candidates.clone()).is_none(),
+                "{title}"
+            );
+            assert!(
+                choose_match_in_another_version(&raw, candidates).is_some(),
+                "{title}"
+            );
+        }
+        let raw = RawTrack::Bp(bp_track("Just Like Magic", "Original Mix"));
+        let extended = vec![video("Aquarius Heaven - Just Like Magic (Extended Mix)")];
+        assert!(choose_best_match(&raw, extended.clone()).is_none());
+        assert!(choose_match_in_another_version(&raw, extended).is_some());
+    }
+
+    #[test]
+    fn never_settles_for_another_remix_or_artist() {
+        let raw = RawTrack::Bp(bp_track("Just Like Magic", "Extended Mix"));
+        for wrong in [
+            video("Aquarius Heaven - Just Like Magic (Someone Remix)"),
+            video_from("Just Like Magic", "Other Artist - Topic"),
+        ] {
+            let title = wrong.title.clone();
+            assert!(
+                choose_match_in_another_version(&raw, vec![wrong]).is_none(),
+                "{title}"
+            );
+        }
+        let raw = RawTrack::Bp(bp_track("Just Like Magic", "Someone Remix"));
+        let original = vec![video("Aquarius Heaven - Just Like Magic")];
+        assert!(choose_match_in_another_version(&raw, original).is_some());
+        let other = vec![video("Aquarius Heaven - Just Like Magic (Radio Edit)")];
+        assert!(choose_match_in_another_version(&raw, other).is_none());
+    }
+
+    #[test]
     fn rejects_wrong_version_even_when_title_and_artist_match() {
         let raw = RawTrack::Bp(bp_track("Just Like Magic", "Someone Remix"));
         let wrong_version = video("Aquarius Heaven - Just Like Magic (Other Artist Remix)");
@@ -4592,7 +4774,7 @@ mod remix_match_tests {
         let client = create_client().unwrap();
 
         let original = RawTrack::Bp(bp_track("Just Like Magic", "Original Mix"));
-        let original_match = find_best_match(&client, &original).await.unwrap();
+        let original_match = find_best_match(&client, &original).await.unwrap().video;
         assert!(
             extract_mix_tag(&original_match.title).is_none(),
             "expected the plain original, got {:?}",
@@ -4600,7 +4782,7 @@ mod remix_match_tests {
         );
 
         let luciano = RawTrack::Bp(bp_track("Just Like Magic", "Luciano Remix"));
-        let luciano_match = find_best_match(&client, &luciano).await.unwrap();
+        let luciano_match = find_best_match(&client, &luciano).await.unwrap().video;
         assert!(
             luciano_match.title.to_lowercase().contains("luciano"),
             "expected the Luciano remix, got {:?}",
@@ -4608,7 +4790,7 @@ mod remix_match_tests {
         );
 
         let roman = RawTrack::Bp(bp_track("Just Like Magic", "Roman Flügel Extended Remix"));
-        let roman_match = find_best_match(&client, &roman).await.unwrap();
+        let roman_match = find_best_match(&client, &roman).await.unwrap().video;
         assert!(
             roman_match.title.to_lowercase().contains("flügel"),
             "expected a Roman Flügel remix, got {:?}",

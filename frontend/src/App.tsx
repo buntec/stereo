@@ -635,7 +635,7 @@ const reducer = (state: State, action: Action): State => {
       // Only this result: others may have the same video (an earlier change can make them).
       const updateTrack = (track: ITrack): ITrack =>
         track.result_id === action.result_id
-          ? { ...track, yt_id: action.yt_id }
+          ? { ...track, yt_id: action.yt_id, version_unconfirmed: undefined }
           : track;
       const next = {
         ...state,
@@ -682,6 +682,7 @@ const reducer = (state: State, action: Action): State => {
         ...action.track,
         source: action.source,
         chart_position: action.chart_position,
+        version_unconfirmed: action.version_unconfirmed,
         result_id: state.search_result_next_id,
       };
       return {
