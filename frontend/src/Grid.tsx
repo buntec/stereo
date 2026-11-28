@@ -546,7 +546,9 @@ const SearchPlayControlRenderer: React.FC<
         />
       )}
       {/* After Add, so the add buttons line up across rows. */}
-      <SearchResultWarning track={data} similar={similar} />
+      {(similar || data.version_unconfirmed) && (
+        <SearchResultWarning track={data} similar={similar} />
+      )}
     </HStack>
   );
 };

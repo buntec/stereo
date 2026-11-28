@@ -2396,13 +2396,14 @@ impl RawTrack {
         }
     }
 
-    /// A version tag in the track's name besides its mix field, as in Beatport's "Don't Touch
-    /// (STEIN (US) Remix)" with the mix "Extended Mix". Sources without a mix field have their
-    /// tag in `expected_mix` already.
+    /// A remix named in the track's name besides its mix field, as in Beatport's "Don't Touch
+    /// (STEIN (US) Remix)" with the mix "Extended Mix". A cut there, as in "Song (Extended
+    /// Mix)", only repeats the mix field. Sources without a mix field have their tag in
+    /// `expected_mix` already.
     fn title_mix(&self) -> Option<String> {
         match self {
             RawTrack::Bp(_) | RawTrack::Vl(_) | RawTrack::Tx(_) | RawTrack::Am(_) => {
-                bracketed_mix_tag(&self.expected_title().to_lowercase())
+                bracketed_mix_tag(&self.expected_title().to_lowercase()).filter(|t| !is_cut(t))
             }
             RawTrack::Sc(_) | RawTrack::Sp(_) | RawTrack::Sz(_) => None,
         }
@@ -2677,7 +2678,9 @@ fn mix_version_match(
                 Some(candidate) if is_cut(expected) && is_cut(candidate) => VersionMatch::OtherCut,
                 Some(_) => VersionMatch::Contradiction,
                 None if full_contains_mix => VersionMatch::Match,
-                None => VersionMatch::Unknown,
+                // An untagged video may be any cut, but of the original, not a remix.
+                None if is_cut(expected) => VersionMatch::Unknown,
+                None => VersionMatch::Contradiction,
             }
         }
     }
@@ -4930,11 +4933,29 @@ mod remix_match_tests {
                 "{title}"
             );
         }
+        // The original is another recording than a remix.
         let raw = RawTrack::Bp(bp_track("Just Like Magic", "Someone Remix"));
-        let original = vec![video("Aquarius Heaven - Just Like Magic")];
-        assert!(choose_match_in_another_version(&raw, original).is_some());
-        let other = vec![video("Aquarius Heaven - Just Like Magic (Radio Edit)")];
-        assert!(choose_match_in_another_version(&raw, other).is_none());
+        for wrong in [
+            video("Aquarius Heaven - Just Like Magic"),
+            video("Aquarius Heaven - Just Like Magic (Radio Edit)"),
+        ] {
+            let title = wrong.title.clone();
+            assert!(
+                choose_match_in_another_version(&raw, vec![wrong]).is_none(),
+                "{title}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cut_in_the_name_only_repeats_the_mix_field() {
+        for (name, mix) in [
+            ("Just Like Magic (Extended Mix)", "Extended Mix"),
+            ("Just Like Magic (Original Mix)", "Original Mix"),
+        ] {
+            let raw = RawTrack::Bp(bp_track(name, mix));
+            assert_eq!(raw.title_mix(), None, "{name}");
+        }
     }
 
     #[test]
