@@ -78,7 +78,7 @@ import { EditTrackDialog } from "./EditDialog.tsx";
 import { GridScrollButtons } from "./GridScrollButtons.tsx";
 import { scrollGridToTop, useGridScrollState } from "./useGridScrollState.ts";
 import { AudioCacheButton } from "./AudioCacheButton.tsx";
-import SimilarTracksWarning from "./SimilarTracksWarning.tsx";
+import SearchResultWarning from "./SearchResultWarning.tsx";
 import logger from "./logger.tsx";
 import { rowProgressStyle } from "./rowProgress.ts";
 import ShazamIcon from "./ShazamIcon.tsx";
@@ -546,7 +546,9 @@ const SearchPlayControlRenderer: React.FC<
         />
       )}
       {/* After Add, so the add buttons line up across rows. */}
-      {similar && <SimilarTracksWarning similar={similar} />}
+      {(similar || data.version_unconfirmed) && (
+        <SearchResultWarning track={data} similar={similar} />
+      )}
     </HStack>
   );
 };

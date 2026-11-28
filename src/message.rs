@@ -166,6 +166,10 @@ pub enum MsgServer {
         /// 1-based position in the chart, for chart searches (Beatport/Traxsource top 100).
         #[serde(skip_serializing_if = "Option::is_none")]
         chart_position: Option<usize>,
+        /// No video was found that names the track's version, so this one may be another, such
+        /// as the radio edit of an extended mix.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        version_unconfirmed: bool,
     },
     SearchComplete {
         query_id: i64,

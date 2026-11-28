@@ -239,12 +239,19 @@ async function openApp(
           );
           break;
         case "search":
+          // Streamed one at a time, as the backend does, with the result's fields beside
+          // its track.
           send([
-            {
-              type: "search-results",
-              query_id: message.query_id,
-              tracks: options.searchResults ?? [],
-            },
+            ...(options.searchResults ?? []).map(
+              ({ source, chart_position, version_unconfirmed, ...track }) => ({
+                type: "search-result",
+                query_id: message.query_id,
+                track,
+                source: source ?? "beatport",
+                chart_position,
+                version_unconfirmed,
+              }),
+            ),
             { type: "search-complete", query_id: message.query_id },
           ]);
           break;
@@ -2960,6 +2967,48 @@ test("a search result warns of similar tracks in the collection", async ({
   await expect(
     row.getByRole("button", { name: "Add to collection", exact: true }),
   ).toBeVisible();
+});
+
+test("a search result warns that its video may be another version", async ({
+  page,
+}) => {
+  const versionLabel =
+    "This video may not be the Extended Mix";
+  await openApp(page, {
+    searchResults: [
+      {
+        ...searchResults[0],
+        mix_name: "Extended Mix",
+        version_unconfirmed: true,
+      },
+      { ...searchResults[1], version_unconfirmed: true },
+      ...searchResults.slice(2),
+    ],
+    similarTracks: similarToResultB,
+  });
+  await showSearchResults(page);
+  const warning = page.getByRole("button", {
+    name: versionLabel,
+    exact: true,
+  });
+  await expect(warning).toHaveCount(1);
+  await warning.hover();
+  await expect(page.getByRole("dialog", { name: versionLabel })).toContainText(
+    "Change the video if you find the right one.",
+  );
+  // One icon for both warnings.
+  const rowB = page.locator(".ag-row", {
+    has: page.getByRole("button", { name: "Play Result B", exact: true }),
+  });
+  await expect(
+    rowB.getByRole("button", {
+      name: `This video may be another version. ${similarLabel}`,
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  // A video the user picked is the one they want.
+  await changeResultVideo(page, "Result A", "aVideo99999");
+  await expect(warning).toHaveCount(0);
 });
 
 test("Tab reaches a search result's similar-tracks warning", async ({

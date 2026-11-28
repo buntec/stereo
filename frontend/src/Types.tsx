@@ -52,6 +52,9 @@ export interface ITrack {
   source?: TrackSource;
   // Like `source`, only set on search results — and only for chart searches (Beatport/Traxsource top 100).
   chart_position?: number;
+  // Like `source`, only set on search results: no video was found that names the track's
+  // version, so this one may be another. Cleared when the user picks a video.
+  version_unconfirmed?: boolean;
   // Client-only: identifies a search result for as long as it is shown, independently of
   // its `yt_id`, which the user can change (see `set-search-result-video`). Assigned by
   // App.tsx's reducer as results arrive, unique across searches.
@@ -492,6 +495,7 @@ export type ServerMsg =
       track: ITrack;
       source: TrackSource;
       chart_position?: number;
+      version_unconfirmed?: boolean;
     }
   | { type: "search-results"; query_id: number; tracks: ITrack[] }
   | { type: "search-complete"; query_id: number }
