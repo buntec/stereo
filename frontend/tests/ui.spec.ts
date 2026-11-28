@@ -1638,6 +1638,24 @@ test("resetting filters and sorting keeps the displayed columns", async ({
   await expect(clear).toHaveCount(0);
 });
 
+test("an unsorted view stays unsorted back from a search", async ({ page }) => {
+  await openApp(page, { searchResults: [] });
+  const release = page.locator('.ag-header-cell[col-id="release_date"]');
+  await expect(release).toHaveAttribute("aria-sort", "descending");
+  await release.getByText("Release", { exact: true }).click();
+  await expect(release).toHaveAttribute("aria-sort", "none");
+
+  await page.getByRole("textbox", { name: /Search query/ }).fill("results");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Exit search", exact: true }).click();
+  await expect(
+    page
+      .locator('.ag-row[row-index="0"]')
+      .getByText("Example track", { exact: false }),
+  ).toBeVisible();
+  await expect(release).toHaveAttribute("aria-sort", "none");
+});
+
 test("a sort restored from the last session can be reset", async ({ page }) => {
   await page.addInitScript(() => {
     if (localStorage.getItem("stereo_app_grid_state_v2")) return;

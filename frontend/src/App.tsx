@@ -1112,6 +1112,12 @@ const saveGridState = (state: GridState) => {
   }
 };
 
+// The columns' `initialSort` (in `TracksGrid`), for when the grid isn't mounted: a saved
+// state without a sort means none.
+const TRACKS_DEFAULT_SORT: { colId: string; sort: "asc" | "desc" }[] = [
+  { colId: "release_date", sort: "desc" },
+];
+
 // The sort the columns start with (their `initialSort`).
 const defaultSortModel = (api: GridApi<ITrack>) =>
   (api.getColumns() ?? []).flatMap((column) => {
@@ -1899,13 +1905,14 @@ function App() {
       const api = gridRef.current?.api;
       if (!api) {
         // Without a grid (e.g. an empty collection), reset the state it will mount
-        // with, keeping the columns' layout: without a sort it takes their default.
-        const rest = { ...gridState.current };
-        delete rest.filter;
-        delete rest.sort;
-        gridState.current = rest;
-        saveGridState(rest);
-        setGridView({});
+        // with, keeping the columns' layout.
+        const view: GridView = {
+          filter: undefined,
+          sort: { sortModel: TRACKS_DEFAULT_SORT },
+        };
+        gridState.current = { ...gridState.current, ...view };
+        saveGridState(gridState.current);
+        setGridView(view);
         setIsGridDefaultView(true);
         return;
       }
